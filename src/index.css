@@ -1,0 +1,72 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+
+  --color-brand-50: #f4f1ff;
+  --color-brand-100: #ebe5ff;
+  --color-brand-200: #d7ccff;
+  --color-brand-300: #b9a6ff;
+  --color-brand-400: #9a7dff;
+  --color-brand-500: #7c5cff;
+  --color-brand-600: #6a45f0;
+  --color-brand-700: #5834d1;
+  --color-brand-800: #472ba8;
+  --color-brand-900: #3a2785;
+
+  --color-ink-900: #16151c;
+  --color-ink-700: #3d3b47;
+  --color-ink-500: #6b6878;
+  --color-ink-400: #908da0;
+  --color-ink-300: #c3c1cf;
+  --color-line: #e9e8ef;
+  --color-canvas: #f7f7fa;
+
+  /* 节奏图：曲线 / 付费卡点 / 大反转（已通过色盲分离校验） */
+  --color-curve: #7c5cff;
+  --color-paywall: #e8590c;
+  --color-twist: #0d9488;
+
+  --shadow-card: 0 1px 2px rgb(22 21 28 / 0.04), 0 1px 3px rgb(22 21 28 / 0.06);
+  --shadow-pop: 0 12px 32px -8px rgb(22 21 28 / 0.18), 0 2px 6px rgb(22 21 28 / 0.06);
+
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-slide-up: slide-up 200ms ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-canvas text-ink-900 antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+::selection {
+  @apply bg-brand-200;
+}
+
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-brand-500;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-ink-300/60;
+}
