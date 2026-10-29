@@ -3,5 +3,6 @@ dist
 .DS_Store
 *.log
 tsconfig.tsbuildinfo
-# 页面标注工具的数据（开发期产物）
+# 本地开发工具及其数据，不进仓库
+devtools/
 annotations/
