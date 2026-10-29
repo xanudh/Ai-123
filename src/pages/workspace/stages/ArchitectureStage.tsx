@@ -15,6 +15,7 @@ import { architectureIssues, draftArchitecture, draftMainLine, draftSection, eva
 import type { ArchitectureSection, Direction, IdeaReview } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
+import { useV2 } from '../../../store/uiVersion'
 
 /** 带说明图标的字段名，悬停显示说明 */
 function Tip({ label, tip }: { label: string; tip: string }) {
@@ -420,6 +421,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const [issues, setIssues] = useState<string[]>([])
   const [pending, setPending] = useState<Pending | null>(null)
   const [open, setOpen] = useState<Set<SectionKey>>(() => new Set(['core']))
+  const v2 = useV2()
 
   const total = project.spec.totalEpisodes
   const arch = project.work.architecture ?? emptyArchitecture(total)
@@ -521,8 +523,12 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   /** 已有内容时先确认再覆盖 */
   const guard = (filled: boolean, next: Pending) => (filled ? setPending(next) : next.action())
 
+  const missing = () => [...(project.logline.trim() ? [] : ['核心设定未填写']), ...architectureIssues(arch)]
+  // 版本二：确认前就实时列出还差什么
+  const live = v2 && !approved && !blocked ? missing() : null
+
   const confirm = () => {
-    const found = [...(project.logline.trim() ? [] : ['核心设定未填写']), ...architectureIssues(arch)]
+    const found = missing()
     setIssues(found)
     if (found.length) {
       setOpen((s) => new Set(s).add('core'))
@@ -581,7 +587,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
 
   return (
     <>
-      <Card className={clsx('px-5 py-4', approved && 'border-emerald-200')}>
+      <Card className={clsx('px-5 py-4', approved && 'border-emerald-200', live && 'sticky top-2 z-20')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[13px] text-ink-500">
             <ReviewBadge approved={approved} pendingText="草稿" />
@@ -598,7 +604,22 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
             </Button>
           )}
         </div>
-        {issues.length > 0 && (
+        {live &&
+          (live.length ? (
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-2.5 text-[13px] text-amber-800">
+              <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+              <span>
+                确认前还差 <span className="font-medium tabular-nums">{live.length}</span> 项：{live.slice(0, 3).join('；')}
+                {live.length > 3 && ` 等`}
+              </span>
+            </div>
+          ) : (
+            <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-[13px] text-emerald-800">
+              <CircleCheck size={14} className="shrink-0" />
+              核心大纲已填完，可以确认
+            </div>
+          ))}
+        {!live && issues.length > 0 && (
           <ul className="mt-3 space-y-1 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-700">
             {issues.map((t) => (
               <li key={t}>· {t}</li>
@@ -879,30 +900,12 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
                 )}
               </div>
               <div className="overflow-hidden rounded-lg border border-line">
-                <Table columns={['段落', '集数', '我们的剧情', ...(bd ? ['对标剧'] : []), ...(approved ? [] : [''])]} minWidth={bd ? 940 : 700}>
+                <Table columns={[...(approved ? [] : ['']), '段落', '集数', '我们的剧情', ...(bd ? ['对标剧'] : [])]} minWidth={bd ? 940 : 700}>
                   {arch.mainLine.map((b, i) => {
                     const [from, to] = ranges[i] ?? [1, total]
                     const last = i === arch.mainLine.length - 1
                     return (
                       <tr key={i} className="align-top">
-                        <td className="w-28 px-2 py-1.5">
-                          <InlineInput aria-label={`第 ${i + 1} 段段落名`} value={b.beat} disabled={approved} onChange={(e) => setBeat(i, { beat: e.target.value })} className="font-medium" />
-                        </td>
-                        <td className="w-44 px-2 py-1.5 whitespace-nowrap text-ink-500 tabular-nums">
-                          {last || approved ? (
-                            <span className="inline-block px-2 py-1.5">{rangeLabel([from, to])}</span>
-                          ) : (
-                            <span className="flex items-center gap-1">
-                              <span className="pl-2">第 {from}–</span>
-                              <EpisodeInput label={`${b.beat}结束集`} value={to} max={total - (arch.mainLine.length - 1 - i)} onChange={(v) => setPhaseEnd(i, v)} />
-                              <span>集</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <AutoTextarea inline aria-label={`我们的剧情：${b.beat}`} value={b.content} disabled={approved} onChange={(e) => setBeat(i, { content: e.target.value })} placeholder="这一段发生什么" />
-                        </td>
-                        {bd && <td className="w-64 px-4 py-3 text-xs leading-5 text-ink-500">{bd.mainLine[i]?.content || '—'}</td>}
                         {!approved && (
                           <td className="w-16 px-1 py-1.5 whitespace-nowrap">
                             <button
@@ -934,6 +937,24 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
                             </button>
                           </td>
                         )}
+                        <td className="w-28 px-2 py-1.5">
+                          <InlineInput aria-label={`第 ${i + 1} 段段落名`} value={b.beat} disabled={approved} onChange={(e) => setBeat(i, { beat: e.target.value })} className="font-medium" />
+                        </td>
+                        <td className="w-44 px-2 py-1.5 whitespace-nowrap text-ink-500 tabular-nums">
+                          {last || approved ? (
+                            <span className="inline-block px-2 py-1.5">{rangeLabel([from, to])}</span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <span className="pl-2">第 {from}–</span>
+                              <EpisodeInput label={`${b.beat}结束集`} value={to} max={total - (arch.mainLine.length - 1 - i)} onChange={(v) => setPhaseEnd(i, v)} />
+                              <span>集</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <AutoTextarea inline aria-label={`我们的剧情：${b.beat}`} value={b.content} disabled={approved} onChange={(e) => setBeat(i, { content: e.target.value })} placeholder="这一段发生什么" />
+                        </td>
+                        {bd && <td className="w-64 px-4 py-3 text-xs leading-5 text-ink-500">{bd.mainLine[i]?.content || '—'}</td>}
                       </tr>
                     )
                   })}

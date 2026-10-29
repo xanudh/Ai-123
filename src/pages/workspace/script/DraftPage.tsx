@@ -1,27 +1,83 @@
 import clsx from 'clsx'
-import { ArrowLeft, ArrowRight, ClipboardCheck, FileText, Info, Layers, StickyNote, X } from 'lucide-react'
-import { useState } from 'react'
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, ClipboardCheck, FileText, Info, Lightbulb, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, CheckList, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Card, CardHeader, EmptyState, buttonClass } from '../../../components/ui'
+import { Badge, Card, EmptyState, buttonClass, dotBefore } from '../../../components/ui'
 import { DRAFT_STATUS_META } from '../../../domain/constants'
-import type { DraftReview, EpisodeDraft } from '../../../domain/types'
-import { blueprintOf, draftLabel, draftsOf, scriptOf, wordCount } from '../../../domain/work'
+import { preWriteCheck } from '../../../domain/state'
+import type { DraftReview, DraftRevision, EpisodeDraft, Project } from '../../../domain/types'
+import { blueprintOf, carryOf, draftLabel, draftsOf, plainText, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
 import { nextSeed, reviewDraft, reviseDraft } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
-import { useStateFocus } from '../../../store/statePanel'
+import { STATE_TAB, activeTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
+import { useV2 } from '../../../store/uiVersion'
+import { writeDraft } from './write'
+import { EpisodeSteps } from '../../../v2/EpisodeSteps'
+import { DRAFT_ACTION_LABEL, draftAdvice } from '../../../v2/flow'
 import { useCurrentProject } from '../ProjectLayout'
+import { NotesTab } from './NotesTab'
 import { ScriptEditor } from './ScriptEditor'
-import type { Updater } from './ScriptEditor'
+import type { LinePick, Updater } from './ScriptEditor'
 import { MAX_REVISE_ROUNDS, REVIEW_SCOPE, addDraft, draftPath, finalPath, finalizeDraft, linesSig, patchDraft, reviewCounts, reviseRounds, scriptStagePath } from './ops'
 
 /** 定稿按钮：绿色主按钮 */
 const finalButton =
   'inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50'
+
+/** 本集蓝图 / 审核报告 / 标注并入状态库侧栏，与状态库并列成四个标签页 */
+type SideTab = 'blueprint' | 'reviews' | 'notes'
+
+/** 展开状态库侧栏并切到某个标签页 */
+const openPanel = (tab: SideTab) => {
+  const panel = useStatePanel.getState()
+  panel.setTab(tab)
+  panel.setOpen(true)
+}
+
+/** 审稿结果的一句话概括：先说严重问题，其次建议，都没有时给通过语 */
+const reviewGist = (r: DraftReview) => (r.items.find((i) => i.level === 'block') ?? r.items.find((i) => i.level === 'warn') ?? r.items.find((i) => i.level === 'ok'))?.text ?? '没有发现问题'
+
+/** 版本二：定稿不是建议的下一步时降为描边按钮，仍可直接点 */
+const finalOutline =
+  'inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 text-[13px] font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50'
+
+/** 修稿记录：这一版按哪份审稿改的、改了什么、哪些意见留给编剧 */
+function RevisionCard({ revision, source, project }: { revision: DraftRevision; source?: EpisodeDraft; project: Project }) {
+  return (
+    <div data-revision className="mx-3 rounded-lg border border-line bg-canvas/60 px-3 py-2.5">
+      <div className="text-xs text-ink-500">
+        {source ? (
+          <Link to={draftPath(project, source.id, revision.reviewId)} className="font-medium text-ink-900 hover:text-brand-600">
+            {draftLabel(source)}
+          </Link>
+        ) : (
+          '上一版'
+        )}
+        {revision.reviewNo ? ` 按审稿 #${revision.reviewNo} 改出这一版` : ' 按标注与自检改出这一版（修稿前没有审稿）'}
+      </div>
+      <ul className="mt-1.5 space-y-1 text-[12.5px] leading-5">
+        {revision.changes.map((c) => (
+          <li key={c} className="flex gap-1.5 text-ink-900">
+            <Check size={13} className="mt-1 shrink-0 text-emerald-600" />
+            {c}
+          </li>
+        ))}
+        {revision.manual.map((c) => (
+          <li key={c} className="flex gap-1.5 text-amber-800">
+            <AlertTriangle size={13} className="mt-1 shrink-0 text-amber-500" />
+            <span>需人工：{c}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 export default function DraftPage() {
   const project = useCurrentProject()
@@ -31,9 +87,36 @@ export default function DraftPage() {
   const patchWork = useProjects((s) => s.patchWork)
   const { running, run } = useAiTask()
   const [confirmFinal, setConfirmFinal] = useState(false)
+  const [notice, setNotice] = useState<DraftReview | null>(null)
+  // 正文里选中的段落：状态库侧栏「标注」给它加标注
+  const [pick, setPick] = useState<LinePick | null>(null)
+  const v2 = useV2()
+
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 10000)
+    return () => clearTimeout(t)
+  }, [notice])
 
   const draft = project.work.drafts.find((d) => d.id === draftId)
   useStateFocus(draft ? { kind: 'ep', ep: draft.ep, draftId: draft.id } : null)
+  usePanelTabs(
+    draft
+      ? [
+          { key: 'blueprint', label: '本集蓝图' },
+          { key: 'reviews', label: '审核报告', count: draft.reviews.length },
+          { key: STATE_TAB, label: '状态库' },
+          { key: 'notes', label: '标注', count: draft.notes.length },
+        ]
+      : null,
+  )
+  const slot = useStatePanel((s) => s.slot)
+  const sideTab = useStatePanel((s) => activeTab(s.tabs, s.tab))
+  // 打开某份审核报告（审稿完成、或从目录点进来）时，侧栏切到审核报告
+  const reviewParam = params.get('review')
+  useEffect(() => {
+    if (reviewParam) openPanel('reviews')
+  }, [reviewParam])
   if (!draft) {
     return (
       <Card>
@@ -58,6 +141,7 @@ export default function DraftPage() {
   const final = scriptOf(w, draft.ep)
   const blueprint = blueprintOf(w, draft.ep)
   const reviews = [...draft.reviews].reverse()
+  const carry = carryOf(w, draft.ep)
   const review = draft.reviews.find((r) => r.id === params.get('review'))
   const reviewNo = (r: DraftReview) => draft.reviews.indexOf(r) + 1
   // 兜底：修稿轮数有上限；正文没改过不重复审稿
@@ -65,6 +149,13 @@ export default function DraftPage() {
   const reviseCapped = rounds >= MAX_REVISE_ROUNDS
   const lastReview = draft.reviews.at(-1)
   const reviewed = !!lastReview?.sig && lastReview.sig === linesSig(draft)
+  const nextLabel = `草稿_v${(newest?.version ?? draft.version) + 1}`
+  const source = draft.from ? w.drafts.find((d) => d.id === draft.from) : undefined
+  // 重新生成和写新一集走同一套写作前检查
+  const writeBlock = preWriteCheck(project, draft.ep).find((c) => c.level === 'block')
+  // 版本二：按审稿状态推荐下一步，只有推荐的按钮是主按钮
+  const advice = v2 ? draftAdvice(project, draft) : null
+  const suggested = (action: 'review' | 'revise') => (advice?.action === action ? 'primary' : 'secondary')
 
   /** 在最新数据上改本草稿 */
   const patch = (fn: (d: EpisodeDraft) => Partial<EpisodeDraft>, note?: string) => {
@@ -75,19 +166,30 @@ export default function DraftPage() {
   const setLines: Updater<EpisodeDraft['lines'][number]> = (update) => patch((d) => ({ lines: update(d.lines) }))
   const setNotes: Updater<EpisodeDraft['notes'][number]> = (update) => patch((d) => ({ notes: update(d.notes) }))
 
-  const revise = async () => {
+  /** 只对本集重新写一版正文：生成下一个版本号的草稿，当前版本保留在草稿箱 */
+  const regenerate = async () => {
+    const created = await writeDraft(project.id, draft.ep, run)
+    if (created) navigate(draftPath(project, created.id))
+  }
+
+  /** AI 修稿：审过稿就逐条按审稿意见改（默认最近一份，也可在某份报告里点「按这份意见修稿」），没审稿按标注与自检改 */
+  const revise = async (basisId?: string) => {
     const cur = latestProject(project.id)
     const d = cur?.work.drafts.find((x) => x.id === draft.id)
     if (!cur || !d) return
     if (reviseRounds(cur.work, d.ep) >= MAX_REVISE_ROUNDS) return toast(`第 ${d.ep} 集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮，请人工修改或直接定稿`, 'error')
-    const result = await run('revise', (signal) => reviseDraft(cur, d, nextSeed(), signal))
+    const basis = d.reviews.find((r) => r.id === basisId) ?? d.reviews.at(-1)
+    const result = await run('revise', (signal) => reviseDraft(cur, d, nextSeed(), basis, signal))
     if (!result) return
     const latest = latestProject(project.id)
     if (!latest) return
-    const { draft: created, drafts } = addDraft(latest.work, d.ep, { title: d.title, lines: result.lines, states: d.states }, d.id)
-    patchWork(project.id, { drafts }, `AI 修稿：第 ${d.ep} 集 ${draftLabel(created)}`)
-    toast(`已生成 ${draftLabel(created)}：${result.changes.join('；')}`)
+    const revision: DraftRevision = { ...(basis && { reviewId: basis.id, reviewNo: d.reviews.indexOf(basis) + 1 }), changes: result.changes, manual: result.manual }
+    const { draft: created, drafts } = addDraft(latest.work, d.ep, { title: d.title, lines: result.lines, states: d.states }, d.id, revision)
+    patchWork(project.id, { drafts }, `AI 修稿：第 ${d.ep} 集 ${draftLabel(created)}${basis ? `（按审稿 #${revision.reviewNo}）` : ''}`)
+    toast(`已生成 ${draftLabel(created)}${basis ? `（按审稿 #${revision.reviewNo}）` : ''}${result.manual.length ? `，${result.manual.length} 条意见需人工处理` : ''}`)
     navigate(draftPath(project, created.id))
+    // 新版本打开时侧栏停在审核报告，先看这一版按意见改了什么
+    openPanel('reviews')
   }
 
   const audit = async () => {
@@ -98,8 +200,7 @@ export default function DraftPage() {
     if (!result) return
     const r: DraftReview = { id: newId(), at: new Date().toISOString(), ...result, sig: linesSig(d) }
     patch((x) => ({ reviews: [...x.reviews, r] }), `AI 审稿：第 ${d.ep} 集 ${draftLabel(d)}`)
-    const { block, warn } = reviewCounts(r)
-    toast(block ? `审稿完成：${block} 项严重问题` : warn ? `审稿完成：${warn} 条建议` : '审稿通过，可以定稿')
+    setNotice(r)
     setParams({ review: r.id })
   }
 
@@ -121,35 +222,56 @@ export default function DraftPage() {
       </Link>
 
       {/* 顶栏：标题 · 字数 · 状态 · 修稿 / 审稿 / 定稿 */}
-      <Card className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="shrink-0 text-[15px] font-semibold text-ink-900 tabular-nums">第 {draft.ep} 集 —</span>
-          {editable ? (
-            <InlineInput aria-label="本集标题" value={draft.title} onChange={(e) => patch(() => ({ title: e.target.value }))} placeholder="本集标题" className="w-56 text-[15px] font-semibold" />
-          ) : (
-            <span className="truncate text-[15px] font-semibold text-ink-900">{draft.title || '未命名'}</span>
-          )}
-          <span className="text-[13px] text-ink-400">v{draft.version}</span>
-          <span className="text-[13px] text-ink-500 tabular-nums">{wordCount(draft).toLocaleString()} 字</span>
-          <Badge tone={meta.tone}>{meta.label}</Badge>
-          {draft.notes.length > 0 && <Badge tone="amber">{draft.notes.length} 条标注</Badge>}
+      <Card className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-[15px] font-semibold text-ink-900 tabular-nums">第 {draft.ep} 集</span>
+            {editable ? (
+              <InlineInput aria-label="本集标题" value={draft.title} onChange={(e) => patch(() => ({ title: e.target.value }))} placeholder="本集标题" className="w-48 text-[15px] font-semibold" />
+            ) : (
+              <span className="truncate text-[15px] font-semibold text-ink-900">{draft.title || '未命名'}</span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs whitespace-nowrap text-ink-500">
+            {/* 版本名里已经有「草稿」，状态只在已修稿 / 已定稿时单独标出 */}
+            {draft.status !== 'draft' && <Badge tone={meta.tone}>{meta.label}</Badge>}
+            <span>{draftLabel(draft)}</span>
+            <span className={clsx(dotBefore, 'tabular-nums')}>{wordCount(draft).toLocaleString()} 字</span>
+            <button type="button" data-open-notes onClick={() => openPanel('notes')} className={clsx(dotBefore, draft.notes.length ? 'text-amber-700 hover:text-amber-800' : 'hover:text-brand-600')}>
+              {draft.notes.length ? `${draft.notes.length} 条标注` : '加标注'}
+            </button>
+            {draft.revision && (
+              <button type="button" onClick={() => openPanel('reviews')} className={clsx(dotBefore, 'hover:text-brand-600')}>
+                {draft.revision.reviewNo ? `按审稿 #${draft.revision.reviewNo} 修改` : 'AI 修稿生成'}
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <AiButton
             variant="secondary"
+            loading={running === 'write'}
+            disabled={!!running || !!writeBlock}
+            title={writeBlock ? writeBlock.text : `只对第 ${draft.ep} 集按蓝图重新写一版正文，生成 ${nextLabel}；当前版本保留在草稿箱`}
+            onClick={regenerate}
+          >
+            重新生成
+          </AiButton>
+          <AiButton
+            variant={suggested('revise')}
             loading={running === 'revise'}
             disabled={!!running || reviseCapped}
             title={
               reviseCapped
                 ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮：请按审稿意见人工修改，或直接定稿`
-                : `按标注与审稿意见改出新版本 草稿_v${(newest?.version ?? draft.version) + 1}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
+                : `${lastReview ? `按审稿 #${draft.reviews.length} 的意见逐条修改` : '还没审稿：按标注与自检修改（先 AI 审稿，可按审稿意见逐条改）'}${draft.notes.length ? `，${draft.notes.length} 条标注一并改写` : ''}，生成 ${nextLabel}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
             }
-            onClick={revise}
+            onClick={() => revise()}
           >
             AI 修稿
           </AiButton>
           <span className="flex items-center gap-1">
-            <AiButton variant="secondary" loading={running === 'review'} disabled={!!running || reviewed} title={reviewed ? '正文自上次审稿后没有改动，无需重复审稿' : undefined} onClick={audit}>
+            <AiButton variant={suggested('review')} loading={running === 'review'} disabled={!!running || reviewed} title={reviewed ? '正文自上次审稿后没有改动，无需重复审稿' : undefined} onClick={audit}>
               AI 审稿
             </AiButton>
             <span className="group relative">
@@ -175,11 +297,25 @@ export default function DraftPage() {
               </div>
             </span>
           </span>
-          <button type="button" className={finalButton} disabled={draft.status === 'final' || !!running} onClick={() => (final ? setConfirmFinal(true) : finalize())}>
+          <button type="button" className={advice && advice.action !== 'final' ? finalOutline : finalButton} disabled={draft.status === 'final' || !!running} onClick={() => (final ? setConfirmFinal(true) : finalize())}>
             <ClipboardCheck size={14} />
             {draft.status === 'final' ? '已定稿' : '定稿'}
           </button>
         </div>
+        {v2 && (
+          <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-2.5">
+            <EpisodeSteps project={project} ep={draft.ep} here={newest?.id === draft.id ? (params.get('review') ? '审稿' : '草稿') : undefined} />
+            {advice && (
+              <span className="flex min-w-0 items-start gap-1.5 text-[13px] text-ink-700" data-v2="advice">
+                <Lightbulb size={14} className="mt-0.5 shrink-0 text-brand-500" />
+                <span>
+                  建议下一步：<span className="font-medium text-brand-700">{DRAFT_ACTION_LABEL[advice.action]}</span>
+                  <span className="text-ink-500"> —— {advice.text}</span>
+                </span>
+              </span>
+            )}
+          </div>
+        )}
       </Card>
 
       {reviseCapped && draft.status === 'draft' && (
@@ -210,114 +346,153 @@ export default function DraftPage() {
         </p>
       )}
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_272px]">
-        <div className="min-w-0 space-y-4">
-          {review && (
-            <Card>
-              <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <h3 className="text-[15px] font-semibold text-ink-900">审查报告 #{reviewNo(review)}</h3>
-                  <span className="text-xs text-ink-400">{formatDateTime(review.at)}</span>
-                  <span className={clsx('text-[13px] font-semibold tabular-nums', review.score >= 4 ? 'text-emerald-700' : review.score >= 3 ? 'text-amber-700' : 'text-red-600')}>{review.score} / 5</span>
-                </div>
-                <button type="button" aria-label="关闭审查报告" onClick={() => setParams({})} className="rounded-md p-1 text-ink-400 hover:bg-canvas hover:text-ink-700">
-                  <X size={15} />
-                </button>
-              </div>
-              <div className="space-y-3 px-5 py-4">
-                <CheckList items={review.items} />
-                <p className="text-xs text-ink-400">AI 修稿会按审稿意见与标注改出新版本，原版本保留在草稿箱</p>
-              </div>
-            </Card>
-          )}
+      <ScriptEditor
+        project={project}
+        lines={draft.lines}
+        readOnly={!editable}
+        showEn={false}
+        onLines={setLines}
+        notes={draft.notes}
+        onNotes={setNotes}
+        onPick={setPick}
+        tips={['要标注某段：点选后在状态库的「标注」里写下问题，AI 修稿时一并改写']}
+      />
 
-          <p className="text-xs text-ink-400">
-            {editable ? '点选任意一段：上方浮出工具条，可标注、添加到助手，或用 AI 改写 / 润色 / 扩写 / 续写 / 改成对话；框选部分文字时只改选中的部分。修改自动保存。' : '只读版本：点选一段仍可添加标注，AI 修稿时会按标注改写。'}
-          </p>
-          <ScriptEditor project={project} lines={draft.lines} readOnly={!editable} showEn={false} onLines={setLines} notes={draft.notes} onNotes={setNotes} />
-        </div>
-
-        {/* 侧栏：审查报告 / 标注 / 本集蓝图 */}
-        <div className="space-y-4 xl:sticky xl:top-4">
-          <Card>
-            <CardHeader title="审查报告" desc={reviews.length ? `${reviews.length} 份` : '还没有审稿'} />
-            {reviews.length ? (
-              <ul className="p-1.5">
-                {reviews.map((r) => {
-                  const { block, warn } = reviewCounts(r)
-                  return (
-                    <li key={r.id}>
-                      <button
-                        type="button"
-                        onClick={() => setParams({ review: r.id })}
-                        className={clsx('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px]', review?.id === r.id ? 'bg-brand-50' : 'hover:bg-canvas')}
-                      >
-                        <span className="font-medium text-ink-900">#{reviewNo(r)}</span>
-                        <span className="flex-1 text-xs text-ink-400">{formatDateTime(r.at)}</span>
-                        <span className="text-xs tabular-nums">
-                          <span className={block ? 'text-red-600' : 'text-ink-400'}>{block} 严重</span>
-                          <span className="text-ink-300"> · </span>
-                          <span className={warn ? 'text-amber-700' : 'text-ink-400'}>{warn} 建议</span>
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="px-5 py-3 text-xs text-ink-400">点击上方「AI 审稿」生成审查报告</p>
-            )}
-          </Card>
-
-          <Card>
-            <CardHeader title={<span className="flex items-center gap-1.5"><StickyNote size={14} className="text-amber-500" />标注</span>} desc={draft.notes.length ? `${draft.notes.length} 条，AI 修稿时一并改写` : '点选一行即可标注'} />
-            {draft.notes.length > 0 && (
-              <ul className="space-y-1.5 px-4 py-3">
-                {draft.notes.map((n) => {
-                  const at = draft.lines.findIndex((l) => l.id === n.lineId)
-                  return (
-                    <li key={n.id} className="text-[12.5px] leading-5">
-                      <span className="mr-1 text-ink-400 tabular-nums">{at >= 0 ? `第 ${at + 1} 行` : '原行已删除'}</span>
-                      <span className="text-ink-900">{n.text}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </Card>
-
-          <Card>
-            <CardHeader
-              title={<span className="flex items-center gap-1.5"><Layers size={14} className="text-ink-400" />本集蓝图</span>}
-              action={
-                <Link to={`${scriptStagePath(project)}?ep=${draft.ep}`} className="text-xs text-brand-600 hover:text-brand-700">
+      {/* 本集蓝图 / 审核报告 / 标注：填进状态库侧栏对应的标签页 */}
+      {slot &&
+        createPortal(
+          sideTab === 'blueprint' ? (
+            <div className="px-4">
+              <div className="mb-2.5 flex items-baseline justify-between gap-2">
+                <span className="truncate text-[13px] font-medium text-ink-900">
+                  第 {draft.ep} 集{blueprint?.title ? ` · ${blueprint.title}` : ''}
+                </span>
+                <Link to={`${scriptStagePath(project)}?ep=${draft.ep}`} className="shrink-0 text-xs text-brand-600 hover:text-brand-700">
                   编辑
                 </Link>
-              }
-            />
-            {blueprint ? (
-              <dl className="space-y-2 px-4 py-3 text-[12.5px] leading-5">
-                {[
-                  ['定位', blueprint.position],
-                  ['小目标', blueprint.goal],
-                  ['冲突与转折', blueprint.conflict],
-                  ['末尾钩子', blueprint.hook],
-                  ['作者微操指导', blueprint.guidance],
-                ]
-                  .filter(([, v]) => v.trim())
-                  .map(([k, v]) => (
-                    <div key={k}>
-                      <dt className="text-ink-400">{k}</dt>
-                      <dd className="text-ink-900">{v}</dd>
-                    </div>
-                  ))}
-              </dl>
-            ) : (
-              <p className="px-4 py-3 text-xs text-ink-400">本集还没有蓝图</p>
-            )}
-          </Card>
+              </div>
+              {blueprint ? (
+                <dl className="space-y-2.5 text-[12.5px] leading-5">
+                  {[
+                    { k: '定位', v: blueprint.position },
+                    { k: '小目标', v: blueprint.goal },
+                    { k: '冲突与转折', v: blueprint.conflict },
+                    { k: '承接', v: carry ? plainText(carry.text) : '', note: carry?.auto ? '默认接上集结尾' : undefined },
+                    { k: '末尾钩子', v: blueprint.hook },
+                    { k: '作者微操指导', v: blueprint.guidance },
+                  ]
+                    .filter(({ v }) => v.trim())
+                    .map(({ k, v, note }) => (
+                      <div key={k}>
+                        <dt className="text-ink-400">
+                          {k}
+                          {note && <span className="ml-1.5 text-[11px] text-ink-300">{note}</span>}
+                        </dt>
+                        <dd className="text-ink-900">{v}</dd>
+                      </div>
+                    ))}
+                </dl>
+              ) : (
+                <p className="text-xs text-ink-400">本集还没有蓝图</p>
+              )}
+            </div>
+          ) : sideTab === 'reviews' ? (
+            <div className="space-y-2">
+              {draft.revision && <RevisionCard revision={draft.revision} source={source} project={project} />}
+              {reviews.length ? (
+                <ul className="px-1.5">
+                  {reviews.map((r) => {
+                    const { block, warn } = reviewCounts(r)
+                    const shown = review?.id === r.id
+                    return (
+                      <li key={r.id}>
+                        <button
+                          type="button"
+                          aria-expanded={shown}
+                          onClick={() => setParams(shown ? {} : { review: r.id })}
+                          className={clsx('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px]', shown ? 'bg-brand-50' : 'hover:bg-canvas')}
+                        >
+                          <span className="font-medium text-ink-900">#{reviewNo(r)}</span>
+                          <span className="flex-1 text-xs text-ink-400">{formatDateTime(r.at)}</span>
+                          <span className="text-xs tabular-nums">
+                            <span className={block ? 'text-red-600' : 'text-ink-400'}>{block} 严重</span>
+                            <span className="text-ink-300"> · </span>
+                            <span className={warn ? 'text-amber-700' : 'text-ink-400'}>{warn} 建议</span>
+                          </span>
+                        </button>
+                        {shown && (
+                          <div data-review-detail className="space-y-2.5 px-2.5 pt-1 pb-3">
+                            <div className="text-xs text-ink-500">
+                              评分 <span className={clsx('text-[13px] font-semibold tabular-nums', r.score >= 4 ? 'text-emerald-700' : r.score >= 3 ? 'text-amber-700' : 'text-red-600')}>{r.score} / 5</span>
+                            </div>
+                            <CheckList items={r.items} />
+                            {block + warn > 0 && (
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <AiButton size="sm" variant="secondary" loading={running === 'revise'} disabled={!!running || reviseCapped} title={reviseCapped ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮` : undefined} onClick={() => revise(r.id)}>
+                                  按这份意见修稿
+                                </AiButton>
+                                <span className="text-xs text-ink-400">生成 {nextLabel}，原版本保留</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="px-4 text-xs text-ink-400">{draft.revision ? '这一版还没审过：再点「AI 审稿」确认意见都改到了' : '点击页面上方「AI 审稿」生成审核报告'}</p>
+              )}
+            </div>
+          ) : sideTab === 'notes' ? (
+            <NotesTab lines={draft.lines} notes={draft.notes} pick={pick} onNotes={setNotes} footer="AI 修稿时一并改写" />
+          ) : null,
+          slot,
+        )}
+
+      {/* 审稿完成的提示框：只给结论，详情在状态库侧栏的审核报告里看 */}
+      {notice && (
+        <div role="status" data-review-notice className="fixed top-20 left-1/2 z-50 w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 animate-slide-up rounded-xl border border-line bg-white p-4 shadow-pop">
+          {(() => {
+            const { block, warn } = reviewCounts(notice)
+            const passed = !block && !warn
+            return (
+              <div className="flex gap-3">
+                {block ? <AlertTriangle size={20} className="mt-0.5 shrink-0 text-red-500" /> : passed ? <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-emerald-500" /> : <Info size={20} className="mt-0.5 shrink-0 text-amber-500" />}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[14px] font-semibold text-ink-900">审稿完成</span>
+                    <span className={clsx('text-[13px] font-semibold tabular-nums', notice.score >= 4 ? 'text-emerald-700' : notice.score >= 3 ? 'text-amber-700' : 'text-red-600')}>{notice.score} / 5</span>
+                    <span className="text-xs text-ink-500 tabular-nums">
+                      {block} 严重 · {warn} 建议
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[13px] leading-5 text-ink-700">{passed ? '审稿通过，可以定稿' : reviewGist(notice)}</p>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button type="button" onClick={() => setNotice(null)} className={buttonClass('ghost', 'sm')}>
+                      知道了
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openPanel('reviews')
+                        setNotice(null)
+                        requestAnimationFrame(() => document.querySelector('[data-review-detail]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+                      }}
+                      className={buttonClass('secondary', 'sm')}
+                    >
+                      查看详情
+                    </button>
+                  </div>
+                </div>
+                <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)} className="-mt-1 -mr-1 self-start rounded-md p-1 text-ink-400 hover:bg-canvas hover:text-ink-700">
+                  <X size={14} />
+                </button>
+              </div>
+            )
+          })()}
         </div>
-      </div>
+      )}
 
       <ConfirmDialog
         open={confirmFinal}

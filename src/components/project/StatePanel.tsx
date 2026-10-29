@@ -5,12 +5,15 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { episodeSnapshot, overallSnapshot, phaseSnapshot } from '../../domain/snapshot'
 import type { CastEntry, ForeshadowAt, StateFocus } from '../../domain/snapshot'
-import type { Project } from '../../domain/types'
-import { foreshadowName, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
+import type { PlanEventKind, Project } from '../../domain/types'
+import { PLAN_EVENT_META } from '../../domain/constants'
+import { foreshadowName, phaseNames, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
 import type { ForeshadowStatus } from '../../domain/work'
-import { useStatePanel } from '../../store/statePanel'
+import { STATE_TAB, activeTab, useStatePanel } from '../../store/statePanel'
 import { CheckList } from '../stage/StageKit'
-import { Badge, Segmented } from '../ui'
+import { EventForm } from './EventForm'
+import { LateFix } from './LateFix'
+import { Badge, Segmented, Select } from '../ui'
 
 type Tab = 'ep' | 'phase' | 'all'
 
@@ -56,44 +59,106 @@ function CastList({ cast, phase }: { cast: CastEntry[]; phase?: boolean }) {
   )
 }
 
-function ForeshadowList({ list, empty }: { list: ForeshadowAt[]; empty: string }) {
+const fixKey = (f: { item: { id: string } }) => `fix-${f.item.id}`
+
+/** 超期的伏笔：展开处理（确认定稿 / 改期 / 不要了） */
+function FixToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button type="button" aria-expanded={open} onClick={onClick} className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">
+      处理
+    </button>
+  )
+}
+
+/** 计划在这一集埋 / 收、还没记事件的伏笔：这一集定稿后可以就地确认定稿事件 */
+const confirmKind = (f: ForeshadowAt, ep: number): PlanEventKind | undefined => {
+  if (f.item.events.some((e) => e.ep === ep)) return undefined
+  if (f.item.payoffEp === ep && f.status !== '已回收' && f.plantedIn !== null) return 'payoff'
+  if (f.item.plantEp === ep && f.status === '已计划') return 'plant'
+}
+
+function ForeshadowList({ list, empty, project, ep }: { list: ForeshadowAt[]; empty: string; project?: Project; ep?: number }) {
+  const [open, setOpen] = useState<string | null>(null)
   if (!list.length) return <Empty>{empty}</Empty>
+  const final = project && ep !== undefined && project.work.scripts.some((s) => s.ep === ep)
   return (
     <ul className="space-y-2">
-      {list.map((f) => (
-        <li key={f.item.id} className="text-[12.5px] leading-5">
-          <div className="flex items-center gap-1.5">
-            <span className="min-w-0 flex-1 truncate font-medium text-ink-900" title={foreshadowName(f.item)}>
-              {foreshadowName(f.item) || '未命名计划'}
-            </span>
-            <Badge tone={STATUS_TONE[f.status]}>{f.status}</Badge>
-          </div>
-          <p className="text-xs text-ink-400 tabular-nums">
-            {f.item.type} · 计划第 {f.item.plantEp} → {f.item.payoffEp} 集
-            {f.plantedIn !== null && ` · 实际第 ${f.plantedIn}${f.paidIn !== null ? ` → ${f.paidIn}` : ''} 集`}
-          </p>
-          {f.task && <p className="text-brand-700">{f.task}</p>}
-          {f.alert && (
-            <p className="flex items-start gap-1 text-amber-800">
-              <AlertTriangle size={12} className="mt-1 shrink-0" />
-              {f.alert}
+      {list.map((f) => {
+        const kind = project && ep !== undefined ? confirmKind(f, ep) : undefined
+        const action = kind && (
+          <button
+            type="button"
+            aria-expanded={open === f.item.id}
+            disabled={!final}
+            title={final ? `在第 ${ep} 集定稿里确认${PLAN_EVENT_META[kind].label}` : `第 ${ep} 集定稿后才能确认`}
+            onClick={() => setOpen((v) => (v === f.item.id ? null : f.item.id))}
+            className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:text-ink-300"
+          >
+            {final ? '确认定稿' : '定稿后可确认'}
+          </button>
+        )
+        return (
+          <li key={f.item.id} className="text-[12.5px] leading-5">
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate font-medium text-ink-900" title={foreshadowName(f.item)}>
+                {foreshadowName(f.item) || '未命名计划'}
+              </span>
+              <Badge tone={STATUS_TONE[f.status]}>{f.status}</Badge>
+            </div>
+            <p className="text-xs text-ink-400 tabular-nums">
+              {f.item.type} · 计划第 {f.item.plantEp} → {f.item.payoffEp} 集
+              {f.plantedIn !== null && ` · 实际第 ${f.plantedIn}${f.paidIn !== null ? ` → ${f.paidIn}` : ''} 集`}
             </p>
-          )}
-        </li>
-      ))}
+            {f.task && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-brand-700">{f.task}</p>
+                {action}
+              </div>
+            )}
+            {f.alert && (
+              <div className="flex items-start justify-between gap-2">
+                <p className="flex items-start gap-1 text-amber-800">
+                  <AlertTriangle size={12} className="mt-1 shrink-0" />
+                  {f.alert}
+                </p>
+                {!f.task && (action || (project && f.late && <FixToggle open={open === fixKey(f)} onClick={() => setOpen((v) => (v === fixKey(f) ? null : fixKey(f)))} />))}
+              </div>
+            )}
+            {!f.task && !f.alert && action && <div className="text-right">{action}</div>}
+            {project && f.late && open === fixKey(f) && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
+                <LateFix project={project} f={f.item} late={f.late} onDone={() => setOpen(null)} />
+              </div>
+            )}
+            {kind && open === f.item.id && project && (
+              <div className="mt-2 rounded-lg border border-line bg-canvas/60 p-2.5">
+                <EventForm project={project} f={f.item} ep={ep} kind={kind} onDone={() => setOpen(null)} />
+              </div>
+            )}
+          </li>
+        )
+      })}
     </ul>
   )
 }
 
-function Stepper({ label, onPrev, onNext }: { label: ReactNode; onPrev?: () => void; onNext?: () => void }) {
+/** 下拉直接跳到任意一集 / 一段，两侧箭头逐个翻 */
+function Stepper({ label, value, options, onChange }: { label: string; value: number; options: { value: number; label: string }[]; onChange: (value: number) => void }) {
   const btn = 'rounded-md p-1 text-ink-500 hover:bg-canvas hover:text-ink-900 disabled:opacity-30 disabled:hover:bg-transparent'
+  const i = options.findIndex((o) => o.value === value)
   return (
     <div className="flex items-center gap-1">
-      <button type="button" className={btn} aria-label="上一个" disabled={!onPrev} onClick={onPrev}>
+      <button type="button" className={btn} aria-label="上一个" disabled={i <= 0} onClick={() => onChange(options[i - 1].value)}>
         <ChevronLeft size={15} />
       </button>
-      <span className="min-w-16 text-center text-[13px] font-semibold text-ink-900 tabular-nums">{label}</span>
-      <button type="button" className={btn} aria-label="下一个" disabled={!onNext} onClick={onNext}>
+      <Select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 w-auto max-w-40 px-2 text-[13px] font-semibold tabular-nums">
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+      <button type="button" className={btn} aria-label="下一个" disabled={i < 0 || i >= options.length - 1} onClick={() => onChange(options[i + 1].value)}>
         <ChevronRight size={15} />
       </button>
     </div>
@@ -137,7 +202,7 @@ function EpisodeView({ project, ep, draftId }: { project: Project; ep: number; d
       </div>
 
       <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
-        <ForeshadowList list={s.foreshadows} empty="本集没有要埋、要收或进行中的伏笔" />
+        <ForeshadowList list={s.foreshadows} empty="本集没有要埋、要收或进行中的伏笔" project={project} ep={ep} />
       </Section>
 
       <Section icon={<Users size={14} />} title="人物 · 截至本集" count={s.cast.length}>
@@ -259,6 +324,31 @@ function Meter({ label, value, total }: { label: string; value: number; total: n
 
 /* ---------------------------------- 全剧 ---------------------------------- */
 
+/** 全剧需处理：逾期的可以就地处理，沉寂的只提醒 */
+function AlertList({ project, alerts }: { project: Project; alerts: ReturnType<typeof overallSnapshot>['alerts'] }) {
+  const [open, setOpen] = useState<string | null>(null)
+  return (
+    <ul className="space-y-1.5 text-[12.5px] leading-5">
+      {alerts.map((f) => (
+        <li key={f.item.id}>
+          <div className="flex items-start justify-between gap-2">
+            <p>
+              <span className="font-medium text-ink-900">{foreshadowName(f.item)}</span>
+              <span className="ml-1.5 text-amber-800">{f.overdue}</span>
+            </p>
+            {f.late && <FixToggle open={open === fixKey(f)} onClick={() => setOpen((v) => (v === fixKey(f) ? null : fixKey(f)))} />}
+          </div>
+          {f.late && open === fixKey(f) && (
+            <div className="mt-1.5 mb-1 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
+              <LateFix project={project} f={f.item} late={f.late} onDone={() => setOpen(null)} />
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function OverallView({ project }: { project: Project }) {
   const s = overallSnapshot(project)
   const { lib } = s
@@ -285,14 +375,7 @@ function OverallView({ project }: { project: Project }) {
 
       <Section icon={<AlertTriangle size={14} />} title="需处理" count={s.alerts.length}>
         {s.alerts.length ? (
-          <ul className="space-y-1.5 text-[12.5px] leading-5">
-            {s.alerts.map((f) => (
-              <li key={f.item.id}>
-                <span className="font-medium text-ink-900">{foreshadowName(f.item)}</span>
-                <span className="ml-1.5 text-amber-800">{f.overdue}</span>
-              </li>
-            ))}
-          </ul>
+          <AlertList project={project} alerts={s.alerts} />
         ) : (
           <Empty>没有逾期或沉寂的伏笔</Empty>
         )}
@@ -359,9 +442,10 @@ function OverallView({ project }: { project: Project }) {
 const tabsOf = (f: StateFocus): Tab[] => (f.kind === 'ep' ? ['ep', 'phase', 'all'] : f.kind === 'phase' ? ['phase', 'all'] : ['all'])
 const TAB_LABEL: Record<Tab, string> = { ep: '本集', phase: '本阶段', all: '全剧' }
 
-/** 剧本状态库侧栏：情节大纲、伏笔与线索、逐集剧本页面可随时展开核对 */
+/** 剧本状态库侧栏：情节大纲、伏笔与线索、逐集剧本页面可随时展开核对；页面登记了标签页时（如草稿页）与之并列 */
 export function StatePanel({ project }: { project: Project }) {
-  const { open, focus, setOpen } = useStatePanel()
+  const { open, focus, setOpen, tabs: pageTabs, tab: pageTab, setTab: setPageTab, setSlot } = useStatePanel()
+  const shown = activeTab(pageTabs, pageTab)
   const total = project.spec.totalEpisodes
   const ranges = projectPhases(project)
 
@@ -406,11 +490,12 @@ export function StatePanel({ project }: { project: Project }) {
 
   const ep = view.kind === 'ep' ? view.ep : null
   const phase = view.kind === 'phase' ? view.index : ep !== null ? phaseOf(ep, ranges) : phaseOf(1, ranges)
-  const stepEp = (d: number) => ep !== null && setView({ kind: 'ep', ep: ep + d })
-  const stepPhase = (d: number) => setView(ep !== null ? { kind: 'ep', ep: ranges[phase + d][0] } : { kind: 'phase', index: phase + d })
+  const toEp = (n: number) => setView({ kind: 'ep', ep: n })
+  const toPhase = (i: number) => setView(ep !== null ? { kind: 'ep', ep: ranges[i][0] } : { kind: 'phase', index: i })
+  const names = phaseNames(project)
 
   return (
-    <aside aria-label="剧本状态库" className="fixed top-0 right-0 z-30 flex h-dvh w-[380px] max-w-[92vw] animate-fade-in flex-col border-l border-line bg-white shadow-pop">
+    <aside aria-label="剧本状态库" className="fixed top-16 right-0 bottom-12 z-30 flex w-[380px] max-w-[92vw] animate-fade-in flex-col border-l border-line bg-white shadow-pop xl:shadow-none">
       <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-1.5 text-[14px] font-semibold text-ink-900">
           <Database size={15} className="text-brand-600" />
@@ -421,26 +506,56 @@ export function StatePanel({ project }: { project: Project }) {
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-        <Segmented<Tab> value={tab} onChange={setTab} options={tabsOf(focus).map((t) => ({ value: t, label: TAB_LABEL[t] }))} />
-        {tab === 'ep' && ep !== null && <Stepper label={`第 ${ep} 集`} onPrev={ep > 1 ? () => stepEp(-1) : undefined} onNext={ep < total ? () => stepEp(1) : undefined} />}
-        {tab === 'phase' && <Stepper label={`第 ${phase + 1} 段`} onPrev={phase > 0 ? () => stepPhase(-1) : undefined} onNext={phase < ranges.length - 1 ? () => stepPhase(1) : undefined} />}
-      </div>
-      {JSON.stringify(view) !== focusKey && (
-        <button type="button" onClick={() => setView(focus)} className="mx-4 mb-2 rounded-md bg-brand-50 px-2.5 py-1.5 text-left text-xs text-brand-700 hover:bg-brand-100">
-          正在查看其他位置 · 回到当前页面选中的位置
-        </button>
+      {pageTabs && (
+        <div role="tablist" aria-label="侧栏内容" className="flex border-b border-line px-2">
+          {pageTabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={t.key === shown}
+              onClick={() => setPageTab(t.key)}
+              className={clsx(
+                '-mb-px flex flex-1 items-center justify-center gap-1 border-b-2 px-1 py-2.5 text-[13px] whitespace-nowrap transition-colors',
+                t.key === shown ? 'border-brand-600 font-medium text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-900',
+              )}
+            >
+              {t.label}
+              {!!t.count && <span className="text-[11px] font-normal text-ink-400 tabular-nums">{t.count}</span>}
+            </button>
+          ))}
+        </div>
       )}
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-4">
-        {tab === 'ep' && ep !== null ? (
-          <EpisodeView project={project} ep={ep} draftId={view.kind === 'ep' && focus.kind === 'ep' && focus.ep === ep ? focus.draftId : undefined} />
-        ) : tab === 'phase' ? (
-          <PhaseView project={project} index={phase} />
-        ) : (
-          <OverallView project={project} />
-        )}
-      </div>
+      {shown !== STATE_TAB ? (
+        // 页面的标签页：内容由页面用 portal 填进来
+        <div key={shown} ref={setSlot} role="tabpanel" data-panel-tab={shown} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-3" />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+            <Segmented<Tab> value={tab} onChange={setTab} options={tabsOf(focus).map((t) => ({ value: t, label: TAB_LABEL[t] }))} />
+            {tab === 'ep' && ep !== null && (
+              <Stepper label="选择集" value={ep} options={Array.from({ length: total }, (_, k) => ({ value: k + 1, label: `第 ${k + 1} 集` }))} onChange={toEp} />
+            )}
+            {tab === 'phase' && <Stepper label="选择阶段" value={phase} options={ranges.map((_, k) => ({ value: k, label: `第 ${k + 1} 段 · ${names[k]}` }))} onChange={toPhase} />}
+          </div>
+          {JSON.stringify(view) !== focusKey && (
+            <button type="button" onClick={() => setView(focus)} className="mx-4 mb-2 rounded-md bg-brand-50 px-2.5 py-1.5 text-left text-xs text-brand-700 hover:bg-brand-100">
+              正在查看其他位置 · 回到当前页面选中的位置
+            </button>
+          )}
+
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-4">
+            {tab === 'ep' && ep !== null ? (
+              <EpisodeView project={project} ep={ep} draftId={view.kind === 'ep' && focus.kind === 'ep' && focus.ep === ep ? focus.draftId : undefined} />
+            ) : tab === 'phase' ? (
+              <PhaseView project={project} index={phase} />
+            ) : (
+              <OverallView project={project} />
+            )}
+          </div>
+        </>
+      )}
     </aside>
   )
 }

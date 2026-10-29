@@ -1,7 +1,7 @@
 import { newId } from '../lib/id'
-import { VIEWPOINTS } from './constants'
+import { PLAN_EVENT_META, VIEWPOINTS } from './constants'
 import { MAIN_LINE, STAGES } from './pipeline'
-import type { Architecture, Character, EpisodeDraft, EpisodeScript, Foreshadow, PlanEventKind, Project, ProjectWork, RhythmFrame, ScriptLine, StageKey } from './types'
+import type { Architecture, Character, EpisodeDraft, EpisodeScript, Foreshadow, PlanEvent, PlanEventKind, Project, ProjectWork, RhythmFrame, ScriptLine, StageKey } from './types'
 
 export const emptyWork = (): ProjectWork => ({
   video: null,
@@ -175,12 +175,41 @@ interface HasLines {
 }
 
 /** 剧本字数：中文行去掉空白后的字符数 */
-export const wordCount = (script: HasLines) => script.lines.reduce((n, l) => n + l.zh.replace(/\s/g, '').length, 0)
+/** 去掉正文里的 Markdown 行内标记（**加粗** / *斜体*），用于计数、导出与只读展示 */
+export const plainText = (zh: string) => zh.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1')
 
-export const scriptText = (script: HasLines) => script.lines.map((l) => l.zh).join('\n')
+export const wordCount = (script: HasLines) => script.lines.reduce((n, l) => n + plainText(l.zh).replace(/\s/g, '').length, 0)
+
+export const scriptText = (script: HasLines) => script.lines.map((l) => plainText(l.zh)).join('\n')
+
+/** 定稿集的名字：第 3 集 · 定稿 v2（版本号取自来源草稿） */
+export const finalLabel = (p: Project, s: EpisodeScript) => {
+  const d = p.work.drafts.find((x) => x.id === s.draftId)
+  return `第 ${s.ep} 集 · 定稿${d ? ` v${d.version}` : ''}`
+}
+
+/** 定稿事件的证据必须逐字摘自这一集定稿（不计加粗 / 斜体标记与首尾空白） */
+export const evidenceIn = (script: HasLines, quote: string) => {
+  const q = quote.trim()
+  return !!q && scriptText(script).includes(q)
+}
 
 /** 本集结尾钩子台词 */
 export const hookOf = (script: HasLines) => [...script.lines].reverse().find((l) => l.kind === 'hook')?.zh
+
+/** 上集结尾的钩子：优先取上集正文（定稿或最新草稿）里的钩子台词，其次集纲 */
+export const prevHookOf = (work: ProjectWork, ep: number) => {
+  const prev = scriptOf(work, ep - 1) ?? latestDraft(work, ep - 1)
+  return (prev && hookOf(prev)) || work.outline.find((o) => o.ep === ep - 1)?.hookLine || ''
+}
+
+/** 承接：本集开头要接住什么（上集遗留或前几集的伏笔）。蓝图里写了用蓝图的；没写时默认接上集结尾的钩子（auto） */
+export const carryOf = (work: ProjectWork, ep: number) => {
+  const own = blueprintOf(work, ep)?.carry?.trim()
+  if (own) return { text: own, auto: false }
+  const hook = prevHookOf(work, ep)
+  return hook ? { text: hook, auto: true } : undefined
+}
 
 /* ---------------------------------- 伏笔 ---------------------------------- */
 
@@ -216,6 +245,20 @@ export function traceForeshadow(f: Foreshadow): ForeshadowTrace {
 export const silenceOf = (trace: ForeshadowTrace, latestEp: number) =>
   trace.status === '已埋设' && trace.lastEp !== null ? Math.max(0, latestEp - trace.lastEp) : 0
 
+/** 计划的埋设 / 回收集已经写过去了还没确认：哪一步、计划在第几集、超出几集 */
+export interface LateStep {
+  kind: 'plant' | 'payoff'
+  ep: number
+  by: number
+}
+
+/** 写到第 latestEp 集时超期（不含正好到期那一集）的一步；用来让编剧决定这条计划还要不要 */
+export function lateStep(f: Foreshadow, trace: ForeshadowTrace, latestEp: number): LateStep | null {
+  if (trace.status === '已回收') return null
+  const step: LateStep = trace.status === '已计划' ? { kind: 'plant', ep: f.plantEp, by: latestEp - f.plantEp } : { kind: 'payoff', ep: f.payoffEp, by: latestEp - f.payoffEp }
+  return step.by > 0 ? step : null
+}
+
 /** 写到第 latestEp 集（已定稿）时的提醒：到期没埋、到期没收、沉寂太久 */
 export function foreshadowAlert(f: Foreshadow, trace: ForeshadowTrace, latestEp: number, threshold: number): string | null {
   if (trace.status === '已回收' || latestEp === 0) return null
@@ -226,6 +269,11 @@ export function foreshadowAlert(f: Foreshadow, trace: ForeshadowTrace, latestEp:
   const silence = silenceOf(trace, latestEp)
   return threshold > 0 && silence >= threshold ? `已沉寂 ${silence} 集，建议安排一次呼应` : null
 }
+
+const EVENT_ORDER = Object.keys(PLAN_EVENT_META) as PlanEventKind[]
+
+/** 事件按集数排，同一集按 埋设 → 呼应 → 回收 */
+export const sortEvents = (events: PlanEvent[]) => [...events].sort((a, b) => a.ep - b.ep || EVENT_ORDER.indexOf(a.kind) - EVENT_ORDER.indexOf(b.kind))
 
 export interface EventCandidate {
   ep: number

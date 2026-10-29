@@ -42,7 +42,7 @@ export default function Dashboard() {
   const target = projects.find((p) => p.id === pendingDelete)
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-8">
+    <div className="px-6 py-8 xl:px-8">
       {/* 一句话开始创作 */}
       <section className="relative overflow-hidden rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-brand-50/70 to-brand-100/60 px-8 py-8">
         <div className="pointer-events-none absolute -top-24 -right-16 size-72 rounded-full bg-brand-300/25 blur-3xl" />

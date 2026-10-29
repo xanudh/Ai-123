@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { Clapperboard, Copy, Film, MoreHorizontal, PenLine, Trash2, Video } from 'lucide-react'
 import { useId } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { MODE_META, PALETTES, STATUS_META } from '../../domain/constants'
 import type { Project, ProjectMode } from '../../domain/types'
@@ -68,10 +69,12 @@ export function ProjectCard({
   project,
   onDuplicate,
   onDelete,
+  footer,
 }: {
   project: Project
   onDuplicate: () => void
   onDelete: () => void
+  footer?: ReactNode
 }) {
   return (
     <Link
@@ -112,6 +115,7 @@ export function ProjectCard({
             {project.spec.totalEpisodes} 集 · {timeAgo(project.updatedAt)}
           </span>
         </div>
+        {footer}
       </div>
     </Link>
   )

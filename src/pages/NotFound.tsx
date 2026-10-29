@@ -4,7 +4,7 @@ import { EmptyState, buttonClass } from '../components/ui'
 
 export default function NotFound() {
   return (
-    <div className="mx-auto max-w-6xl px-8 py-16">
+    <div className="px-6 py-16 xl:px-8">
       <EmptyState
         icon={<Compass size={22} />}
         title="页面不存在"

@@ -1,5 +1,5 @@
 /** 草稿箱与正文章节的数据操作：都返回要写回的 work 片段，由页面调用 patchWork */
-import type { DraftReview, EpisodeBlueprint, EpisodeDraft, EpisodeScript, Project, ProjectWork } from '../../../domain/types'
+import type { DraftReview, DraftRevision, EpisodeBlueprint, EpisodeDraft, EpisodeScript, Project, ProjectWork } from '../../../domain/types'
 import { blueprintOf, draftsOf, scriptOf } from '../../../domain/work'
 import { newId } from '../../../lib/id'
 import { extractPoints, positionOf } from '../../../services/ai'
@@ -21,7 +21,7 @@ export const reviewCounts = (r: DraftReview) => ({
 })
 
 /** 草稿箱里新增一个版本；同集其他还在“草稿”状态的旧版本标为已修稿 */
-export function addDraft(work: ProjectWork, ep: number, content: DraftContent, from?: string): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
+export function addDraft(work: ProjectWork, ep: number, content: DraftContent, from?: string, revision?: DraftRevision): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
   const ts = now()
   const version = Math.max(0, ...draftsOf(work, ep).map((d) => d.version)) + 1
   const draft: EpisodeDraft = {
@@ -36,6 +36,7 @@ export function addDraft(work: ProjectWork, ep: number, content: DraftContent, f
     reviews: [],
     notes: [],
     ...(from ? { from } : {}),
+    ...(revision ? { revision } : {}),
     createdAt: ts,
     updatedAt: ts,
   }
@@ -64,6 +65,7 @@ export const REVIEW_SCOPE = [
   '承接：开场是否接住上一集结尾的钩子',
   '伏笔：本集计划埋设 / 回收的伏笔是否写进正文',
   '人物：主角是否有戏、蓝图里的出场人物是否出场、有没有未登记人物',
+  '连贯：与前面已定稿的剧情线是否一致——人物状态、道具归属、已回收的伏笔',
   '文风：AI 味词汇、过长的台词',
   '标注：还没处理的标注',
 ]
@@ -126,7 +128,7 @@ export function removeScript(work: ProjectWork, ep: number): Pick<ProjectWork, '
   }
 }
 
-/** 批量创作 / 写作按钮的起点：第一个既没有草稿也没有正文的集 */
+/** 批量写作 / 写作按钮的起点：第一个既没有草稿也没有正文的集 */
 export function nextUnwritten(p: Project) {
   const total = p.spec.totalEpisodes
   let ep = 1

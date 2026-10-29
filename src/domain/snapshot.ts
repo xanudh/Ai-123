@@ -6,8 +6,8 @@ import { nodeKind } from './rhythm'
 import { buildState, placeOf, preWriteCheck, silenceThreshold } from './state'
 import type { PreCheck, SceneEntry } from './state'
 import type { CharacterRole, EpisodeDraft, Foreshadow, Project, Relation, ScriptLine } from './types'
-import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, hookOf, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'
-import type { ForeshadowTrace } from './work'
+import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, hookOf, lateStep, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'
+import type { ForeshadowTrace, LateStep } from './work'
 
 /** 页面告诉侧栏当前选中的层级 */
 export type StateFocus = { kind: 'ep'; ep: number; draftId?: string } | { kind: 'phase'; index: number } | { kind: 'all' }
@@ -35,6 +35,8 @@ export interface ForeshadowAt extends ForeshadowTrace {
   task: string | null
   /** 到期没埋、到期没收、超出几集或沉寂太久 */
   alert: string | null
+  /** 超期没确认的一步：可以确认定稿、改期或删掉这条计划 */
+  late: LateStep | null
 }
 
 export interface SceneUse {
@@ -98,7 +100,7 @@ const mentioned = (p: Project, text: string) => p.work.characters.map((c) => c.n
 function foreshadowAt(f: Foreshadow, upto: number, at: number, threshold: number): ForeshadowAt {
   const item = { ...f, events: f.events.filter((e) => e.ep <= upto) }
   const trace = traceForeshadow(item)
-  return { item: f, ...trace, task: null, alert: foreshadowAlert(item, trace, Math.max(at, 0), threshold) }
+  return { item: f, ...trace, task: null, alert: foreshadowAlert(item, trace, Math.max(at, 0), threshold), late: lateStep(item, trace, Math.max(at, 0)) }
 }
 
 /* ---------------------------------- 本集 ---------------------------------- */

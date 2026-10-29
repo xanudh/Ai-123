@@ -1,13 +1,13 @@
-import { Lock, Save, Trash2 } from 'lucide-react'
+import { ArrowLeft, Lock, Save, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ConfirmDialog, UnsavedChangesPrompt } from '../../components/overlay'
 import { MODE_ICON } from '../../components/project/ProjectBits'
 import { BasicSection, ScriptUploadField, SpecSection, StorySection } from '../../components/project/ProjectForm'
-import { Button, Card, Segmented } from '../../components/ui'
-import { MODE_META, STATUS_META } from '../../domain/constants'
+import { Button, Card } from '../../components/ui'
+import { MODE_META } from '../../domain/constants'
 import { rhythmForTotal } from '../../domain/rhythm'
-import type { Project, ProjectDraft, ProjectStatus } from '../../domain/types'
+import type { Project, ProjectDraft } from '../../domain/types'
 import { hasErrors, validateAll, withSpecDefaults } from '../../domain/validate'
 import { useProjects } from '../../store/projects'
 import { toast } from '../../store/toast'
@@ -37,7 +37,6 @@ export default function ProjectSettings() {
   const navigate = useNavigate()
 
   const [draft, setDraft] = useState(() => toDraft(project))
-  const [status, setStatus] = useState<ProjectStatus>(project.status)
   // 仿写剧本存在项目产出里，随本页一起保存
   const [source, setSource] = useState(project.work.source)
   const [showErrors, setShowErrors] = useState(false)
@@ -49,10 +48,11 @@ export default function ProjectSettings() {
   // 封面配色在页头直接修改，不经过本页的保存流程
   if (draft.palette !== project.palette) setDraft((d) => ({ ...d, palette: project.palette }))
   const errors = useMemo(() => validateAll(draft), [draft])
-  const statusChanged = status !== project.status
   const draftChanged = JSON.stringify(draft) !== JSON.stringify(toDraft(project))
   const sourceChanged = source !== project.work.source
-  const dirty = statusChanged || draftChanged || sourceChanged
+  const dirty = draftChanged || sourceChanged
+  // 从哪来回哪去；直接打开设置页时回概览
+  const back = () => ((window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate('..'))
 
   const save = () => {
     if (hasErrors(errors)) {
@@ -74,13 +74,7 @@ export default function ProjectSettings() {
       // 节奏框架在故事架构中编辑，这里只随总集数同步
       rhythm: rhythmForTotal(project.rhythm, project.spec.totalEpisodes, filled.spec.totalEpisodes),
     }
-    if (statusChanged || draftChanged) {
-      updateProject(
-        project.id,
-        statusChanged ? { ...clean, status } : clean,
-        statusChanged ? `更新项目设置，状态改为「${STATUS_META[status].label}」` : '更新项目设置',
-      )
-    }
+    if (draftChanged) updateProject(project.id, clean, '更新项目设置')
     // 与对标剧拆解里的“重新导入”一致：换了剧本，旧拆解作废
     if (sourceChanged) {
       patchWork(project.id, { source, breakdown: null }, source ? `更换仿写剧本：识别到 ${source.episodes.length} 集` : '移除仿写剧本')
@@ -92,7 +86,6 @@ export default function ProjectSettings() {
 
   const discard = () => {
     setDraft(toDraft(project))
-    setStatus(project.status)
     setSource(project.work.source)
     setShowErrors(false)
   }
@@ -102,15 +95,14 @@ export default function ProjectSettings() {
 
   return (
     <div data-settings className="space-y-6 pb-20">
-      <Card className="p-6">
-        <h3 className="text-[15px] font-semibold">项目状态</h3>
-        <p className="mt-0.5 text-[13px] text-ink-500">用于在项目列表中筛选；正式版会随环节推进自动流转</p>
-        <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-4">
-          <Segmented
-            value={status}
-            onChange={setStatus}
-            options={(Object.keys(STATUS_META) as ProjectStatus[]).map((s) => ({ value: s, label: STATUS_META[s].label }))}
-          />
+      {/* 项目状态已移到概览，这里只放可编辑的设定 */}
+      <div className="space-y-2">
+        <button type="button" onClick={back} className="inline-flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-900">
+          <ArrowLeft size={14} />
+          返回
+        </button>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <h2 className="text-lg font-semibold">项目设置</h2>
           <div className="flex items-center gap-2 text-[13px] text-ink-500">
             <ModeIcon size={15} />
             创作方式：<span className="text-ink-900">{MODE_META[project.mode].label}</span>
@@ -118,7 +110,7 @@ export default function ProjectSettings() {
             <span className="text-xs text-ink-400">创建后不可更改</span>
           </div>
         </div>
-      </Card>
+      </div>
 
       <Card className="p-6">
         <BasicSection

@@ -1,18 +1,23 @@
 import clsx from 'clsx'
-import { ChevronLeft, Copy, Download, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
+import { ChevronLeft, CloudCheck, Copy, Download, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate, useOutletContext, useParams } from 'react-router'
+import { Link, NavLink, Outlet, useMatch, useNavigate, useOutletContext, useParams } from 'react-router'
 import { ConfirmDialog, Menu } from '../../components/overlay'
 import { ModeBadge, ProjectCover, StatusBadge } from '../../components/project/ProjectBits'
 import { StatePanel } from '../../components/project/StatePanel'
 import { Badge, EmptyState, buttonClass } from '../../components/ui'
-import { PALETTES } from '../../domain/constants'
+import { MODE_META, PALETTES } from '../../domain/constants'
 import { MODE_STAGES, STAGES } from '../../domain/pipeline'
 import type { Project } from '../../domain/types'
 import { downloadText } from '../../lib/download'
+import { formatDateTime } from '../../lib/format'
 import { useDismiss } from '../../lib/useDismiss'
 import { useProject, useProjects } from '../../store/projects'
 import { toast } from '../../store/toast'
+import { useStatePanel } from '../../store/statePanel'
+import { useV2 } from '../../store/uiVersion'
+import { StageNav } from '../../v2/StageNav'
+import { useNavFold } from '../../v2/navFold'
 import { SearchX } from 'lucide-react'
 import { ScriptTree } from './script/ScriptTree'
 
@@ -20,8 +25,8 @@ export const useCurrentProject = () => useOutletContext<Project>()
 
 const exportJson = (project: Project) => downloadText(`${project.title || 'project'}.json`, JSON.stringify(project, null, 2), 'application/json')
 
-/** 点击封面更换配色 */
-function CoverPicker({ project }: { project: Project }) {
+/** 点击封面更换配色；small：环节页的单行页头里用小封面 */
+function CoverPicker({ project, small }: { project: Project; small?: boolean }) {
   const updateProject = useProjects((s) => s.updateProject)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -37,9 +42,9 @@ function CoverPicker({ project }: { project: Project }) {
         title="更换封面配色"
         className="group relative block rounded-lg"
       >
-        <ProjectCover project={project} compact className="h-16 w-12 rounded-lg shadow-card" />
+        <ProjectCover project={project} compact className={clsx('rounded-lg shadow-card', small ? 'h-9 w-7 rounded-md' : 'h-16 w-12')} />
         <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-ink-900/30 text-white opacity-0 transition-opacity group-hover:opacity-100">
-          <Palette size={16} />
+          <Palette size={small ? 12 : 16} />
         </span>
       </button>
       {open && (
@@ -70,10 +75,16 @@ export default function ProjectLayout() {
   const navigate = useNavigate()
   const { duplicateProject, deleteProject } = useProjects()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const v2 = useV2()
+  // 状态库侧栏展开时，宽屏上给它让出位置，不压住页面右侧
+  const docked = useStatePanel((s) => s.open && !!s.focus)
+  const navCollapsed = useNavFold((s) => s.collapsed)
+  // 概览是项目首页，页头完整展示；进了具体环节只留一行，把高度让给正文
+  const isOverview = !!useMatch('/projects/:id')
 
   if (!project) {
     return (
-      <div className="mx-auto max-w-6xl px-8 py-16">
+      <div className="px-6 py-16 xl:px-8">
         <EmptyState
           icon={<SearchX size={22} />}
           title="项目不存在"
@@ -90,82 +101,121 @@ export default function ProjectLayout() {
 
   const stages = MODE_STAGES[project.mode]
 
-  return (
-    <div className="mx-auto max-w-7xl px-8 py-6">
-      <Link to="/projects" className="mb-4 inline-flex items-center gap-0.5 text-[13px] text-ink-500 hover:text-ink-900">
-        <ChevronLeft size={15} />
-        我的剧本
+  const badges = (
+    <>
+      <StatusBadge status={project.status} />
+      <span className="inline-flex" title={`创作方式：${MODE_META[project.mode].label}（创建后不可更改）`}>
+        <ModeBadge mode={project.mode} />
+      </span>
+      {project.sample && <Badge tone="amber">示例</Badge>}
+    </>
+  )
+  const actions = (
+    <div className="flex items-center gap-2">
+      {v2 && (
+        <span className="mr-1 flex items-center gap-1 text-xs text-ink-400" title="项目数据自动保存在当前浏览器">
+          <CloudCheck size={14} className="text-emerald-500" />
+          已自动保存 · {formatDateTime(project.updatedAt)}
+        </span>
+      )}
+      <Link to="settings" className={buttonClass('secondary', isOverview ? 'md' : 'sm')}>
+        <Settings size={isOverview ? 15 : 14} />
+        项目设置
       </Link>
+      <Menu
+        trigger={(p) => (
+          <button {...p} className={isOverview ? buttonClass('secondary', 'md', 'px-2.5') : buttonClass('secondary', 'sm')} aria-label="更多操作">
+            <MoreHorizontal size={16} />
+          </button>
+        )}
+        items={[
+          {
+            label: '复制项目',
+            icon: <Copy size={14} />,
+            onSelect: () => {
+              const copy = duplicateProject(project.id)
+              if (copy) {
+                toast('已复制项目')
+                navigate(`/projects/${copy.id}`)
+              }
+            },
+          },
+          { label: '导出 JSON', icon: <Download size={14} />, onSelect: () => exportJson(project) },
+          { label: '删除项目', icon: <Trash2 size={14} />, danger: true, onSelect: () => setConfirmDelete(true) },
+        ]}
+      />
+    </div>
+  )
 
-      <header className="mb-6 flex flex-wrap items-center gap-4">
-        <CoverPicker project={project} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-[22px] font-semibold tracking-tight">{project.title}</h1>
-            <StatusBadge status={project.status} />
-            <ModeBadge mode={project.mode} />
-            {project.sample && <Badge tone="amber">示例</Badge>}
-          </div>
-          <p className="mt-0.5 truncate text-sm text-ink-500">{project.titleEn || project.logline}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="settings" className={buttonClass('secondary')}>
-            <Settings size={15} />
-            项目设置
+  return (
+    <div className={clsx('px-6 py-6 xl:px-8', docked && 'xl:pr-[404px]')}>
+      {isOverview ? (
+        <>
+          <Link to="/projects" className="mb-4 inline-flex items-center gap-0.5 text-[13px] text-ink-500 hover:text-ink-900">
+            <ChevronLeft size={15} />
+            我的剧本
           </Link>
-          <Menu
-            trigger={(p) => (
-              <button {...p} className={buttonClass('secondary', 'md', 'px-2.5')} aria-label="更多操作">
-                <MoreHorizontal size={16} />
-              </button>
-            )}
-            items={[
-              {
-                label: '复制项目',
-                icon: <Copy size={14} />,
-                onSelect: () => {
-                  const copy = duplicateProject(project.id)
-                  if (copy) {
-                    toast('已复制项目')
-                    navigate(`/projects/${copy.id}`)
-                  }
-                },
-              },
-              { label: '导出 JSON', icon: <Download size={14} />, onSelect: () => exportJson(project) },
-              { label: '删除项目', icon: <Trash2 size={14} />, danger: true, onSelect: () => setConfirmDelete(true) },
-            ]}
-          />
-        </div>
-      </header>
+          <header className="mb-6 flex flex-wrap items-center gap-4">
+            <CoverPicker project={project} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-[22px] font-semibold tracking-tight">{project.title}</h1>
+                {badges}
+              </div>
+              <p className="mt-0.5 truncate text-sm text-ink-500">{project.titleEn || project.logline}</p>
+            </div>
+            {actions}
+          </header>
+        </>
+      ) : (
+        <header className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Link to="/projects" className="inline-flex shrink-0 items-center gap-0.5 text-[13px] text-ink-500 hover:text-ink-900">
+            <ChevronLeft size={15} />
+            我的剧本
+          </Link>
+          <span className="text-ink-300">/</span>
+          <CoverPicker project={project} small />
+          <Link to="." className="min-w-0 truncate hover:text-brand-700" title="项目概览">
+            <h1 className="truncate text-base font-semibold tracking-tight">{project.title}</h1>
+          </Link>
+          {badges}
+          <span className="flex-1" />
+          {actions}
+        </header>
+      )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[232px_minmax(0,1fr)]">
-        <nav className="scrollbar-thin lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-          <div className="mb-2 px-2.5 text-[11px] font-medium tracking-wider text-ink-400">创作流程</div>
-          <ol className="space-y-0.5">
-            {stages.map((key, i) => {
-              const meta = STAGES[key]
-              return (
-                <li key={key}>
-                  <NavLink
-                    to={key === 'overview' ? '.' : `stage/${key}`}
-                    end={key !== 'script'}
-                    className={({ isActive }) =>
-                      clsx(
-                        'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors',
-                        isActive ? 'bg-white font-medium text-brand-700 shadow-card' : 'text-ink-700 hover:bg-white/70',
-                      )
-                    }
-                  >
-                    <span className="w-4 text-center text-[11px] text-ink-400 tabular-nums">{i + 1}</span>
-                    <span className="flex-1 truncate">{meta.label}</span>
-                    {meta.phase && <Lock size={12} className="text-ink-300" />}
-                  </NavLink>
-                  {key === 'script' && (project.work.drafts.length > 0 || project.work.scripts.length > 0) && <ScriptTree project={project} />}
-                </li>
-              )
-            })}
-          </ol>
-        </nav>
+      <div className={clsx('grid items-start gap-6', v2 && navCollapsed ? 'lg:grid-cols-[52px_minmax(0,1fr)]' : v2 ? 'lg:grid-cols-[248px_minmax(0,1fr)]' : 'lg:grid-cols-[232px_minmax(0,1fr)]')}>
+        {v2 ? (
+          <StageNav project={project} />
+        ) : (
+          <nav className="scrollbar-thin lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+            <div className="mb-2 px-2.5 text-[11px] font-medium tracking-wider text-ink-400">创作流程</div>
+            <ol className="space-y-0.5">
+              {stages.map((key, i) => {
+                const meta = STAGES[key]
+                return (
+                  <li key={key}>
+                    <NavLink
+                      to={key === 'overview' ? '.' : `stage/${key}`}
+                      end={key !== 'script'}
+                      className={({ isActive }) =>
+                        clsx(
+                          'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors',
+                          isActive ? 'bg-white font-medium text-brand-700 shadow-card' : 'text-ink-700 hover:bg-white/70',
+                        )
+                      }
+                    >
+                      <span className="w-4 text-center text-[11px] text-ink-400 tabular-nums">{i + 1}</span>
+                      <span className="flex-1 truncate">{meta.label}</span>
+                      {meta.phase && <Lock size={12} className="text-ink-300" />}
+                    </NavLink>
+                    {key === 'script' && (project.work.drafts.length > 0 || project.work.scripts.length > 0) && <ScriptTree project={project} />}
+                  </li>
+                )
+              })}
+            </ol>
+          </nav>
+        )}
 
         <div className="min-w-0">
           <Outlet context={project} />

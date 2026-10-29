@@ -5,18 +5,19 @@ import clsx from 'clsx'
 import { AlertTriangle, ArrowUpRight, CircleCheck, ClipboardCheck, Download, Info, Loader2, OctagonX, ShieldCheck, Undo2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, Segmented } from '../../../components/ui'
 import { QA_CHECKS, STAGES } from '../../../domain/pipeline'
 import type { EpisodeScript, Project, QaCheckKey, QaIssue, QaReport, ScriptLine } from '../../../domain/types'
-import { qaStale } from '../../../domain/work'
+import { plainText, qaStale } from '../../../domain/work'
 import { downloadText } from '../../../lib/download'
 import { formatDateTime } from '../../../lib/format'
 import { QA_STEPS, innovationLanding, runQa } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
+import { useV2 } from '../../../store/uiVersion'
 import { finalPath } from '../script/ops'
 
 type Level = QaIssue['level']
@@ -59,9 +60,9 @@ function Meter({ score }: { score: number }) {
   )
 }
 
-/** 去修改：有集数的问题回到正文章节；付费卡点集纲与全剧问题回到对应环节 */
-function fixOf(p: Project, i: QaIssue) {
-  if (i.ep !== null && !(i.check === 'paywall' && i.level === 'info')) return { to: finalPath(p, i.ep), label: '去改正文' }
+/** 去修改：有集数的问题回到正文章节；付费卡点集纲与全剧问题回到对应环节。版本二去正文时带上问题，改完可直接返回 */
+function fixOf(p: Project, i: QaIssue, v2 = false) {
+  if (i.ep !== null && !(i.check === 'paywall' && i.level === 'info')) return { to: `${finalPath(p, i.ep)}${v2 ? `?from=qa&issue=${i.id}` : ''}`, label: '去改正文' }
   const key = QA_CHECKS.find((c) => c.key === i.check)?.to ?? 'script'
   return { to: stagePath(p, key), label: `去${STAGES[key].label}` }
 }
@@ -102,7 +103,8 @@ const epRanges = (eps: number[]) => {
 }
 
 function lineText(l: ScriptLine, en: boolean) {
-  const zh = l.kind === 'dialogue' ? `${l.speaker ?? ''}：${l.zh}` : l.kind === 'hook' ? `【集末钩子】${l.zh}` : l.zh
+  const text = plainText(l.zh)
+  const zh = l.kind === 'dialogue' ? `${l.speaker ?? ''}：${text}` : l.kind === 'hook' ? `【集末钩子】${text}` : text
   if (!en || !l.en) return zh
   return `${zh}\n${l.kind === 'dialogue' ? `${l.speakerEn || l.speaker || ''}: ` : ''}${l.en}`
 }
@@ -245,13 +247,13 @@ function Directory({
 /* ---------------------------------- 中栏 ---------------------------------- */
 
 function LineBody({ l, quotes }: { l: ScriptLine; quotes: { text: string; level: Level }[] }) {
-  if (l.kind === 'scene') return <div className="font-semibold text-ink-900">{highlight(l.zh, quotes)}</div>
+  if (l.kind === 'scene') return <div className="font-semibold text-ink-900">{highlight(plainText(l.zh), quotes)}</div>
   if (l.kind === 'dialogue') {
     return (
       <div className="flex items-start">
-        <span className={clsx('w-16 shrink-0 text-right font-semibold', l.speaker?.trim() ? 'text-brand-700' : 'text-red-600')}>{l.speaker?.trim() ? highlight(l.speaker, quotes) : '（无）'}</span>
+        <span className={clsx('w-16 shrink-0 text-right font-semibold', l.speaker?.trim() ? 'text-ink-900' : 'text-red-600')}>{l.speaker?.trim() ? highlight(l.speaker, quotes) : '（无）'}</span>
         <span className="text-ink-400">：</span>
-        <span className="min-w-0 flex-1 text-ink-900">{highlight(l.zh, quotes)}</span>
+        <span className="min-w-0 flex-1 text-ink-900">{highlight(plainText(l.zh), quotes)}</span>
       </div>
     )
   }
@@ -259,11 +261,11 @@ function LineBody({ l, quotes }: { l: ScriptLine; quotes: { text: string; level:
     return (
       <div className="rounded-md border-l-2 border-brand-300 bg-white/70 px-2 py-0.5">
         <div className="text-[11px] font-medium text-brand-700">集末钩子</div>
-        <div className="font-medium text-ink-900">{highlight(l.zh, quotes)}</div>
+        <div className="font-medium text-ink-900">{highlight(plainText(l.zh), quotes)}</div>
       </div>
     )
   }
-  return <div className="text-ink-700">{highlight(l.zh, quotes)}</div>
+  return <div className="text-ink-700">{highlight(plainText(l.zh), quotes)}</div>
 }
 
 function ScriptView({
@@ -281,6 +283,7 @@ function ScriptView({
   activeId: string | null
   onPick: (i: QaIssue) => void
 }) {
+  const v2 = useV2()
   const byLine = new Map<string, QaIssue[]>()
   for (const i of issues) if (i.lineId) byLine.set(i.lineId, [...(byLine.get(i.lineId) ?? []), i].sort(byLevel))
   // 整集问题：没定位到行，或定位的行已经不在正文里
@@ -295,7 +298,7 @@ function ScriptView({
           </h3>
           <p className="mt-0.5 text-xs text-ink-500">{checked ? `定稿正文 · ${issues.length ? `${issues.length} 个待处理问题，问题行与字段已标色` : '没有待处理的问题'}` : '这一集在质检后才定稿，重新质检后才会标出问题'}</p>
         </div>
-        <Link to={finalPath(project, script.ep)} className="flex shrink-0 items-center gap-0.5 text-[13px] text-brand-600 hover:text-brand-700">
+        <Link to={`${finalPath(project, script.ep)}${v2 ? '?from=qa' : ''}`} className="flex shrink-0 items-center gap-0.5 text-[13px] text-brand-600 hover:text-brand-700">
           去改正文
           <ArrowUpRight size={14} />
         </Link>
@@ -404,7 +407,7 @@ function GlobalView({ project, issues, activeId, onPick }: { project: Project; i
 /* ---------------------------------- 右栏 ---------------------------------- */
 
 function IssueItem({ project, issue, active, done, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; onPick: () => void; onToggle: () => void }) {
-  const fix = fixOf(project, issue)
+  const fix = fixOf(project, issue, useV2())
   return (
     <li id={`qa-issue-${issue.id}`} className={clsx('scroll-mt-4 rounded-lg border px-3 py-2.5 transition-colors', active ? 'border-brand-300 bg-brand-50/50' : 'border-line bg-white', done && 'opacity-60')}>
       <button className="flex w-full items-start gap-2 text-left" onClick={onPick}>
@@ -458,14 +461,26 @@ function Running() {
 export default function QaStage({ project, blocked }: { project: Project; blocked: boolean }) {
   const { patchWork, updateProject } = useProjects()
   const { running, run } = useAiTask()
-  const [sel, setSel] = useState<Selection | null>(null)
-  const [activeId, setActiveId] = useState<string | null>(null)
+  // 版本二：从正文页「返回质检」回来时，回到原来那条问题（已处理就接着看同一集的下一条）
+  const [params] = useSearchParams()
+  const [back] = useState(() => {
+    const issues = project.work.qa?.issues ?? []
+    const resolvedIds = project.work.qa?.resolved ?? []
+    const from = issues.find((i) => i.id === params.get('issue'))
+    const ep = from ? from.ep : Number(params.get('ep')) || null
+    if (!from && !ep) return null
+    const open = issues.filter((i) => !resolvedIds.includes(i.id))
+    const target = from && !resolvedIds.includes(from.id) ? from : (open.find((i) => i.ep === ep) ?? null)
+    return { sel: (ep ?? 'global') as Selection, issue: target }
+  })
+  const [sel, setSel] = useState<Selection | null>(back?.sel ?? null)
+  const [activeId, setActiveId] = useState<string | null>(back?.issue?.id ?? null)
   const [scope, setScope] = useState<'ep' | 'all'>('ep')
   const [level, setLevel] = useState<Level | 'all'>('all')
   const [check, setCheck] = useState<QaCheckKey | null>(null)
   const [showResolved, setShowResolved] = useState(false)
   const [confirmDeliver, setConfirmDeliver] = useState(false)
-  const [scrollTo, setScrollTo] = useState<{ id: string; target: 'line' | 'issue' } | null>(null)
+  const [scrollTo, setScrollTo] = useState<{ id: string; target: 'line' | 'issue' } | null>(back?.issue ? { id: back.issue.id, target: 'issue' } : null)
 
   const total = project.spec.totalEpisodes
   const report = project.work.qa

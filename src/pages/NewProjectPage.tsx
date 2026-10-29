@@ -151,7 +151,7 @@ export default function NewProjectPage() {
   }
 
   return (
-    <div data-new-project className="mx-auto max-w-4xl px-8 pt-8 pb-6">
+    <div data-new-project className="px-6 pt-8 pb-6 xl:px-8">
       <button
         onClick={() => (dirty ? setConfirmLeave(true) : leave())}
         className="mb-3 flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-900"

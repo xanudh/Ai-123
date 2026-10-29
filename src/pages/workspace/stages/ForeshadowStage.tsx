@@ -2,17 +2,18 @@ import clsx from 'clsx'
 import { CircleCheck, Clock, Flag, Pencil, Plus, Trash2, TriangleAlert, X } from 'lucide-react'
 import { useState } from 'react'
 import { ConfirmDialog, Modal } from '../../../components/overlay'
+import { EventForm } from '../../../components/project/EventForm'
 import { AiButton, AutoTextarea, EpisodeInput, InlineInput, Stat, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, EmptyState, Field, Input, Segmented, Select } from '../../../components/ui'
 import { FORESHADOW_TYPES, PLAN_EVENT_META } from '../../../domain/constants'
 import { buildState, silenceThreshold } from '../../../domain/state'
 import type { ForeshadowEntry } from '../../../domain/state'
-import type { Foreshadow, ForeshadowType, PlanEvent, PlanEventKind, Project } from '../../../domain/types'
-import { eventCandidates, foreshadowIssue, foreshadowName, newForeshadow, phaseNames, projectPhases } from '../../../domain/work'
+import type { Foreshadow, ForeshadowType, PlanEventKind, Project } from '../../../domain/types'
+import { foreshadowIssue, foreshadowName, newForeshadow, phaseNames, projectPhases, sortEvents } from '../../../domain/work'
 import type { ForeshadowStatus } from '../../../domain/work'
 import { newId } from '../../../lib/id'
-import { draftForeshadows } from '../../../services/ai'
-import type { ForeshadowIdea } from '../../../services/ai'
+import { draftForeshadows, identifyEvents } from '../../../services/ai'
+import type { EventFinding, ForeshadowIdea } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { useStateFocus } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
@@ -26,8 +27,6 @@ const KINDS = Object.keys(PLAN_EVENT_META) as PlanEventKind[]
 /** 叙事线索用“开始 / 结束”，其余用“埋设 / 回收” */
 const startLabel = (f: Pick<Foreshadow, 'type'>) => (f.type === '叙事线索' ? '开始' : '埋设')
 const endLabel = (f: Pick<Foreshadow, 'type'>) => (f.type === '叙事线索' ? '结束' : '回收')
-
-const sortEvents = (events: PlanEvent[]) => [...events].sort((a, b) => a.ep - b.ep || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind))
 
 /* ---------------------------------- 计划表单 ---------------------------------- */
 
@@ -98,40 +97,35 @@ function PlanForm({
   )
 }
 
-/* ---------------------------------- 确认定稿事件 ---------------------------------- */
+/* ---------------------------------- 批量确认定稿事件 ---------------------------------- */
 
-interface EventRow {
+interface FindingRow extends EventFinding {
   key: string
-  ep: number
-  kind: PlanEventKind
-  text: string
   on: boolean
 }
 
-function EventDialog({ project, f, onClose }: { project: Project; f: Foreshadow; onClose: () => void }) {
+/** AI 把所有计划在定稿正文里的推进一次找出来，按计划分组勾选；确认后才记为已发生 */
+function BatchDialog({ project, found, onClose }: { project: Project; found: EventFinding[]; onClose: () => void }) {
   const patchWork = useProjects((s) => s.patchWork)
-  const finals = [...project.work.scripts].filter((s) => s.ep <= project.spec.totalEpisodes).sort((a, b) => a.ep - b.ep)
-  const [rows, setRows] = useState<EventRow[]>(() => eventCandidates(f, finals).map((c) => ({ ...c, key: newId(), on: true })))
-  const [manual, setManual] = useState({ ep: finals.at(-1)?.ep ?? 0, kind: (f.events.length ? 'echo' : 'plant') as PlanEventKind, text: '' })
+  const [rows, setRows] = useState<FindingRow[]>(() => found.map((x) => ({ ...x, key: newId(), on: true })))
   const picked = rows.filter((r) => r.on)
+  const groups = project.work.foreshadows.map((f) => ({ f, rows: rows.filter((r) => r.foreshadowId === f.id) })).filter((g) => g.rows.length)
 
-  const setRow = (key: string, patch: Partial<EventRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
-
-  const addManual = () => {
-    if (!manual.ep || !manual.text.trim()) return
-    setRows((rs) => [...rs, { key: newId(), ep: manual.ep, kind: manual.kind, text: manual.text.trim(), on: true }])
-    setManual((m) => ({ ...m, text: '' }))
-  }
+  const setRow = (key: string, patch: Partial<FindingRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
   const confirm = () => {
     const cur = latestProject(project.id)
     if (!cur || !picked.length) return
     const at = new Date().toISOString()
-    const added: PlanEvent[] = picked.map((r) => ({ id: newId(), ep: r.ep, kind: r.kind, text: r.text, at }))
     patchWork(
       cur.id,
-      { foreshadows: cur.work.foreshadows.map((x) => (x.id === f.id ? { ...x, events: sortEvents([...x.events, ...added]) } : x)) },
-      `确认「${foreshadowName(f)}」定稿事件：${picked.map((r) => `第 ${r.ep} 集${PLAN_EVENT_META[r.kind].label}`).join('、')}`,
+      {
+        foreshadows: cur.work.foreshadows.map((f) => {
+          const mine = picked.filter((r) => r.foreshadowId === f.id)
+          return mine.length ? { ...f, events: sortEvents([...f.events, ...mine.map((r) => ({ id: newId(), ep: r.ep, kind: r.kind, text: r.text, reason: r.reason, at }))]) } : f
+        }),
+      },
+      `批量确认定稿事件 ${picked.length} 个`,
     )
     toast(`已记入 ${picked.length} 个定稿事件`)
     onClose()
@@ -141,9 +135,9 @@ function EventDialog({ project, f, onClose }: { project: Project; f: Foreshadow;
     <Modal
       open
       onClose={onClose}
-      width={640}
-      title={`确认定稿事件 · ${foreshadowName(f)}`}
-      desc="AI 在正文章节里找到了可能的推进，勾选确认后才记为已发生；也可以手动补记"
+      width={680}
+      title="AI 批量确认定稿事件"
+      desc="AI 在定稿正文里找到了这些推进，证据均逐字摘自定稿；勾选确认后才记为已发生"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -155,53 +149,32 @@ function EventDialog({ project, f, onClose }: { project: Project; f: Foreshadow;
         </>
       }
     >
-      {!finals.length ? (
-        <p className="rounded-lg bg-canvas px-4 py-3 text-[13px] text-ink-500">还没有定稿的正文章节。草稿不计入事件，先在逐集剧本里定稿。</p>
-      ) : (
-        <div className="space-y-4">
-          <ul className="max-h-72 space-y-1.5 overflow-y-auto">
-            {rows.map((r) => (
-              <li key={r.key} className={clsx('flex items-start gap-2.5 rounded-lg border px-3 py-2', r.on ? 'border-brand-200 bg-brand-50/50' : 'border-line')}>
-                <input type="checkbox" aria-label={`第 ${r.ep} 集`} checked={r.on} onChange={(e) => setRow(r.key, { on: e.target.checked })} className="mt-1.5 accent-brand-600" />
-                <span className="mt-1 shrink-0 text-[13px] font-medium tabular-nums">第 {r.ep} 集</span>
-                <Select aria-label="事件类型" value={r.kind} onChange={(e) => setRow(r.key, { kind: e.target.value as PlanEventKind })} className="h-7 w-20 shrink-0 px-2 text-xs">
-                  {KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {PLAN_EVENT_META[k].label}
-                    </option>
-                  ))}
-                </Select>
-                <span className="min-w-0 flex-1 pt-1 text-[13px] leading-5 text-ink-700">{r.text}</span>
-              </li>
-            ))}
-            {!rows.length && <li className="rounded-lg bg-canvas px-4 py-3 text-[13px] text-ink-500">正文章节里没找到与这条计划相关的句子，可以在下方手动补记</li>}
-          </ul>
-          <div className="rounded-lg border border-dashed border-line p-3">
-            <div className="mb-2 text-xs font-medium text-ink-500">手动补记</div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select aria-label="集" value={manual.ep} onChange={(e) => setManual((m) => ({ ...m, ep: Number(e.target.value) }))} className="h-8 w-28 text-[13px]">
-                {finals.map((s) => (
-                  <option key={s.ep} value={s.ep}>
-                    第 {s.ep} 集
-                  </option>
-                ))}
-              </Select>
-              <Select aria-label="类型" value={manual.kind} onChange={(e) => setManual((m) => ({ ...m, kind: e.target.value as PlanEventKind }))} className="h-8 w-20 text-[13px]">
-                {KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {PLAN_EVENT_META[k].label}
-                  </option>
-                ))}
-              </Select>
-              <Input aria-label="事件摘录" value={manual.text} onChange={(e) => setManual((m) => ({ ...m, text: e.target.value }))} onKeyDown={(e) => e.key === 'Enter' && addManual()} placeholder="正文摘录或说明" className="h-8 min-w-48 flex-1 text-[13px]" />
-              <Button variant="secondary" size="sm" disabled={!manual.text.trim()} onClick={addManual}>
-                <Plus size={14} />
-                加入
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+        {groups.map(({ f, rows: list }) => (
+          <section key={f.id}>
+            <h4 className="mb-1.5 text-[13px] font-semibold text-ink-900">{foreshadowName(f) || '未命名计划'}</h4>
+            <ul className="space-y-1.5">
+              {list.map((r) => (
+                <li key={r.key} className={clsx('flex items-start gap-2.5 rounded-lg border px-3 py-2', r.on ? 'border-brand-200 bg-brand-50/50' : 'border-line')}>
+                  <input type="checkbox" aria-label={`确认：${foreshadowName(f)} 第 ${r.ep} 集`} checked={r.on} onChange={(e) => setRow(r.key, { on: e.target.checked })} className="mt-1.5 accent-brand-600" />
+                  <span className="mt-1 shrink-0 text-[13px] font-medium tabular-nums">第 {r.ep} 集</span>
+                  <Select aria-label="事件类型" value={r.kind} onChange={(e) => setRow(r.key, { kind: e.target.value as PlanEventKind })} className="h-7 w-20 shrink-0 px-2 text-xs">
+                    {KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {PLAN_EVENT_META[k].label}
+                      </option>
+                    ))}
+                  </Select>
+                  <span className="min-w-0 flex-1 pt-1 text-[13px] leading-5">
+                    <span className="text-ink-900">{r.text}</span>
+                    <span className="mt-0.5 block text-xs text-ink-400">{r.reason}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
     </Modal>
   )
 }
@@ -213,17 +186,16 @@ function PlanCard({
   entry,
   threshold,
   onEdit,
-  onEvents,
   onRemove,
 }: {
   project: Project
   entry: ForeshadowEntry
   threshold: number
   onEdit: () => void
-  onEvents: () => void
   onRemove: () => void
 }) {
   const patchWork = useProjects((s) => s.patchWork)
+  const [confirming, setConfirming] = useState(false)
   const f = entry.item
   const issue = foreshadowIssue(f, project.spec.totalEpisodes)
   const removeEvent = (id: string) => {
@@ -232,7 +204,7 @@ function PlanCard({
   }
 
   return (
-    <Card className={clsx('p-5', entry.overdue && 'border-amber-200')}>
+    <Card id={`plan-${f.id}`} className={clsx('p-5', entry.overdue && 'border-amber-200')}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 className="text-[15px] font-semibold text-ink-900">{foreshadowName(f) || '未命名计划'}</h3>
@@ -269,6 +241,7 @@ function PlanCard({
               <CircleCheck size={14} className="mt-[3px] shrink-0 text-emerald-500" />
               <span className="min-w-0 flex-1 text-ink-700">
                 <span className="font-medium text-ink-900 tabular-nums">第 {e.ep} 集</span> · 已{PLAN_EVENT_META[e.kind].label} · {e.text}
+                {e.reason && <span className="block text-xs text-ink-400">理由：{e.reason}</span>}
               </span>
               <button className="rounded p-0.5 text-ink-300 opacity-0 group-hover:opacity-100 hover:text-red-600 focus:opacity-100" aria-label="撤销这个事件" onClick={() => removeEvent(e.id)}>
                 <X size={13} />
@@ -282,14 +255,27 @@ function PlanCard({
           <Pencil size={13} />
           编辑
         </Button>
-        <Button variant="secondary" size="sm" onClick={onEvents}>
+        <button
+          type="button"
+          aria-expanded={confirming}
+          onClick={() => setConfirming((v) => !v)}
+          className={clsx(
+            'inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-medium shadow-sm transition-colors',
+            confirming ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-line bg-white text-ink-900 hover:bg-canvas',
+          )}
+        >
           确认定稿事件
-        </Button>
+        </button>
         <Button variant="ghost" size="sm" className="text-ink-500" onClick={onRemove}>
           <Trash2 size={13} />
           删除
         </Button>
       </div>
+      {confirming && (
+        <div className="mt-4 border-t border-line pt-4">
+          <EventForm project={project} f={f} onDone={() => setConfirming(false)} />
+        </div>
+      )}
     </Card>
   )
 }
@@ -493,7 +479,7 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
   const [view, setView] = useState<'list' | 'tree'>('list')
   const [formKey, setFormKey] = useState(0)
   const [editing, setEditing] = useState<string | null>(null)
-  const [eventsOf, setEventsOf] = useState<Foreshadow | null>(null)
+  const [batch, setBatch] = useState<EventFinding[] | null>(null)
   const [removing, setRemoving] = useState<Foreshadow | null>(null)
   const [ideas, setIdeas] = useState<ForeshadowIdea[] | null>(null)
   const total = project.spec.totalEpisodes
@@ -512,6 +498,16 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
     if (!cur) return
     const result = await run('foreshadow', (signal) => draftForeshadows(cur, signal))
     if (result) setIdeas(result)
+  }
+
+  const hasFinals = project.work.scripts.some((s) => s.ep <= total)
+  const identifyAll = async () => {
+    const cur = latestProject(project.id)
+    if (!cur) return
+    const found = await run('batch', (signal) => identifyEvents(cur, cur.work.foreshadows, undefined, signal))
+    if (!found) return
+    if (found.length) setBatch(found)
+    else toast('定稿正文里没有找到待确认的伏笔推进')
   }
 
   const adopt = (list: Foreshadow[]) => {
@@ -559,6 +555,16 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
           <AiButton size="md" loading={running === 'foreshadow'} disabled={blocked || !!running} onClick={suggest}>
             AI 建议伏笔与线索
           </AiButton>
+          <AiButton
+            size="md"
+            variant="secondary"
+            loading={running === 'batch'}
+            disabled={!items.length || !hasFinals || !!running}
+            title={!items.length ? '还没有伏笔计划' : !hasFinals ? '还没有定稿的正文章节，草稿不计入事件' : 'AI 在全部定稿里找各条计划的推进，勾选确认后才记入'}
+            onClick={identifyAll}
+          >
+            AI 批量确认定稿
+          </AiButton>
         </div>
       </div>
 
@@ -602,7 +608,6 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
                 entry={e}
                 threshold={threshold}
                 onEdit={() => setEditing(e.item.id)}
-                onEvents={() => setEventsOf(e.item)}
                 onRemove={() => setRemoving(e.item)}
               />
             ),
@@ -616,7 +621,7 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
         </>
       )}
 
-      {eventsOf && <EventDialog project={project} f={eventsOf} onClose={() => setEventsOf(null)} />}
+      {batch && <BatchDialog project={project} found={batch} onClose={() => setBatch(null)} />}
       {ideas && <SuggestDialog project={project} ideas={ideas} onClose={() => setIdeas(null)} onConfirm={adopt} />}
       <ConfirmDialog
         open={!!removing}

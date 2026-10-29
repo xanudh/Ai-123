@@ -7,6 +7,7 @@
 import type {
   Audience,
   Breakdown,
+  Foreshadow,
   EpisodeBlueprint,
   MergedScript,
   OutlineEpisode,
@@ -22,6 +23,9 @@ import type {
   VideoEpisode,
   VideoJob,
 } from '../domain/types'
+import { PLAN_EVENT_META } from '../domain/constants'
+import { eventCandidates, foreshadowName, plainText } from '../domain/work'
+import type { EventCandidate } from '../domain/work'
 import { analyzeSource } from './mock/breakdown'
 import * as qa from './mock/qa'
 import * as video from './mock/video'
@@ -232,6 +236,30 @@ export async function draftForeshadows(project: Project, signal?: AbortSignal): 
   return writer.draftForeshadows(project)
 }
 
+export interface EventFinding extends EventCandidate {
+  foreshadowId: string
+  reason: string
+}
+
+/**
+ * AI 识别定稿事件：在定稿正文里找计划的推进，给出逐字原文与理由。只是建议，编剧确认后才记为已发生。
+ * 传 ep 时只看这一集定稿。
+ */
+export async function identifyEvents(project: Project, list: Foreshadow[], ep?: number, signal?: AbortSignal): Promise<EventFinding[]> {
+  await think(signal, 900)
+  const finals = project.work.scripts.filter((s) => s.ep <= project.spec.totalEpisodes && (ep === undefined || s.ep === ep))
+  return list.flatMap((f) =>
+    eventCandidates(f, finals).map((c) => {
+      const name = foreshadowName(f)
+      const reason =
+        c.kind === 'plant' ? `第 ${c.ep} 集首次写到与「${name}」相关的细节，对应计划的${PLAN_EVENT_META.plant.label}`
+        : c.kind === 'payoff' ? `已到计划的第 ${f.payoffEp} 集，这句正文把「${name}」交代清楚，可视为${PLAN_EVENT_META.payoff.label}`
+        : `第 ${c.ep} 集再次提到「${name}」，让这条${f.type}保持在观众视线里`
+      return { ...c, text: plainText(c.text), foreshadowId: f.id, reason }
+    }),
+  )
+}
+
 /** 情节大纲：全剧总览 + 五段式各段粗纲 */
 export async function draftPlot(project: Project, signal?: AbortSignal): Promise<Plot> {
   await think(signal, 900)
@@ -262,10 +290,10 @@ export async function reviewDraft(project: Project, draft: Parameters<typeof wri
   return writer.reviewDraft(project, draft)
 }
 
-/** AI 修稿：按标注与审稿意见改出新版本 */
-export async function reviseDraft(project: Project, draft: Parameters<typeof writer.reviseDraft>[1], seed: number, signal?: AbortSignal) {
+/** AI 修稿：按审稿意见逐条改（没审稿时按自检），标注过的行按标注改写；生成新版本 */
+export async function reviseDraft(project: Project, draft: Parameters<typeof writer.reviseDraft>[1], seed: number, review?: Parameters<typeof writer.reviseDraft>[3], signal?: AbortSignal) {
   await think(signal, 1300)
-  return writer.reviseDraft(project, draft, seed)
+  return writer.reviseDraft(project, draft, seed, review)
 }
 
 /** 定稿后提炼集要点 */

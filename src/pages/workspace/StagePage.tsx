@@ -1,5 +1,7 @@
 import { ArrowLeft, ArrowRight, Lock, MessageSquareQuote, Package } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router'
+import { useV2 } from '../../store/uiVersion'
+import { StageHeadV2 } from '../../v2/StageHead'
 import { GateNotice, stagePath } from '../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader } from '../../components/ui'
 import { MODE_STAGES, QA_CHECKS, STAGES } from '../../domain/pipeline'
@@ -119,27 +121,14 @@ function StageBody({ stage, project }: { stage: StageKey; project: Project }) {
   )
 }
 
-export default function StagePage() {
-  const project = useCurrentProject()
-  const { stage } = useParams()
-  const stages = MODE_STAGES[project.mode]
-  const index = stages.indexOf(stage as StageKey)
-
-  // 不属于当前创作方式的环节回到概览
-  if (index <= 0) return <Navigate to={`/projects/${project.id}`} replace />
-
-  const meta = STAGES[stages[index]]
-  const prev = STAGES[stages[index - 1]]
-  const next = index < stages.length - 1 ? STAGES[stages[index + 1]] : null
-
+function StageHead({ meta, index }: { meta: StageMeta; index: number }) {
   return (
-    <div className="space-y-4">
+    <>
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500">
-            <span className="tabular-nums">第 {index + 1} 步</span>
-            <span className="text-ink-300">·</span>
-            <span>{meta.source}</span>
+          {/* 需求文档里的出处（如「第五步 · 逐集剧本生成」）编号与这里的步数不一致，只放在悬停提示里 */}
+          <div className="text-xs text-ink-500 tabular-nums" title={`需求文档：${meta.source}`}>
+            第 {index + 1} 步
           </div>
           <h2 className="mt-1 flex items-center gap-2 text-lg font-semibold">
             {meta.label}
@@ -153,6 +142,27 @@ export default function StagePage() {
         </div>
       </div>
       {!meta.phase && <p className="-mt-2 max-w-3xl text-[13px] leading-6 text-ink-500">{meta.summary}</p>}
+    </>
+  )
+}
+
+export default function StagePage() {
+  const project = useCurrentProject()
+  const { stage } = useParams()
+  const v2 = useV2()
+  const stages = MODE_STAGES[project.mode]
+  const index = stages.indexOf(stage as StageKey)
+
+  // 不属于当前创作方式的环节回到概览
+  if (index <= 0) return <Navigate to={`/projects/${project.id}`} replace />
+
+  const meta = STAGES[stages[index]]
+  const prev = STAGES[stages[index - 1]]
+  const next = index < stages.length - 1 ? STAGES[stages[index + 1]] : null
+
+  return (
+    <div className="space-y-4">
+      {v2 ? <StageHeadV2 project={project} meta={meta} index={index} next={next} /> : <StageHead meta={meta} index={index} />}
 
       {/* key：切换项目时重置各环节的本地状态 */}
       {meta.phase ? <LockedStage meta={meta} /> : <StageBody key={`${project.id}-${meta.key}`} stage={meta.key} project={project} />}

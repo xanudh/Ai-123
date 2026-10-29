@@ -1,20 +1,23 @@
 import clsx from 'clsx'
-import { ArrowRight, Layers, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowRight, Eye, Layers, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, AutoTextarea, CheckList, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Select } from '../../../components/ui'
 import { DRAFT_STATUS_META, EPISODE_POSITIONS, SCRIPT_BATCH } from '../../../domain/constants'
-import { preWriteCheck } from '../../../domain/state'
-import type { EpisodeBlueprint, Project } from '../../../domain/types'
-import { blueprintOf, draftLabel, draftsOf, scriptOf } from '../../../domain/work'
+import { buildState, preWriteCheck } from '../../../domain/state'
+import type { EpisodeBlueprint, Foreshadow, Project } from '../../../domain/types'
+import { blueprintOf, draftLabel, draftsOf, foreshadowName, plainText, prevHookOf, scriptOf } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { draftBlueprints, nextSeed, positionOf, writeEpisode } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { useStateFocus } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
+import { useV2 } from '../../../store/uiVersion'
+import { EpisodeDots, EpisodeSteps } from '../../../v2/EpisodeSteps'
 import { addDraft, draftPath, finalPath, nextUnwritten } from '../script/ops'
+import { writeDraft } from '../script/write'
 
 interface Pending {
   title: string
@@ -43,7 +46,8 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const updateProject = useProjects((s) => s.updateProject)
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const { running, run } = useAiTask()
+  const { running, run, cancel } = useAiTask()
+  const v2 = useV2()
   const total = project.spec.totalEpisodes
   const w = project.work
   const blueprints = w.blueprints.filter((b) => b.ep <= total).sort((a, b) => a.ep - b.ep)
@@ -59,7 +63,10 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     if (epParam) setSelected(epParam)
   }
   const [pending, setPending] = useState<Pending | null>(null)
-  const [batchAt, setBatchAt] = useState<number | null>(null)
+  // 批量写作进度：正在写的集、第几集 / 共几集
+  const [batchAt, setBatchAt] = useState<{ ep: number; i: number; n: number } | null>(null)
+  // 批量写作的集数范围：两端都能选到最后一集，默认从第一个没写过的集起写 SCRIPT_BATCH 集；起始集不能越过没写的集
+  const [range, setRange] = useState<{ from: number; to: number } | null>(null)
 
   const current = blueprints.find((b) => b.ep === selected) ?? blueprints[0]
   const writeEp = current?.ep ?? Math.min(next, total)
@@ -68,7 +75,9 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const writeBlock = checks.find((c) => c.level === 'block')
   const versions = draftsOf(w, writeEp)
   const final = scriptOf(w, writeEp)
-  const batchTo = Math.min(total, next + SCRIPT_BATCH - 1)
+  const startMax = Math.min(next, total)
+  const batchFrom = Math.min(range?.from ?? startMax, startMax)
+  const batchTo = Math.max(batchFrom, Math.min(range?.to ?? batchFrom + SCRIPT_BATCH - 1, total))
   let firstMissing = 1
   while (firstMissing <= total && blueprints.some((b) => b.ep === firstMissing)) firstMissing++
 
@@ -131,53 +140,52 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   }
 
   const write = async (ep: number) => {
-    const cur = latestProject(project.id)
-    if (!cur) return
-    const block = preWriteCheck(cur, ep).find((c) => c.level === 'block')
-    if (block) {
-      toast(block.text, 'error')
-      return
-    }
-    const seed = draftsOf(cur.work, ep).length ? nextSeed() : 0
-    const content = await run('write', (signal) => writeEpisode(cur, ep, seed, signal))
-    if (!content) return
-    const latest = latestProject(project.id)
-    if (!latest) return
-    const { draft, drafts } = addDraft(latest.work, ep, content)
-    patchWork(project.id, { drafts }, `写作第 ${ep} 集：${draftLabel(draft)}`)
-    markWriting()
-    toast(`第 ${ep} 集 ${draftLabel(draft)} 已放入草稿箱`)
-    navigate(draftPath(project, draft.id))
+    const draft = await writeDraft(project.id, ep, run)
+    if (draft) navigate(draftPath(project, draft.id))
   }
 
-  /** 从第一个没写过的集起，按顺序最多写 SCRIPT_BATCH 集；遇到不能写的集就停 */
-  const batch = async () => {
-    const from = nextUnwritten(latestProject(project.id) ?? project)
-    const to = Math.min(total, from + SCRIPT_BATCH - 1)
+  /** 按选好的范围逐集写；遇到不能写的集就停，中途可以停止，已写出的草稿保留 */
+  const batch = async (from: number, to: number) => {
+    let done = 0
     const result = await run('batch', async (signal) => {
-      let done = 0
       for (let ep = from; ep <= to; ep++) {
         const cur = latestProject(project.id)
         if (!cur) break
         const block = preWriteCheck(cur, ep).find((c) => c.level === 'block')
-        if (block) return { done, stop: `第 ${ep} 集：${block.text}` }
-        setBatchAt(ep)
+        if (block) return { stop: `第 ${ep} 集：${block.text}` }
+        setBatchAt({ ep, i: ep - from + 1, n: to - from + 1 })
         const content = await writeEpisode(cur, ep, 0, signal)
         const latest = latestProject(project.id)
         if (!latest) break
-        patchWork(project.id, { drafts: addDraft(latest.work, ep, content).drafts }, `批量创作：第 ${ep} 集草稿`)
+        patchWork(project.id, { drafts: addDraft(latest.work, ep, content).drafts }, `批量写作：第 ${ep} 集草稿`)
         done++
       }
-      return { done, stop: '' }
+      return { stop: '' }
     })
     setBatchAt(null)
-    if (!result) return
-    if (result.done) {
-      markWriting()
-      toast(`已写出 ${result.done} 集草稿，逐集审稿后定稿${result.stop ? `（${result.stop}）` : ''}`)
+    setRange(null)
+    if (done) markWriting()
+    if (!result) {
+      if (done) toast(`已停止批量写作，写出的 ${done} 集草稿已保存`)
+    } else if (done) {
+      toast(`已写出 ${done} 集草稿，逐集审稿后定稿${result.stop ? `（${result.stop}）` : ''}`)
     } else if (result.stop) {
       toast(result.stop, 'error')
     }
+  }
+
+  /** 范围里有已写过的集：另存新版本前先确认 */
+  const askBatch = () => {
+    const from = batchFrom
+    const to = batchTo
+    const written = Array.from({ length: to - from + 1 }, (_, i) => from + i).filter((ep) => scriptOf(w, ep) || draftsOf(w, ep).length)
+    if (!written.length) return batch(from, to)
+    setPending({
+      title: `批量写作第 ${from}–${to} 集？`,
+      desc: `第 ${written.join('、')} 集已经写过，会各自另存一版新草稿，原有草稿与正文不受影响。`,
+      confirmText: '继续写作',
+      action: () => batch(from, to),
+    })
   }
 
   const askGenerate = () =>
@@ -242,6 +250,16 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
 
   const positions = current ? [...new Set<string>([...EPISODE_POSITIONS, current.position].filter(Boolean))] : []
   const currentFinal = current && scriptOf(w, current.ep)
+  // 承接没填时默认接上集结尾的钩子，作为输入框提示
+  const carryDefault = current ? plainText(prevHookOf(w, current.ep)) : ''
+  // 承接也可能是前几集埋下、到本集该响的伏笔：已埋（或计划已埋）还没回收的，按回收集排
+  const carryForeshadows = current
+    ? buildState(project, current.ep)
+        .foreshadows.filter((f) => f.item.plantEp < current.ep && f.item.payoffEp >= current.ep && f.paidIn === null)
+        .sort((a, b) => a.item.payoffEp - b.item.payoffEp)
+        .slice(0, 4)
+    : []
+  const carryPhrase = (f: Foreshadow) => `第 ${f.plantEp} 集埋下的「${foreshadowName(f)}」在本集响起`
 
   return (
     <>
@@ -256,34 +274,54 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
             {/* 没有蓝图时不出写作按钮：先生成蓝图 */}
             {blueprints.length > 0 && (
               <>
-                <AiButton loading={running === 'write'} disabled={blocked || !!writeBlock || !!running} title={writeBlock?.text ?? `按第 ${writeEp} 集蓝图写作`} onClick={() => write(writeEp)}>
-                  写作第 {writeEp} 集
-                </AiButton>
+                <span className="flex items-center gap-1 text-[13px] text-ink-500">
+                  第
+                  <Select
+                    aria-label="批量写作起始集"
+                    className="h-8 w-16 px-2"
+                    value={batchFrom}
+                    disabled={!!running}
+                    onChange={(e) => {
+                      const from = Number(e.target.value)
+                      setRange({ from, to: Math.min(total, from + SCRIPT_BATCH - 1) })
+                    }}
+                  >
+                    {/* 列出全部集；没写到的集要按顺序写，不能直接从那里起 */}
+                    {Array.from({ length: total }, (_, i) => i + 1).map((ep) => (
+                      <option key={ep} value={ep} disabled={ep > startMax}>
+                        {ep}
+                      </option>
+                    ))}
+                  </Select>
+                  –
+                  <Select aria-label="批量写作结束集" className="h-8 w-16 px-2" value={batchTo} disabled={!!running} onChange={(e) => setRange({ from: batchFrom, to: Number(e.target.value) })}>
+                    {Array.from({ length: total - batchFrom + 1 }, (_, i) => batchFrom + i).map((ep) => (
+                      <option key={ep} value={ep}>
+                        {ep}
+                      </option>
+                    ))}
+                  </Select>
+                  集
+                </span>
                 <AiButton
                   variant="secondary"
                   loading={running === 'batch'}
-                  disabled={blocked || next > total || !!running}
-                  title={`从第一个没写过的集起，按顺序最多写 ${SCRIPT_BATCH} 集`}
-                  onClick={batch}
+                  disabled={blocked || !!running}
+                  title={`按顺序逐集写，范围可选到第 ${total} 集；起始集不能越过第 ${startMax} 集（不能跳过没写的集）`}
+                  onClick={askBatch}
                 >
-                  {running === 'batch' && batchAt ? `正在写第 ${batchAt} 集…` : next > total ? '已全部开写' : `批量创作（第 ${next}–${batchTo} 集）`}
+                  {running === 'batch' && batchAt ? `正在写第 ${batchAt.ep} 集（${batchAt.i}/${batchAt.n}）…` : '批量写作'}
                 </AiButton>
+                {running === 'batch' && (
+                  <Button variant="ghost" size="sm" title="停止后续集；已写出的草稿保留" onClick={cancel}>
+                    停止
+                  </Button>
+                )}
               </>
             )}
             <AiButton variant="secondary" loading={running === 'blueprints'} disabled={blocked || !!running} onClick={askGenerate}>
               AI 生成蓝图
             </AiButton>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="px-2"
-              aria-label="重新生成本集蓝图"
-              title="重新生成本集蓝图（保留作者微操指导与要点）"
-              disabled={!current || blocked || !!running}
-              onClick={() => current && regenerate(current.ep)}
-            >
-              <RefreshCw size={14} className={clsx(running === 'one' && 'animate-spin')} />
-            </Button>
             <Button variant="secondary" size="sm" className="px-2" aria-label="新增一集蓝图" title={firstMissing > total ? '全部集都已有蓝图' : `新增第 ${firstMissing} 集蓝图`} disabled={firstMissing > total} onClick={add}>
               <Plus size={14} />
             </Button>
@@ -343,7 +381,14 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                         {b.ep}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={clsx('block truncate text-[13px]', on ? 'font-semibold text-brand-700' : 'font-medium text-ink-900')}>{b.title || `第 ${b.ep} 集`}</span>
+                        {v2 ? (
+                          <span className="flex items-center gap-2">
+                            <span className={clsx('block min-w-0 flex-1 truncate text-[13px]', on ? 'font-semibold text-brand-700' : 'font-medium text-ink-900')}>{b.title || `第 ${b.ep} 集`}</span>
+                            <EpisodeDots project={project} ep={b.ep} />
+                          </span>
+                        ) : (
+                          <span className={clsx('block truncate text-[13px]', on ? 'font-semibold text-brand-700' : 'font-medium text-ink-900')}>{b.title || `第 ${b.ep} 集`}</span>
+                        )}
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Badge tone={POSITION_TONE[b.position] ?? 'gray'}>{b.position || '未定位'}</Badge>
                           {b.guidance.trim() && <Badge tone="violet">有指导</Badge>}
@@ -361,27 +406,55 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
           {/* 蓝图表单 */}
           <div className="min-w-0 space-y-4">
             <Card>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-                <h3 className="min-w-0 truncate text-[15px] font-semibold text-ink-900">
-                  第 {current.ep} 集：{current.title || <span className="text-ink-400">未命名</span>}
-                </h3>
-                <div className="flex items-center gap-2">
+              <div data-ep-head className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-5 py-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-[15px] font-semibold text-ink-900">
+                    第 {current.ep} 集：{current.title || <span className="text-ink-400">未命名</span>}
+                  </h3>
                   <span className="text-xs text-ink-400">修改自动保存</span>
-                  <Button variant="ghost" size="sm" onClick={() => askRemove(current.ep)}>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <AiButton
+                    variant="secondary"
+                    loading={running === 'one'}
+                    disabled={blocked || !!running}
+                    title={`只重新生成第 ${current.ep} 集的蓝图，作者微操指导与本集要点保留`}
+                    onClick={() =>
+                      setPending({
+                        title: `重新生成第 ${current.ep} 集蓝图？`,
+                        desc: '本集标题、定位、出场人物、小目标、冲突与钩子会按集纲重新生成；作者微操指导与本集要点保留，其他集不受影响。',
+                        confirmText: '重新生成',
+                        action: () => regenerate(current.ep),
+                      })
+                    }
+                  >
+                    重新生成本集蓝图
+                  </AiButton>
+                  {(final || versions.length > 0) && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      title={final ? `打开第 ${current.ep} 集正文` : `打开 ${draftLabel(versions[0])}`}
+                      onClick={() => navigate(final ? finalPath(project, current.ep) : draftPath(project, versions[0].id))}
+                    >
+                      <Eye size={14} />
+                      查看本集
+                    </Button>
+                  )}
+                  <AiButton loading={running === 'write'} disabled={blocked || !!writeBlock || !!running} title={writeBlock?.text ?? `按第 ${writeEp} 集蓝图写作`} onClick={() => write(writeEp)}>
+                    写作第 {writeEp} 集
+                  </AiButton>
+                  <Button variant="ghost" size="sm" aria-label="删除此集" title={`删除第 ${current.ep} 集蓝图`} onClick={() => askRemove(current.ep)}>
                     <Trash2 size={14} />
-                    删除此集
                   </Button>
                 </div>
               </div>
+              {v2 && <EpisodeSteps project={project} ep={current.ep} here="蓝图" className="border-b border-line bg-canvas/40 px-5 py-2.5" />}
               <div className="space-y-4 p-5">
-                <div className="grid gap-4 sm:grid-cols-[120px_minmax(0,1fr)]">
-                  <Field label="集号">
-                    <Input value={`第 ${current.ep} 集`} readOnly disabled />
-                  </Field>
-                  <Field label="本集标题">
-                    <Input value={current.title} onChange={(e) => update(current.ep, { title: e.target.value })} placeholder="本集标题" />
-                  </Field>
-                </div>
+                {/* 集号就在卡片标题里，不再单列一个不能改的输入框 */}
+                <Field label="本集标题">
+                  <Input value={current.title} onChange={(e) => update(current.ep, { title: e.target.value })} placeholder="本集标题" />
+                </Field>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="本集定位" hint="按节奏框架预填，可改">
                     <Select value={current.position} onChange={(e) => update(current.ep, { position: e.target.value })}>
@@ -399,6 +472,38 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                 </Field>
                 <Field label="实质冲突与转折">
                   <AutoTextarea minRows={3} value={current.conflict} onChange={(e) => update(current.ep, { conflict: e.target.value })} placeholder="谁阻碍主角、怎么升级、在哪里反转" />
+                </Field>
+                <Field label="承接" hint="本集开头接住什么：上集结尾的钩子，或前几集埋下、本集要响的伏笔；不填时默认接上集结尾的钩子">
+                  <AutoTextarea
+                    aria-label="承接"
+                    minRows={2}
+                    value={current.carry ?? ''}
+                    onChange={(e) => update(current.ep, { carry: e.target.value })}
+                    placeholder={carryDefault ? `默认接上集结尾：${carryDefault}` : current.ep === 1 ? '第 1 集是开篇，没有上集可承接' : '上集结尾留下的悬念、前几集埋下的伏笔'}
+                  />
+                  {carryForeshadows.length > 0 && (
+                    <div data-carry-foreshadows className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="text-ink-400">接住前文埋点：</span>
+                      {carryForeshadows.map((f) => {
+                        const phrase = carryPhrase(f.item)
+                        const base = current.carry?.trim() || carryDefault
+                        const added = base.includes(`「${foreshadowName(f.item)}」`)
+                        return (
+                          <button
+                            key={f.item.id}
+                            type="button"
+                            disabled={added}
+                            title={added ? '已写进承接' : `${f.item.content}（第 ${f.item.plantEp} 集埋 · 第 ${f.item.payoffEp} 集收）`}
+                            onClick={() => update(current.ep, { carry: [base, phrase].filter(Boolean).join('；') })}
+                            className="inline-flex items-center gap-1 rounded-full border border-line bg-white px-2 py-0.5 text-ink-700 transition-colors enabled:hover:border-brand-300 enabled:hover:text-brand-700 disabled:cursor-default disabled:opacity-50"
+                          >
+                            <Plus size={12} />「{foreshadowName(f.item)}」
+                            <span className="text-ink-400">{f.item.payoffEp === current.ep ? '本集回收' : `第 ${f.item.payoffEp} 集收`}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </Field>
                 <Field label="末尾悬念钩子">
                   <AutoTextarea minRows={2} value={current.hook} onChange={(e) => update(current.ep, { hook: e.target.value })} placeholder="最后 10 秒留什么让观众点下一集" />

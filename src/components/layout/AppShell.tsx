@@ -15,6 +15,7 @@ import {
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router'
+import { VersionBar } from '../../v2/VersionBar'
 import { buttonClass } from '../ui'
 
 interface NavItem {
@@ -111,7 +112,7 @@ function Topbar() {
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   return (
-    <header className="flex h-16 shrink-0 items-center gap-6 border-b border-line bg-white/80 px-8 backdrop-blur">
+    <header className="flex h-16 shrink-0 items-center gap-6 border-b border-line bg-white/80 px-6 backdrop-blur xl:px-8">
       {!SHOW_SIDEBAR && (
         <Link to="/projects" className="flex shrink-0 items-center gap-2.5" aria-label="我的剧本">
           <img src="/logo.svg" alt="" className="size-8" />
@@ -162,6 +163,7 @@ export function AppShell() {
         <main className="scrollbar-thin flex-1 overflow-y-auto">
           <Outlet />
         </main>
+        <VersionBar />
       </div>
     </div>
   )

@@ -97,7 +97,7 @@ export default function ModulePage() {
   const related = info.mode ? projects.filter((p) => p.mode === info.mode) : []
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-8">
+    <div className="px-6 py-8 xl:px-8">
       <PageHeader
         title={
           <span className="flex items-center gap-2.5">

@@ -4,8 +4,8 @@
  */
 import { PLAN_EVENT_META } from './constants'
 import type { CharacterRole, EpisodeScript, Foreshadow, Project, Relation } from './types'
-import { SILENCE_DEFAULT, blueprintOf, foreshadowAlert, foreshadowName, hookOf, latestDraft, scriptOf, silenceOf, traceForeshadow } from './work'
-import type { ForeshadowTrace } from './work'
+import { SILENCE_DEFAULT, blueprintOf, carryOf, foreshadowAlert, foreshadowName, latestDraft, lateStep, scriptOf, silenceOf, traceForeshadow } from './work'
+import type { ForeshadowTrace, LateStep } from './work'
 
 export interface CharacterEntry {
   name: string
@@ -35,6 +35,8 @@ export interface ForeshadowEntry extends ForeshadowTrace {
   silence: number
   /** 到期没埋、到期没收或沉寂太久的提醒 */
   overdue: string | null
+  /** 超期没确认的一步：可以确认定稿、改期或删掉这条计划 */
+  late: LateStep | null
 }
 
 export interface EpisodeLog {
@@ -87,7 +89,7 @@ export function buildState(p: Project, beforeEp = Infinity): StateLibrary {
   const foreshadows: ForeshadowEntry[] = p.work.foreshadows.map((f) => {
     const item = { ...f, events: f.events.filter((e) => e.ep < beforeEp) }
     const trace = traceForeshadow(item)
-    return { item: f, ...trace, silence: silenceOf(trace, latestEp), overdue: foreshadowAlert(item, trace, latestEp, threshold) }
+    return { item: f, ...trace, silence: silenceOf(trace, latestEp), overdue: foreshadowAlert(item, trace, latestEp, threshold), late: lateStep(item, trace, latestEp) }
   })
   const log: EpisodeLog[] = []
 
@@ -175,11 +177,8 @@ export function preWriteCheck(p: Project, ep: number): PreCheck[] {
     if (f.overdue) checks.push({ level: 'warn', text: `${name}${f.overdue}` })
   }
 
-  const prevHook = (() => {
-    const prev = scriptOf(w, ep - 1) ?? latestDraft(w, ep - 1)
-    return (prev && hookOf(prev)) || w.outline.find((o) => o.ep === ep - 1)?.hookLine
-  })()
-  if (prevHook) checks.push({ level: 'info', text: `开场承接上集钩子：“${prevHook}”` })
+  const carry = carryOf(w, ep)
+  if (carry) checks.push({ level: 'info', text: carry.auto ? `开场承接上集钩子：“${carry.text}”` : `开场承接：${carry.text}` })
   for (const c of lib.characters.filter((c) => c.role && c.state).slice(0, 4)) {
     checks.push({ level: 'info', text: `${c.name}（第 ${c.stateEp} 集后）：${c.state}` })
   }

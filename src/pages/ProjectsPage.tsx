@@ -10,6 +10,8 @@ import type { Project, ProjectMode, ProjectStatus } from '../domain/types'
 import { timeAgo } from '../lib/format'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
+import { useV2 } from '../store/uiVersion'
+import { CardProgress } from '../v2/CardProgress'
 
 type SortKey = 'updated' | 'created' | 'title'
 
@@ -23,6 +25,7 @@ function matches(p: Project, q: string) {
 
 export default function ProjectsPage() {
   const navigate = useNavigate()
+  const v2 = useV2()
   const [params, setParams] = useSearchParams()
   const { projects, duplicateProject, deleteProject, restoreSamples } = useProjects()
   const [mode, setMode] = useState<ProjectMode | 'all'>('all')
@@ -57,7 +60,7 @@ export default function ProjectsPage() {
   })
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-8">
+    <div className="px-6 py-8 xl:px-8">
       <PageHeader
         title="我的剧本"
         desc={`共 ${projects.length} 个项目`}
@@ -153,9 +156,9 @@ export default function ProjectsPage() {
               />
             </Card>
           ) : layout === 'grid' ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
               {visible.map((p) => (
-                <ProjectCard key={p.id} project={p} {...actions(p)} />
+                <ProjectCard key={p.id} project={p} {...actions(p)} footer={v2 && <CardProgress project={p} />} />
               ))}
             </div>
           ) : (

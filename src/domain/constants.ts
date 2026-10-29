@@ -121,7 +121,7 @@ export const HOOK_TYPES: HookType[] = ['悬念', '反转', '情绪高点', '新�
 /** 情节大纲每批生成的集数 */
 export const OUTLINE_BATCH = 10
 
-/** 逐集剧本批量创作的集数上限 */
+/** 逐集剧本批量写作默认选的集数（范围可以手动选到最后一集） */
 export const SCRIPT_BATCH = 5
 
 /** 分集蓝图里的本集定位 */

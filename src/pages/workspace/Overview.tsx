@@ -1,13 +1,17 @@
 import clsx from 'clsx'
 import { Check, Lock, Pencil } from 'lucide-react'
 import { Link } from 'react-router'
-import { Badge, Card, CardHeader } from '../../components/ui'
-import { MODE_META } from '../../domain/constants'
+import { Badge, Card, CardHeader, Segmented } from '../../components/ui'
+import { MODE_META, STATUS_META } from '../../domain/constants'
 import { MODE_STAGES, STAGES } from '../../domain/pipeline'
 import { estimateChars } from '../../domain/rhythm'
-import type { StageKey } from '../../domain/types'
+import type { Project, ProjectStatus, StageKey } from '../../domain/types'
 import { finalCount, stageState } from '../../domain/work'
 import { audienceLabel, durationLabel, formatDateTime, languageLabel } from '../../lib/format'
+import { useProjects } from '../../store/projects'
+import { toast } from '../../store/toast'
+import { useV2 } from '../../store/uiVersion'
+import { ContinueWork, TodoCard } from '../../v2/OverviewBits'
 import { useCurrentProject } from './ProjectLayout'
 
 function KV({ label, children }: { label: string; children: React.ReactNode }) {
@@ -28,8 +32,31 @@ function Missing({ to, children }: { to: StageKey; children: React.ReactNode }) 
   )
 }
 
+/** 项目状态：放在创作进度卡的右上角，点选即保存，不走项目设置的保存流程；创作方式见页头标签 */
+function StatusPicker({ project }: { project: Project }) {
+  const updateProject = useProjects((s) => s.updateProject)
+  const change = (status: ProjectStatus) => {
+    if (status === project.status) return
+    const label = STATUS_META[status].label
+    updateProject(project.id, { status }, `项目状态改为「${label}」`)
+    toast(`项目状态已改为「${label}」`)
+  }
+
+  return (
+    <div className="flex items-center gap-2" data-status-card title="用于在项目列表中筛选；正式版会随环节推进自动流转">
+      <span className="text-xs text-ink-400">项目状态</span>
+      <Segmented
+        value={project.status}
+        onChange={change}
+        options={(Object.keys(STATUS_META) as ProjectStatus[]).map((s) => ({ value: s, label: STATUS_META[s].label }))}
+      />
+    </div>
+  )
+}
+
 export default function Overview() {
   const project = useCurrentProject()
+  const v2 = useV2()
   const { spec, rhythm, work: w } = project
   const all = MODE_STAGES[project.mode]
   const stages = all.filter((k) => k !== 'overview')
@@ -43,7 +70,11 @@ export default function Overview() {
     <div className="space-y-6">
       {/* 流程进度 */}
       <Card>
-        <CardHeader title="创作进度" desc={`${MODE_META[project.mode].label} · 共 ${all.length} 个环节 · 已定稿 ${finalCount(project)} / ${spec.totalEpisodes} 集`} />
+        <CardHeader
+          title="创作进度"
+          desc={`${MODE_META[project.mode].label} · 共 ${all.length} 个环节 · 已定稿 ${finalCount(project)} / ${spec.totalEpisodes} 集`}
+          action={<StatusPicker project={project} />}
+        />
         <div className="overflow-x-auto px-5 py-5">
           <ol className="flex min-w-[640px] items-start">
             {all.map((key, i) => {
@@ -69,24 +100,30 @@ export default function Overview() {
               )
             })}
           </ol>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-canvas px-4 py-3">
-            {next ? (
-              <>
-                <div className="text-[13px]">
-                  <span className="text-ink-500">下一步：</span>
-                  <span className="font-medium">{next.label}</span>
-                  <span className="text-ink-500"> —— {next.summary.split(/[，；：]/)[0]}</span>
-                </div>
-                <Link to={`stage/${next.key}`} className="text-[13px] font-medium text-brand-600 hover:text-brand-700">
-                  去{next.label} →
-                </Link>
-              </>
-            ) : (
-              <div className="text-[13px] text-ink-700">当前开放的环节都已完成；质检交付将在后续版本开放。</div>
-            )}
-          </div>
+          {v2 ? (
+            <ContinueWork project={project} />
+          ) : (
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-canvas px-4 py-3">
+              {next ? (
+                <>
+                  <div className="text-[13px]">
+                    <span className="text-ink-500">下一步：</span>
+                    <span className="font-medium">{next.label}</span>
+                    <span className="text-ink-500"> —— {next.summary.split(/[，；：]/)[0]}</span>
+                  </div>
+                  <Link to={`stage/${next.key}`} className="text-[13px] font-medium text-brand-600 hover:text-brand-700">
+                    去{next.label} →
+                  </Link>
+                </>
+              ) : (
+                <div className="text-[13px] text-ink-700">当前开放的环节都已完成；质检交付将在后续版本开放。</div>
+              )}
+            </div>
+          )}
         </div>
       </Card>
+
+      {v2 && <TodoCard project={project} />}
 
       <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
         {/* 项目设定 */}

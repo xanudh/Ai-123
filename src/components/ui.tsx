@@ -45,6 +45,9 @@ const badgeTones: Record<BadgeTone, string> = {
   orange: 'bg-orange-100 text-orange-800',
 }
 
+/** 信息行里的分隔圆点：挂在每项前面，换行时圆点跟着这一项走，不会悬在行尾 */
+export const dotBefore = "before:mr-2 before:text-ink-300 before:content-['·']"
+
 export function Badge({ tone = 'gray', children, className }: { tone?: BadgeTone; children: ReactNode; className?: string }) {
   return (
     <span className={clsx('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4', badgeTones[tone], className)}>
@@ -108,20 +111,26 @@ export function Field({
 }
 
 /**
- * 输入框默认占满一行；调用方传了宽度（w-*）就用调用方的。
- * 不能简单叠加：同时写 w-full 和 w-28 时，CSS 里排在后面的 w-full 总会生效。
+ * 调用方传了同类工具类就不加默认值。不能简单叠加：Tailwind 按值排序输出，
+ * 同时写 w-full 和 w-28、h-10 和 h-8 时，CSS 里排在后面的那个总会生效，与 class 顺序无关。
  */
-export const fillWidth = (className?: string) => (className?.split(/\s+/).some((c) => c.startsWith('w-')) ? undefined : 'w-full')
+const unlessGiven = (className: string | undefined, prefix: RegExp, fallback: string) => (className?.split(/\s+/).some((c) => prefix.test(c)) ? undefined : fallback)
+
+/** 输入框默认占满一行；调用方传了宽度（w-*）就用调用方的 */
+export const fillWidth = (className?: string) => unlessGiven(className, /^w-/, 'w-full')
+
+/** 默认高度与左右内边距，同样可被调用方的 h-* / px-* / pl-* / pr-* 覆盖 */
+const fieldSize = (className: string | undefined, height?: string) => clsx(unlessGiven(className, /^p[xlr]-/, 'px-3'), height && unlessGiven(className, /^h-/, height))
 
 const inputBase =
-  'rounded-lg border bg-white px-3 text-sm text-ink-900 placeholder:text-ink-400 transition-colors focus:outline-none focus:ring-3 focus:ring-brand-500/15'
+  'rounded-lg border bg-white text-sm text-ink-900 placeholder:text-ink-400 transition-colors focus:outline-none focus:ring-3 focus:ring-brand-500/15'
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }>(
   function Input({ className, invalid, ...rest }, ref) {
     return (
       <input
         ref={ref}
-        className={clsx(inputBase, fillWidth(className), 'h-10', invalid ? 'border-red-400 focus:border-red-500' : 'border-line focus:border-brand-500', className)}
+        className={clsx(inputBase, fillWidth(className), fieldSize(className, 'h-10'), invalid ? 'border-red-400 focus:border-red-500' : 'border-line focus:border-brand-500', className)}
         {...rest}
       />
     )
@@ -133,7 +142,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     return (
       <textarea
         ref={ref}
-        className={clsx(inputBase, fillWidth(className), 'resize-none py-2.5 leading-relaxed', invalid ? 'border-red-400' : 'border-line focus:border-brand-500', className)}
+        className={clsx(inputBase, fillWidth(className), fieldSize(className), 'resize-none py-2.5 leading-relaxed', invalid ? 'border-red-400' : 'border-line focus:border-brand-500', className)}
         {...rest}
       />
     )
@@ -143,7 +152,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 export function Select({ className, invalid, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean }) {
   return (
     <select
-      className={clsx(inputBase, fillWidth(className), 'h-10 disabled:bg-canvas disabled:text-ink-700', invalid ? 'border-red-400 focus:border-red-500' : 'border-line focus:border-brand-500', className)}
+      className={clsx(inputBase, fillWidth(className), fieldSize(className, 'h-10'), 'disabled:bg-canvas disabled:text-ink-700', invalid ? 'border-red-400 focus:border-red-500' : 'border-line focus:border-brand-500', className)}
       {...rest}
     />
   )

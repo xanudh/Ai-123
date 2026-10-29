@@ -211,7 +211,10 @@ export interface PlanEvent {
   id: string
   ep: number
   kind: PlanEventKind
+  /** 证据：逐字摘自这一集定稿的短原文 */
   text: string
+  /** 确认理由（旧数据没有） */
+  reason?: string
   at: string
 }
 
@@ -259,6 +262,8 @@ export interface EpisodeBlueprint {
   goal: string
   /** 实质冲突与转折 */
   conflict: string
+  /** 承接：本集开头接住什么——上集结尾的钩子，或前几集埋下、本集要响的伏笔；不写时默认接上集结尾的钩子（旧数据没有） */
+  carry?: string
   /** 末尾悬念钩子 */
   hook: string
   /** 作者微操指导 */
@@ -277,14 +282,20 @@ export interface ScriptLine {
   zh: string
   /** 英文台词；中文改动后清空，等待重新翻译 */
   en?: string
+  /** 段落对齐；不写为左对齐。正文里的 **加粗** / *斜体* 直接以 Markdown 记在 zh 里 */
+  align?: 'center' | 'right'
 }
 
 /** 草稿状态：草稿 / 已修稿（被新版本取代）/ 已定稿 */
 export type DraftStatus = 'draft' | 'revised' | 'final'
 
+/** 审稿意见的类别：AI 修稿按它逐条处理；旧报告没有，修稿时按自检处理 */
+export type ReviewCode = 'short' | 'long' | 'scene' | 'hook' | 'carry' | 'plan' | 'hero' | 'unknown' | 'absent' | 'state' | 'paid' | 'filler' | 'longLine' | 'notes'
+
 export interface ReviewItem {
   level: 'block' | 'warn' | 'info' | 'ok'
   text: string
+  code?: ReviewCode
 }
 
 /** AI 审稿报告 */
@@ -295,6 +306,16 @@ export interface DraftReview {
   items: ReviewItem[]
   /** 审稿时正文的指纹：正文没改动就不重复审稿 */
   sig?: string
+}
+
+/** AI 修稿记录 */
+export interface DraftRevision {
+  /** 依据的审稿报告（来源草稿上的）；没审稿时按标注与自检修改 */
+  reviewId?: string
+  reviewNo?: number
+  changes: string[]
+  /** AI 不擅自改、留给编剧处理的审稿意见 */
+  manual: string[]
 }
 
 /** 编辑器里对某一行的标注 */
@@ -321,6 +342,8 @@ export interface EpisodeDraft {
   notes: LineNote[]
   /** AI 修稿生成的版本记下来源草稿；用来限制修稿轮数 */
   from?: string
+  /** AI 修稿的依据与结果：按哪份审稿改的、改了什么、哪些要人工处理 */
+  revision?: DraftRevision
   createdAt: string
   updatedAt: string
 }
@@ -337,6 +360,8 @@ export interface EpisodeScript {
   states: Record<string, string>
   /** 来源草稿 */
   draftId: string
+  /** 定稿上的标注：直接改正文时的待办提醒 */
+  notes?: LineNote[]
   updatedAt: string
 }
 

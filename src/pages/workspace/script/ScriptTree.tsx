@@ -24,7 +24,7 @@ function Group({ open, onToggle, icon, label, count, children }: { open: boolean
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-[12.5px] font-medium text-ink-700 hover:bg-white/70"
+        className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-[12.5px] font-medium text-ink-700 hover:bg-[var(--tree-hover,rgb(255_255_255/0.7))]"
       >
         {open ? <ChevronDown size={13} className="text-ink-400" /> : <ChevronRight size={13} className="text-ink-400" />}
         {icon}
@@ -51,7 +51,7 @@ function DeleteButton({ label, onClick }: { label: string; onClick: () => void }
 }
 
 const leaf = ({ isActive }: { isActive: boolean }) =>
-  clsx('flex h-7 items-center gap-1.5 rounded-md pr-6 text-[12.5px] transition-colors', isActive ? 'bg-white font-medium text-brand-700 shadow-card' : 'text-ink-700 hover:bg-white/70')
+  clsx('flex h-7 items-center gap-1.5 rounded-md pr-6 text-[12.5px] transition-colors', isActive ? 'bg-[var(--tree-active,white)] font-medium text-brand-700 shadow-card' : 'text-ink-700 hover:bg-[var(--tree-hover,rgb(255_255_255/0.7))]')
 
 export function ScriptTree({ project }: { project: Project }) {
   const w = project.work
@@ -112,7 +112,7 @@ export function ScriptTree({ project }: { project: Project }) {
                     aria-expanded={open}
                     onClick={() => toggleEp(ep)}
                     title={`第 ${ep} 集 ${versions[0].title}`}
-                    className="flex h-7 w-full items-center gap-1.5 rounded-md pl-3 pr-1.5 text-[12.5px] text-ink-700 hover:bg-white/70"
+                    className="flex h-7 w-full items-center gap-1.5 rounded-md pl-3 pr-1.5 text-[12.5px] text-ink-700 hover:bg-[var(--tree-hover,rgb(255_255_255/0.7))]"
                   >
                     {done ? <CircleCheck size={13} className="shrink-0 text-emerald-500" /> : <Circle size={13} className="shrink-0 text-ink-300" />}
                     <span className="min-w-0 flex-1 truncate text-left">
@@ -143,7 +143,7 @@ export function ScriptTree({ project }: { project: Project }) {
                                     desc:
                                       d.status === 'final'
                                         ? `这是第 ${ep} 集正文的来源版本；删除后正文章节不受影响。`
-                                        : `第 ${ep} 集的这个版本及其审查报告、标注将被删除，无法撤销。`,
+                                        : `第 ${ep} 集的这个版本及其审核报告、标注将被删除，无法撤销。`,
                                   })
                                 }
                               />
@@ -157,9 +157,9 @@ export function ScriptTree({ project }: { project: Project }) {
                                     <li key={r.id}>
                                       <Link
                                         to={draftPath(project, d.id, r.id)}
-                                        className={clsx('flex h-6 items-center gap-1 truncate rounded-md pr-1.5 pl-12 text-[11.5px]', active ? 'bg-white text-brand-700 shadow-card' : 'text-ink-500 hover:bg-white/70')}
+                                        className={clsx('flex h-6 items-center gap-1 truncate rounded-md pr-1.5 pl-12 text-[11.5px]', active ? 'bg-[var(--tree-active,white)] text-brand-700 shadow-card' : 'text-ink-500 hover:bg-[var(--tree-hover,rgb(255_255_255/0.7))]')}
                                       >
-                                        审查报告 #{i + 1}
+                                        审核报告 #{i + 1}
                                         <span className="text-ink-300">·</span>
                                         <span className={block ? 'text-red-600' : undefined}>{block} 严重</span>
                                         <span className="text-ink-300">·</span>

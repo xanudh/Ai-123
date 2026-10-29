@@ -15,6 +15,7 @@ import { formatDateTime } from '../../../lib/format'
 import { ANALYZE_STEPS, SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME, analyzeBenchmark, parseSource } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
+import { useV2 } from '../../../store/uiVersion'
 
 const BLOCKS: BreakdownBlock[] = ['synopsis', 'characters', 'mainline', 'episodes']
 
@@ -227,7 +228,7 @@ function BlockCard({
 }) {
   const approved = bd.review[block] === 'approved'
   return (
-    <Card className={clsx('overflow-hidden', approved && 'border-emerald-200')}>
+    <Card id={`bd-block-${block}`} className={clsx('scroll-mt-24 overflow-hidden', approved && 'border-emerald-200')}>
       <CardHeader
         title={
           <span className="flex items-center gap-2">
@@ -479,8 +480,12 @@ function EpisodeModal({ episode, locked, onClose, onSave }: { episode: EpisodeBr
 
 /* ---------------------------------- 审核与引用 ---------------------------------- */
 
+/** 版本二：滚到某个板块（审核条吸顶，板块留出 scroll-mt） */
+const jumpTo = (block: BreakdownBlock) => requestAnimationFrame(() => document.getElementById(`bd-block-${block}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+
 function ReviewBar({ project, bd }: { project: Project; bd: Breakdown }) {
   const { patchWork, updateProject } = useProjects()
+  const v2 = useV2()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [useRhythm, setUseRhythm] = useState(true)
@@ -503,17 +508,25 @@ function ReviewBar({ project, bd }: { project: Project; bd: Breakdown }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white px-5 py-3.5 shadow-card">
+    <div className={clsx('flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white px-5 py-3.5 shadow-card', v2 && 'sticky top-2 z-20')}>
       <div className="flex flex-wrap items-center gap-3 text-[13px]">
         <span className="font-medium">
           审核进度 <span className="tabular-nums">{done}/4</span>
         </span>
         <div className="flex gap-1">
-          {BLOCKS.map((b, i) => (
-            <span key={b} className={clsx('rounded px-1.5 py-0.5 text-[11px]', bd.review[b] === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-canvas text-ink-500')}>
-              {BREAKDOWN_BLOCKS[i].label}
-            </span>
-          ))}
+          {BLOCKS.map((b, i) => {
+            const chip = clsx('rounded px-1.5 py-0.5 text-[11px]', bd.review[b] === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-canvas text-ink-500')
+            return v2 ? (
+              <button key={b} type="button" onClick={() => jumpTo(b)} title={`跳到「${BREAKDOWN_BLOCKS[i].label}」`} className={clsx(chip, 'transition-colors hover:ring-1 hover:ring-brand-300')}>
+                {bd.review[b] === 'approved' && <Check size={10} strokeWidth={3} className="mr-0.5 inline" />}
+                {BREAKDOWN_BLOCKS[i].label}
+              </button>
+            ) : (
+              <span key={b} className={chip}>
+                {BREAKDOWN_BLOCKS[i].label}
+              </span>
+            )
+          })}
         </div>
         {bd.referencedAt && <span className="text-xs text-ink-500">已于 {formatDateTime(bd.referencedAt)} 引用到故事架构</span>}
       </div>
@@ -524,7 +537,14 @@ function ReviewBar({ project, bd }: { project: Project; bd: Breakdown }) {
             <ArrowRight size={14} />
           </Link>
         )}
-        <Button size="sm" variant={bd.referencedAt ? 'secondary' : 'primary'} disabled={done < 4} title={done < 4 ? '四个板块全部确认后才能引用' : undefined} onClick={() => setOpen(true)}>
+        <Button
+          size="sm"
+          variant={bd.referencedAt ? 'secondary' : 'primary'}
+          className={clsx(v2 && done === 4 && !bd.referencedAt && 'ring-4 ring-brand-500/20')}
+          disabled={done < 4}
+          title={done < 4 ? '四个板块全部确认后才能引用' : undefined}
+          onClick={() => setOpen(true)}
+        >
           <Link2 size={14} />
           {bd.referencedAt ? '重新引用' : '一键引用'}
         </Button>
@@ -570,6 +590,7 @@ export default function BreakdownStage({ project }: { project: Project }) {
   const { running, run } = useAiTask()
   const [step, setStep] = useState<number | null>(null)
   const [editing, setEditing] = useState<EpisodeBreakdown | null>(null)
+  const v2 = useV2()
   const bd = project.work.breakdown
 
   if (!project.work.source) return <ImportCard project={project} />
@@ -593,6 +614,11 @@ export default function BreakdownStage({ project }: { project: Project }) {
     if (!bd) return
     const approved = bd.review[block] === 'approved'
     patch({ review: { ...bd.review, [block]: approved ? 'pending' : 'approved' } }, approved ? undefined : `拆解审核通过：${BREAKDOWN_BLOCKS[index].label}`)
+    // 版本二：确认一个板块后接着审下一个没确认的；全部确认后审核条上的「一键引用」高亮
+    if (v2 && !approved) {
+      const after = [...BLOCKS.slice(index + 1), ...BLOCKS.slice(0, index)].find((b) => bd.review[b] !== 'approved')
+      if (after) jumpTo(after)
+    }
   }
   const locked = (block: BreakdownBlock) => bd?.review[block] === 'approved'
 

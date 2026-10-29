@@ -1,47 +1,26 @@
 /* 开发期页面标注工具（由 vite-plugin.js 在 dev 时注入，不进入生产构建）
  * 标注模式：点击元素 → 标注该元素；拖拽 → 框选区域；⌥A 切换；Esc 退出
- * 数据实时写入 annotations/feedback.{json,md}，同时缓存在 localStorage */
+ * 数据实时写入 annotations/feedback.{json,md}，同时缓存在 localStorage
+ * 改完的标注标记为已完成（清单里或 done.mjs）：不再出标注点，清单里折到最后，可一键清除 */
+
+import { clip, fmtTime, groupByRoute, isDone, sortedOf, targetLabel, toMarkdown } from './feedback.js'
+import type { AType, Annotation, Rect, Region, Store, Target } from './feedback.js'
 
 const ENDPOINT = '/__annotator'
 const LS_DATA = 'zy-annotator:data'
 const LS_UI = 'zy-annotator:ui'
 const PANEL_W = 360
 
-const TYPES = [
+const TYPES: { key: AType; color: string }[] = [
   { key: '修改', color: '#7c5cff' },
   { key: '新增', color: '#0d9488' },
   { key: '删除', color: '#e03131' },
   { key: 'Bug', color: '#e8590c' },
   { key: '疑问', color: '#1c7ed6' },
-] as const
-type AType = (typeof TYPES)[number]['key']
+]
 const colorOf = (t: AType) => TYPES.find((x) => x.key === t)?.color ?? '#7c5cff'
+const DONE_COLOR = '#0d9488'
 
-interface Rect { x: number; y: number; w: number; h: number }
-interface Target {
-  selector: string
-  tag: string
-  text: string
-  attrs: Record<string, string>
-  components: string[] // 外层 → 内层
-  sources: string[] // 源码文件线索：内层 → 外层
-  rect: Rect
-}
-interface Region { anchor: string; dx: number; dy: number; w: number; h: number; texts: string[] }
-interface Annotation {
-  id: string
-  n: number
-  kind: 'element' | 'region' | 'page'
-  type: AType
-  comment: string
-  route: string
-  viewport: { w: number; h: number }
-  createdAt: string
-  updatedAt: string
-  target?: Target // region 时为框选中心处的元素
-  region?: Region
-}
-interface Store { version: 1; updatedAt: string; submittedAt?: string; annotations: Annotation[] }
 interface Draft {
   kind: Annotation['kind']
   existing?: Annotation
@@ -56,12 +35,10 @@ interface Draft {
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s)
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const uid = () => Math.random().toString(36).slice(2, 10)
 const now = () => new Date().toISOString()
 const routeKey = () => location.pathname + location.search
-const fmtTime = (iso: string) => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '')
 
 function rectOf(el: Element): Rect | null {
   const r = el.getBoundingClientRect()
@@ -191,6 +168,8 @@ const ui = {
   pins: true,
   collapsed: false,
   pos: null as null | { x: number; y: number },
+  /** 清单里展开已完成的标注 */
+  showDone: false,
 }
 let hoverEl: Element | null = null
 let drag: null | { x0: number; y0: number; x1: number; y1: number; moved: boolean } = null
@@ -254,7 +233,9 @@ kbd { font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 
   transition: transform .18s ease, visibility .18s; }
 .panel.open { transform: none; visibility: visible; }
 .panel header { display: flex; align-items: center; gap: 8px; padding: 14px 12px 12px 16px; border-bottom: 1px solid #efeef4; }
-.panel header b { font-size: 14px; }
+.panel header b { font-size: 14px; white-space: nowrap; }
+.panel header .muted { white-space: nowrap; }
+.panel header .sync { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .muted { color: #908da0; font-size: 12px; }
 .sync { font-size: 11px; color: #908da0; display: inline-flex; align-items: center; gap: 4px; }
 .sync::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
@@ -278,6 +259,15 @@ kbd { font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 
 .item-acts { display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: #908da0; }
 .item-acts button:hover { color: #1f1d2b; }
 .item-acts .danger:hover { color: #e03131; }
+.item.done { background: #fafafb; }
+.item.done .item-body { color: #908da0; }
+.item-note { margin-top: 6px; padding: 5px 8px; border-radius: 6px; background: #effaf8; color: #0b6e66; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.item-note span { margin-left: 6px; color: #7fb5ae; font-size: 11px; }
+.done-sec { display: flex; align-items: center; gap: 8px; margin: 18px 4px 0; padding-top: 12px; border-top: 1px dashed #e3e1ec; }
+.done-toggle { font-size: 12px; font-weight: 600; color: #0d9488; }
+.done-toggle:hover { color: #0b6e66; }
+.link.danger { color: #908da0; }
+.link.danger:hover { color: #e03131; }
 .empty { margin: 14px 4px; padding: 14px 16px; border-radius: 10px; background: #f7f7fa; color: #3d3b47; }
 .empty ol { margin: 8px 0 0; padding-left: 18px; }
 .empty li { margin: 4px 0; }
@@ -365,9 +355,9 @@ function persistLocal() {
   }
 }
 function saveUI() {
-  localStorage.setItem(LS_UI, JSON.stringify({ pins: ui.pins, collapsed: ui.collapsed, pos: ui.pos, panel: ui.panel }))
+  localStorage.setItem(LS_UI, JSON.stringify({ pins: ui.pins, collapsed: ui.collapsed, pos: ui.pos, panel: ui.panel, showDone: ui.showDone }))
 }
-const payload = () => JSON.stringify({ data: store, markdown: toMarkdown() })
+const payload = () => JSON.stringify({ data: store })
 
 let syncTimer = 0
 function scheduleSync() {
@@ -394,6 +384,8 @@ async function syncNow(): Promise<boolean> {
 
 function commit() {
   store.updatedAt = now()
+  store.origin = location.origin
+  store.tz = Intl.DateTimeFormat().resolvedOptions().timeZone
   dirty = true
   persistLocal()
   scheduleSync()
@@ -401,6 +393,8 @@ function commit() {
   renderPanel()
   schedule()
 }
+
+const valid = (s: Store | null | undefined): s is Store => !!s && Array.isArray(s.annotations)
 
 async function load() {
   let local: { store: Store; dirty: boolean } | null = null
@@ -411,7 +405,7 @@ async function load() {
   }
   try {
     const saved = JSON.parse(localStorage.getItem(LS_UI) ?? 'null')
-    if (saved) Object.assign(ui, { pins: saved.pins ?? true, collapsed: !!saved.collapsed, pos: saved.pos ?? null, panel: !!saved.panel })
+    if (saved) Object.assign(ui, { pins: saved.pins ?? true, collapsed: !!saved.collapsed, pos: saved.pos ?? null, panel: !!saved.panel, showDone: !!saved.showDone })
   } catch {
     /* 同上 */
   }
@@ -422,7 +416,6 @@ async function load() {
   } catch {
     /* 开发服务器不可达 */
   }
-  const valid = (s: Store | null | undefined): s is Store => !!s && Array.isArray(s.annotations)
   if (remote !== undefined && !(local?.dirty && valid(local.store))) {
     // 服务器可达且本地没有未同步的修改：以文件为准（文件被清理时这里也随之清空）
     if (valid(remote)) store = remote
@@ -434,59 +427,38 @@ async function load() {
   }
 }
 
-// ---------- Markdown ----------
-function groupByRoute(list: Annotation[]) {
-  const groups: { route: string; items: Annotation[] }[] = []
-  for (const a of list) {
-    let g = groups.find((x) => x.route === a.route)
-    if (!g) groups.push((g = { route: a.route, items: [] }))
-    g.items.push(a)
+/** 文件被外部改动（done.mjs 标记已完成等）：重新读取；本地还有没写进文件的改动时只并入新的完成状态 */
+async function reload() {
+  let remote: Store | null = null
+  try {
+    const r = await fetch(ENDPOINT)
+    if (r.ok) remote = await r.json()
+  } catch {
+    /* 开发服务器不可达 */
   }
-  return groups
-}
-const sorted = () => [...store.annotations].sort((a, b) => a.n - b.n)
-
-function targetLabel(a: Annotation): string {
-  if (a.kind === 'page') return '页面整体'
-  if (a.kind === 'region') return `框选区域 ${a.region?.w}×${a.region?.h}`
-  const t = a.target
-  return t ? `<${t.tag}> ${t.text ? '“' + clip(t.text, 30) + '”' : ''}` : '元素'
-}
-
-function toMarkdown(): string {
-  const list = sorted()
-  const groups = groupByRoute(list)
-  const L: string[] = [
-    '# 页面标注反馈',
-    '',
-    `- 更新时间：${fmtTime(store.updatedAt)}${store.submittedAt ? `（${fmtTime(store.submittedAt)} 点击了“完成并发送”）` : ''}`,
-    `- 共 ${list.length} 条，涉及 ${groups.length} 个页面；页面地址前缀 ${location.origin}`,
-    '',
-  ]
-  groups.forEach((g, gi) => {
-    L.push(`## ${gi + 1}. \`${g.route}\``, '')
-    for (const a of g.items) {
-      L.push(`### #${a.n} 【${a.type}】${targetLabel(a)}`, '')
-      L.push(...(a.comment ? a.comment.split('\n').map((s) => '> ' + s) : ['> （无文字说明）']), '')
-      const t = a.target
-      if (t) {
-        const attrs = Object.entries(t.attrs).map(([k, v]) => `${k}="${v}"`).join(' ')
-        const text = a.kind === 'region' ? clip(t.text, 30) : t.text
-        const el = `\`<${t.tag}${attrs ? ' ' + attrs : ''}>\`${text ? ` “${text}”` : ''}`
-        L.push(a.kind === 'region' ? `- 框选中心元素：${el}` : `- 元素：${el}`)
-        if (t.components.length) L.push(`- 组件链：${t.components.join(' › ')}`)
-        if (t.sources.length) L.push(`- 源码线索：${t.sources.join(' ← ')}`)
-        L.push(`- 选择器：\`${t.selector}\``)
-      }
-      if (a.region) {
-        L.push(`- 框选范围：${a.region.w}×${a.region.h}，相对 \`${a.region.anchor}\` 偏移 (${a.region.dx}, ${a.region.dy})`)
-        if (a.region.texts.length) L.push(`- 区域内文字：${a.region.texts.map((s) => `“${s}”`).join('、')}`)
-      }
-      const r = t?.rect
-      L.push(`- 视口 ${a.viewport.w}×${a.viewport.h}${r && a.kind === 'element' ? `，元素位于 (${r.x}, ${r.y}) 尺寸 ${r.w}×${r.h}` : ''}`, '')
+  if (!valid(remote)) return
+  if (dirty) {
+    const byId = new Map(remote.annotations.map((a) => [a.id, a]))
+    for (const a of store.annotations) {
+      const x = byId.get(a.id)
+      if (x && isDone(x) && !isDone(a)) Object.assign(a, { status: x.status, doneAt: x.doneAt, doneNote: x.doneNote })
     }
-  })
-  return L.join('\n')
+  } else {
+    store = remote
+    syncState = 'saved'
+  }
+  // 正在编辑的那条换成新数据里的同一条
+  if (draft?.existing) {
+    const same = store.annotations.find((a) => a.id === draft!.existing!.id)
+    if (same) draft.existing = same
+    else closeDraft()
+  }
+  cache.clear()
+  persistLocal()
+  if (dirty) scheduleSync()
+  renderBar()
+  renderPanel()
+  schedule()
 }
 
 // ---------- 定位 ----------
@@ -642,8 +614,10 @@ function placeBar() {
   }
 }
 
+const openCount = () => store.annotations.filter((a) => !isDone(a)).length
+
 function renderBar() {
-  const n = store.annotations.length
+  const n = openCount()
   bar.classList.toggle('collapsed', ui.collapsed)
   bar.innerHTML = ui.collapsed
     ? `<button class="fab" data-act="expand" title="展开标注工具">✎<span class="count">${n}</span></button>`
@@ -673,37 +647,51 @@ const HELP = `<div class="empty"><b>怎么标注</b><ol>
 </ol></div>`
 
 function renderItem(a: Annotation, current: boolean) {
-  const c = colorOf(a.type)
-  const missing = current && a.kind !== 'page' && !annElement(a)
-  return `<div class="item ${flashId === a.id ? 'flash' : ''}" data-act="locate" data-id="${a.id}">
-<div class="item-head"><span class="num" style="background:${c}">${a.n}</span><span class="tag" style="--c:${c}">${a.type}</span>
+  const done = isDone(a)
+  const c = done ? DONE_COLOR : colorOf(a.type)
+  const missing = current && !done && a.kind !== 'page' && !annElement(a)
+  const acts = done
+    ? `<button data-act="reopen" data-id="${a.id}" title="没改好：放回待处理">重新打开</button>`
+    : `<button data-act="edit" data-id="${a.id}">编辑</button><button data-act="done" data-id="${a.id}">标为完成</button>`
+  return `<div class="item ${done ? 'done' : ''} ${flashId === a.id ? 'flash' : ''}" data-act="locate" data-id="${a.id}">
+<div class="item-head"><span class="num" style="background:${c}">${done ? '✓' : a.n}</span>${done ? `<span class="muted">#${a.n}</span>` : ''}<span class="tag" style="--c:${c}">${done ? '已完成' : a.type}</span>
 <span class="what">${esc(targetLabel(a))}</span>${missing ? '<span class="miss">当前不可见</span>' : ''}</div>
 <div class="item-body">${a.comment ? esc(a.comment) : '<em>（无文字说明）</em>'}</div>
-<div class="item-acts"><button data-act="edit" data-id="${a.id}">编辑</button><button data-act="del" data-id="${a.id}" class="danger">删除</button></div>
+${done && (a.doneNote || a.doneAt) ? `<div class="item-note">${a.doneNote ? esc(a.doneNote) : '已标为完成'}${a.doneAt ? `<span>${fmtTime(a.doneAt, store.tz)}</span>` : ''}</div>` : ''}
+<div class="item-acts">${acts}<button data-act="del" data-id="${a.id}" class="danger">删除</button></div>
 </div>`
 }
+
+/** 按页面分组；当前页的分组排最前 */
+function renderGroups(list: Annotation[], cur: string) {
+  return groupByRoute(list)
+    .sort((a, b) => Number(b.route === cur) - Number(a.route === cur))
+    .map(
+      (g) => `<div class="group"><h4>${g.route === cur ? '<span class="here">当前页</span>' : ''}<code>${esc(g.route)}</code>${
+        g.route === cur ? '' : `<button class="link" data-act="goto" data-route="${esc(g.route)}">前往 →</button>`
+      }</h4>${g.items.map((a) => renderItem(a, g.route === cur)).join('')}</div>`,
+    )
+    .join('')
+}
+
+const ALL_DONE = `<div class="empty"><b>标注都已处理完</b><div class="muted">已完成的在下面，确认没问题可以「清除已完成」；没改好的点「重新打开」。</div></div>`
 
 function renderPanel() {
   panel.classList.toggle('open', ui.panel)
   if (!ui.panel) return
-  const list = sorted()
+  const list = sortedOf(store)
+  const open = list.filter((a) => !isDone(a))
+  const done = list.filter(isDone)
   const cur = routeKey()
-  // 当前页的分组排最前
-  const groups = groupByRoute(list).sort((a, b) => Number(b.route === cur) - Number(a.route === cur))
   const scroll = shadow.querySelector('.list')?.scrollTop ?? 0
-  panel.innerHTML = `<header><b>标注清单</b><span class="muted">${list.length} 条</span><span class="sp"></span><span class="sync" id="sync"></span>
+  panel.innerHTML = `<header><b>标注清单</b><span class="muted">${open.length} 条待处理${done.length ? ` · ${done.length} 已完成` : ''}</span><span class="sp"></span><span class="sync" id="sync"></span>
 <button class="x" data-act="close-panel" title="关闭">✕</button></header>
 <div class="tools"><button class="btn block" data-act="add-page">＋ 当前页整体意见</button></div>
-<div class="list">${
-    list.length
-      ? groups
-          .map(
-            (g) => `<div class="group"><h4>${g.route === cur ? '<span class="here">当前页</span>' : ''}<code>${esc(g.route)}</code>${
-              g.route === cur ? '' : `<button class="link" data-act="goto" data-route="${esc(g.route)}">前往 →</button>`
-            }</h4>${g.items.map((a) => renderItem(a, g.route === cur)).join('')}</div>`,
-          )
-          .join('')
-      : HELP
+<div class="list">${open.length ? renderGroups(open, cur) : done.length ? ALL_DONE : HELP}${
+    done.length
+      ? `<div class="done-sec"><button class="done-toggle" data-act="toggle-done" aria-expanded="${ui.showDone}">${ui.showDone ? '▾' : '▸'} 已完成 ${done.length} 条</button>
+<button class="link danger" data-act="clear-done">清除已完成</button></div>${ui.showDone ? renderGroups(done, cur) : ''}`
+      : ''
   }</div>
 <footer><button class="btn" data-act="copy">复制 Markdown</button><button class="btn ghost danger" data-act="clear">清空</button>
 <span class="sp"></span><button class="btn primary" data-act="submit">完成并发送</button></footer>`
@@ -712,7 +700,7 @@ function renderPanel() {
   renderSync()
 }
 
-const nextN = () => store.annotations.reduce((m, a) => Math.max(m, a.n), 0) + 1
+const nextN = () => store.annotations.reduce((m, a) => Math.max(m, a.n), store.seq ?? 0) + 1
 
 function draftRect(d: Draft): Rect {
   if (d.existing) {
@@ -824,7 +812,7 @@ function update() {
   const seen = new Set<string>()
   if (ui.pins) {
     for (const a of store.annotations) {
-      if (a.route !== route || a.kind === 'page') continue
+      if (a.route !== route || a.kind === 'page' || isDone(a)) continue
       const r = annRect(a)
       if (!r || r.y + r.h < 0 || r.y > vh || r.x + r.w < 0 || r.x > vw) continue
       seen.add(a.id)
@@ -940,6 +928,7 @@ function saveDraft() {
     if (d.el?.isConnected && d.kind !== 'page') a.target = describe(d.el)
     if (d.region) a.region = d.region
     store.annotations.push(a)
+    store.seq = a.n
   }
   closeDraft()
   commit()
@@ -954,7 +943,7 @@ function removeAnnotation(id: string) {
 
 async function copyMarkdown(): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(toMarkdown())
+    await navigator.clipboard.writeText(toMarkdown(store))
     return true
   } catch {
     return false
@@ -968,9 +957,9 @@ async function submit() {
     return
   }
   closeDraft()
-  const n = store.annotations.length
+  const n = openCount()
   if (!n) {
-    toast('还没有任何标注')
+    toast(store.annotations.length ? '没有待处理的标注' : '还没有任何标注')
     return
   }
   store.submittedAt = now()
@@ -979,7 +968,7 @@ async function submit() {
   const copied = await copyMarkdown()
   const ok = await syncNow()
   setMode(false)
-  if (ok) toast(`已保存 ${n} 条标注到 annotations/feedback.md${copied ? '，Markdown 也已复制' : ''}。回到对话说“标注好了”即可`, 7000)
+  if (ok) toast(`已保存 ${n} 条待处理标注到 annotations/feedback.md${copied ? '，Markdown 也已复制' : ''}。回到对话说“标注好了”即可`, 7000)
   else if (copied) toast('写入文件失败，但 Markdown 已复制，直接粘贴到对话里发给我即可', 7000)
   else toast('写入文件和复制都失败了，请打开清单手动复制', 7000)
 }
@@ -1025,6 +1014,7 @@ function onAction(act: string, btn: HTMLElement) {
       if (store.annotations.length && confirm(`确定清空全部 ${store.annotations.length} 条标注？`)) {
         store.annotations = []
         delete store.submittedAt
+        delete store.seq
         cache.clear()
         closeDraft()
         commit()
@@ -1041,6 +1031,29 @@ function onAction(act: string, btn: HTMLElement) {
       return ann && openEdit(ann)
     case 'del':
       return ann && removeAnnotation(ann.id)
+    case 'done':
+      if (!ann) return
+      Object.assign(ann, { status: 'done', doneAt: now() })
+      if (draft?.existing?.id === ann.id) closeDraft()
+      return commit()
+    case 'reopen':
+      if (!ann) return
+      delete ann.status
+      delete ann.doneAt
+      delete ann.doneNote
+      return commit()
+    case 'toggle-done':
+      ui.showDone = !ui.showDone
+      saveUI()
+      return renderPanel()
+    case 'clear-done': {
+      const n = store.annotations.filter(isDone).length
+      if (!n || !confirm(`清除 ${n} 条已完成的标注？`)) return
+      store.annotations = store.annotations.filter((a) => !isDone(a))
+      cache.clear()
+      if (draft?.existing && isDone(draft.existing)) closeDraft()
+      return commit()
+    }
     // 弹层
     case 'type': {
       if (!draft) return
@@ -1236,5 +1249,7 @@ async function init() {
 }
 
 void init()
+// 开发服务器发现 feedback.json 被外部改动时通知这里重新读取
+import.meta.hot?.on('annotator:changed', () => void reload())
 
 export {}
