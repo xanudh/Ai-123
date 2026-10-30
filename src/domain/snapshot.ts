@@ -3,8 +3,8 @@
  * 与状态库一样不单独存储；全剧状态只认定稿，本集快照没有定稿时按草稿或集纲推断并注明。
  */
 import { nodeKind } from './rhythm'
-import { buildState, placeOf, preWriteCheck, silenceThreshold } from './state'
-import type { PreCheck, SceneEntry } from './state'
+import { buildState, placeOf, silenceThreshold } from './state'
+import type { SceneEntry } from './state'
 import type { CharacterRole, EpisodeDraft, Foreshadow, Project, Relation, ScriptLine } from './types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, hookOf, lateStep, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'
 import type { ForeshadowTrace, LateStep } from './work'
@@ -63,8 +63,6 @@ export interface EpisodeSnapshot {
   relations: Relation[]
   scenes: SceneUse[]
   foreshadows: ForeshadowAt[]
-  /** 没定稿时的写作前检查 */
-  checks: PreCheck[] | null
 }
 
 export interface PhaseSnapshot {
@@ -200,7 +198,6 @@ export function episodeSnapshot(p: Project, ep: number, draftId?: string): Episo
     relations: w.relations.filter((r) => castNames.has(r.a) && castNames.has(r.b)),
     scenes,
     foreshadows,
-    checks: done ? null : preWriteCheck(p, ep),
   }
 }
 

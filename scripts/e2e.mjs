@@ -619,7 +619,7 @@ await check('状态库：审阅第 1 集时，本集看第 1 集结束时的状�
 })
 await check('状态库：伏笔环节看写作进度上的当前集；可收起、可打开完整视图', async () => {
   await goto(projectPath + '/stage/foreshadow')
-  await waitFor(`${panel}?.innerText.includes('第 7 集')`, '伏笔环节当前集')
+  await waitFor(`${panel}?.querySelector('input[aria-label=选择集]')?.value === '7'`, '伏笔环节当前集')
   if (!(await panelText()).includes('伏笔与线索')) throw new Error('缺少伏笔信息')
   await t(`document.querySelector('[aria-label=收起剧本状态库]').click()`)
   await waitFor(`!${panel} && document.querySelector('[aria-label=展开剧本状态库]')`, '收起')
@@ -634,7 +634,7 @@ await check('状态库：伏笔环节看写作进度上的当前集；可收起�
   if (await evaluate(`!!${panel}`)) throw new Error('完整视图页不应显示侧栏')
 })
 
-await check('状态库：草稿页按这份草稿显示本集，注明不计入全剧，并附写作前检查', async () => {
+await check('状态库：草稿页按这份草稿显示本集，注明不计入全剧；写作前检查只在分集蓝图的「检查」页', async () => {
   await patchStored(`async (p) => {
     const { writeEpisode } = await import('/src/services/mock/writer.ts')
     const d = writeEpisode(p, 7, 0)
@@ -642,7 +642,7 @@ await check('状态库：草稿页按这份草稿显示本集，注明不计入�
     p.work.drafts.push({ id: 'e2e-draft-7', ep: 7, version: 1, title: d.title, lines: d.lines, status: 'draft', translated: false, states: d.states, reviews: [], notes: [], createdAt: at, updatedAt: at })
   }`, projectPath + '/stage/script/draft/e2e-draft-7')
   await waitFor(`${panel}?.innerText.includes('草稿_v1 · 未定稿，不计入全剧状态')`, '草稿依据')
-  if (!(await panelText()).includes('写作前检查')) throw new Error('未定稿的集应附写作前检查')
+  if ((await panelText()).includes('写作前检查')) throw new Error('状态库里不应再有写作前检查，它在分集蓝图的「检查」页')
   await sleep(300)
   await shot('state-panel-draft')
   await panelTab('全剧')

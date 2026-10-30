@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsRight, Database, ExternalLink, Flag, Link2, MapPin, ScrollText, Users } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsRight, Database, ExternalLink, Flag, Link2, MapPin, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
@@ -10,7 +10,6 @@ import { PLAN_EVENT_META } from '../../domain/constants'
 import { foreshadowName, phaseNames, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
 import type { ForeshadowStatus } from '../../domain/work'
 import { STATE_TAB, activeTab, useStatePanel } from '../../store/statePanel'
-import { CheckList } from '../stage/StageKit'
 import { EventForm } from './EventForm'
 import { LateFix } from './LateFix'
 import { Badge, NumberInput, Segmented, Select } from '../ui'
@@ -258,12 +257,6 @@ function EpisodeView({ project, ep, draftId }: { project: Project; ep: number; d
           <Empty>{s.basis === 'final' || s.basis === 'draft' ? '正文里没有场景标题' : '还没有正文，场景待定'}</Empty>
         )}
       </Section>
-
-      {s.checks && (
-        <Section icon={<ScrollText size={14} />} title="写作前检查">
-          <CheckList items={s.checks} empty="一切就绪，可以开始写作" />
-        </Section>
-      )}
     </>
   )
 }
