@@ -65,7 +65,7 @@ export const STAGES: Record<StageKey, StageMeta> = {
     key: 'characters',
     label: '人物设定',
     source: '第三步 · 定人物配置',
-    summary: '每个角色的性别、年龄、外貌、性格、背景、能力，动机（表面追求 / 终极渴望 / 潜意识恐惧）、缺陷与弧光，以及人物关系（爱人、同学、宿敌 …）与关系图。',
+    summary: '每个角色的性别、年龄、外形、服装、性格、背景、能力，动机（表面追求 / 终极渴望 / 潜意识恐惧）、缺陷与弧光，以及人物关系（爱人、同学、宿敌 …）与关系图。',
     deliverables: ['人物配置表', '人物关系图'],
     phase: null,
   },

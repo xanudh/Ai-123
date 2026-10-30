@@ -2,6 +2,7 @@
  * 视频转剧本的本地模拟。演示环境不访问外部链接、不读取视频内容：
  * 分集与转写内容取自示例剧，镜头切分、时间码、景别与转写时常见的格式问题按规则生成，结果可复现。
  */
+import { cnToNumber, episodeHeading, formatScene, isSceneHeading, parseDialogue, parseScene, speakerLabel, withCast } from '../../domain/scriptFormat'
 import type { Shot, VideoEpisode, VideoJob } from '../../domain/types'
 import { parseSource } from './breakdown'
 import { hash, pick, rng } from './rng'
@@ -81,6 +82,14 @@ function noisy(r: Rng, rawSpeaker: string, cue: string | undefined, rawText: str
   return [{ speaker, cue, line: half }]
 }
 
+/** 换场的口头叙述：夜，内，宴会厅 → 宴会厅（夜晚，室内） */
+function sceneProse(scene: string) {
+  const h = parseScene(scene)
+  const time = { 日: '白天', 夜: '夜晚', 晨: '清晨', 黄昏: '傍晚' }[h.time]
+  const space = { 内: '室内', 外: '室外', 内外: '室内外' }[h.space]
+  return time && space ? `${h.place}（${time}，${space}）` : scene
+}
+
 const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 
 /**
@@ -95,7 +104,7 @@ function offTemplate(shots: Shot[]): Shot[] {
     const s = shots[i]
     const at = `[${mmss(s.start)}] `
     const base = { start: s.start, end: s.end, size: s.size, ...(s.sound ? { sound: s.sound } : {}) }
-    if (s.scene) out.push({ start: s.start, end: s.start, size: '全景', action: `${at}镜头切到${s.scene}` })
+    if (s.scene) out.push({ start: s.start, end: s.start, size: '全景', action: `${at}镜头切到${sceneProse(s.scene)}` })
     const next = shots[i + 1]
     if (s.speaker && next?.speaker && next.speaker !== s.speaker && !next.scene && summed < 2 && i - last > 6) {
       out.push({ ...base, end: next.end, action: `${at}${s.speaker}和${next.speaker}争执了几句` })
@@ -104,6 +113,7 @@ function offTemplate(shots: Shot[]): Shot[] {
       i++
       continue
     }
+    // 内心独白、画外音也一律写成「说」——没按模板时分不出声音类型
     if (s.speaker && s.line !== undefined) out.push({ ...base, action: `${at}${s.speaker}${s.cue ? `（${s.cue}）` : ''}说：“${s.line}”` })
     else out.push({ ...base, action: at + s.action })
   }
@@ -121,7 +131,7 @@ export function offTemplateOf(job: VideoJob, ep: VideoEpisode) {
   return job.episodes[(fail + Math.floor(n / 2)) % n].ep === ep.ep
 }
 
-/** 第 ep 集逐镜头转写：场景标题挂在换场后的第一个镜头上；off：这次没按模板输出 */
+/** 第 ep 集逐镜头转写：场景标题（日，外，地点）挂在换场后的第一个镜头上；动作开头的【特写】等记成景别；off：这次没按模板输出 */
 export function transcribe(ep: number, off = false): Shot[] {
   const r = rng(hash(`video-${ep}`))
   const shots: Shot[] = []
@@ -133,22 +143,29 @@ export function transcribe(ep: number, off = false): Shot[] {
     t += seconds
   }
   for (const raw of contentOf(ep)) {
-    const head = /^场景[：:]\s*(.+)$/.exec(raw)
-    if (head) {
-      scene = head[1].trim()
+    if (isSceneHeading(raw) || /^场景\s*[：:]/.test(raw)) {
+      scene = formatScene(raw.replace(/^场景\s*[：:]\s*/, ''))
       continue
     }
-    const speech = /^([^\s：:（(△▲]{1,10})[：:]\s*(?:[（(]([^）)]*)[）)])?\s*(.+)$/.exec(raw)
-    if (speech) {
-      const [, speaker, cue, text] = speech
+    // 「人物：」是出场名单，画面里没有
+    if (/^人物\s*[：:]/.test(raw)) continue
+    const speech = parseDialogue(raw)
+    if (speech?.text) {
+      const [, cue, text] = /^(?:[（(]([^）)]*)[）)])?\s*(.+)$/.exec(speech.text)!
+      const { speaker, voice } = speech
       for (const part of noisy(r, speaker, cue, text)) {
-        const size = part.cue ? '近景' : pick(r, ['近景', '近景', '中景', '特写'])
-        push({ size, action: part.cue ? `${speaker}，${part.cue}` : speaker, ...part }, Math.max(1.5, part.line!.length / SPEECH_RATE + 0.4))
+        // 画外音的人不在画面里，镜头给听的人
+        const size = voice === 'ov' ? '中景' : part.cue ? '近景' : pick(r, ['近景', '近景', '中景', '特写'])
+        const who = voice === 'ov' ? '画外音' : voice === 'os' ? `${speaker}（内心独白）` : speaker
+        push({ size, action: part.cue ? `${who}，${part.cue}` : who, ...part, ...(voice ? { voice } : {}) }, Math.max(1.5, part.line!.length / SPEECH_RATE + 0.4))
       }
       continue
     }
-    const action = raw.replace(/^[△▲※]\s*/, '')
-    const size = SIZE_RULES.find(([re]) => re.test(action))?.[1] ?? pick(r, ['中景', '中景', '近景', '全景'])
+    const tag = /^【(特写|近景|中景|全景|远景)】\s*/.exec(raw.replace(/^[△▲※]\s*/, ''))
+    const action = raw.replace(/^[△▲※]\s*/, '').replace(/^【(?:特写|近景|中景|全景|远景)】\s*/, '')
+    // 特写只看第一句：镜头先落在道具、眼神上才是特写
+    const lead = action.split(/[，。；]/)[0]
+    const size = tag?.[1] ?? SIZE_RULES.find(([re], i) => re.test(i === 0 ? lead : action))?.[1] ?? pick(r, ['中景', '中景', '近景', '全景'])
     const sound = SOUND_RULES.find(([re]) => re.test(action))?.[1]
     push({ size, action, ...(sound ? { sound } : {}) }, Math.min(6, Math.max(2, action.length / 8 + 1.5)))
   }
@@ -184,8 +201,8 @@ export function resolveLink(url: string): Pick<VideoJob, 'platform' | 'episodes'
 export function episodesFromFiles(names: string[]): VideoEpisode[] {
   const used = new Set<number>()
   const parsed = names.map((name) => {
-    const m = /第\s*(\d+)\s*集|ep?\s*[._-]?\s*(\d+)|^(\d+)/i.exec(name.replace(/\.[^.]+$/, ''))
-    const n = m ? Number(m[1] ?? m[2] ?? m[3]) : 0
+    const m = /第\s*([0-9零〇一二两三四五六七八九十百]+)\s*集|ep?\s*[._-]?\s*(\d+)|^(\d+)/i.exec(name.replace(/\.[^.]+$/, ''))
+    const n = m ? cnToNumber(m[1] ?? m[2] ?? m[3]) : 0
     const ep = n > 0 && !used.has(n) ? n : 0
     if (ep) used.add(ep)
     return { name, ep }
@@ -216,43 +233,54 @@ export function failureOf(job: VideoJob, ep: VideoEpisode) {
 
 const FULL_WIDTH: Record<string, string> = { ',': '，', '?': '？', '!': '！' }
 
-/** 合并成整部剧本：按集排序、接回被镜头切开的台词、统一标点、去掉时间码与景别，输出标准剧本格式 */
+/**
+ * 合并成整部剧本（通用剧本格式）：按集排序、接回被镜头切开的台词、统一标点、去掉时间码与景别；
+ * 集标题写「第一集」，场景标题编成「1-1：日，外，地点」并补「人物：」行，特写镜头在动作行标【特写】，内心独白 / 画外音标 os / （ov）。
+ */
 export function mergeEpisodes(episodes: VideoEpisode[]) {
   let joined = 0
   let punct = 0
   let actions = 0
+  let scenes = 0
   let shotCount = 0
   const blocks = [...episodes]
     .sort((a, b) => a.ep - b.ep)
     .map((e) => {
-      const lines = [`第${e.ep}集`]
+      const lines: string[] = []
+      // 没按模板输出的集保持原样，留给 AI 校对重整
+      const off = isOffTemplate(e.shots)
       let prev: Shot | null = null
+      let k = 0
       for (const s of e.shots) {
         shotCount++
-        if (s.scene) lines.push(`场景：${s.scene}`)
+        if (s.scene) {
+          scenes++
+          lines.push(`${e.ep}-${++k}：${formatScene(s.scene)}`)
+        }
         if (s.speaker && s.line !== undefined) {
           let text = s.line.replace(/[,?!]/g, (ch) => FULL_WIDTH[ch])
           if (text !== s.line) punct++
           // 同一角色、上一句停在逗号上：是被镜头切开的同一句台词
-          if (prev?.speaker === s.speaker && !s.scene && !s.cue && /[，,]$/.test(prev.line ?? '')) {
+          if (prev?.speaker === s.speaker && prev.voice === s.voice && !s.scene && !s.cue && /[，,]$/.test(prev.line ?? '')) {
             joined++
             lines[lines.length - 1] += text
           } else {
-            text = `${s.speaker}：${s.cue ? `（${s.cue}）` : ''}${text}`
+            text = `${speakerLabel(s)}：${s.cue ? `（${s.cue}）` : ''}${text}`
             lines.push(text)
           }
         } else {
           actions++
-          lines.push(`△ ${s.action}`)
+          lines.push(!off && s.size === '特写' ? `△【特写】${s.action}` : `△ ${s.action}`)
         }
         prev = s
       }
-      return lines.join('\n')
+      return [episodeHeading(e.ep), ...(off ? lines : withCast(lines))].join('\n')
     })
   return {
     text: blocks.join('\n\n'),
     fixes: [
-      { label: '去掉时间码与景别标注', count: shotCount },
+      { label: '去掉时间码，特写镜头标【特写】，其余景别不写', count: shotCount },
+      { label: '场景标题编成「集-场：日，外，地点」并列出人物', count: scenes },
       { label: '接回被镜头切开的台词', count: joined },
       { label: '半角标点改为中文标点', count: punct },
       { label: '动作描述统一为「△」行', count: actions },

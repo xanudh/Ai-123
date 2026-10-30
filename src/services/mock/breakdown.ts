@@ -4,31 +4,12 @@
  */
 import { MAIN_LINE } from '../../domain/pipeline'
 import { defaultRhythm } from '../../domain/rhythm'
+import { cnToNumber, isSceneHeading, parseDialogue, placeOf } from '../../domain/scriptFormat'
 import type { BenchmarkCharacter, Breakdown, EpisodeBreakdown, PlotBeat, Relation, RhythmFrame, SourceScript, Synopsis } from '../../domain/types'
 import { inferRelationKind, phaseRanges, rangeLabel } from '../../domain/work'
 import { clip } from './rng'
 
 /* ---------------------------------- 分集 ---------------------------------- */
-
-const CN_DIGIT: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
-
-/** 中文数字（≤ 999）或阿拉伯数字转成数值 */
-export function cnToNumber(text: string) {
-  if (/^\d+$/.test(text)) return Number(text)
-  let total = 0
-  let num = 0
-  for (const ch of text) {
-    if (ch in CN_DIGIT) num = CN_DIGIT[ch]
-    else if (ch === '百') {
-      total += (num || 1) * 100
-      num = 0
-    } else if (ch === '十') {
-      total += (num || 1) * 10
-      num = 0
-    }
-  }
-  return total + num
-}
 
 /** 分集标题：第1集 / 第十二集 / EP 3 / Episode 3: 标题；标题行一般很短，集号后只能接分隔符或行尾 */
 const HEADING = /^[\s#【[]*(?:第\s*([0-9零〇一二两三四五六七八九十百]+)\s*集|(?:episode|ep)\s*[.:：\-#]?\s*(\d+))(?=$|[\s:：·.\-—|｜】\]（(])/i
@@ -57,15 +38,17 @@ export function parseSource(name: string, text: string): SourceScript {
 
 type Line = { kind: 'scene'; place: string } | { kind: 'action'; text: string } | { kind: 'dialogue'; speaker: string; text: string }
 
-const NOT_SPEAKER = new Set(['场景', '字幕', '时间', '地点', '人物', '备注', '画外音', '旁白', '镜头', '音效', 'OS', 'VO'])
-
+/** 一行剧本：场景标题认样稿格式「1-1：日，外，地点」，也认旧写法「场景：地点 夜 内」「1.2 地点」「INT. 地点」；台词认「余霍os：」「母亲（ov）：」 */
 function parseLine(line: string): Line {
-  const scene = /^(?:场景|场)\s*[：:]\s*(.+)$/.exec(line) ?? /^(?:\d+[-.]\d+|(?:INT|EXT)\.)\s*(.+)$/i.exec(line)
-  if (scene) return { kind: 'scene', place: scene[1].replace(/\s+(?:日|夜|晨|黄昏)?\s*(?:内|外)?\s*$/, '').trim() }
-  const dialogue = /^([^\s：:（(△▲]{1,10})\s*(?:[（(][^）)]*[）)])?\s*[：:]\s*(.+)$/.exec(line)
-  if (dialogue && !NOT_SPEAKER.has(dialogue[1])) return { kind: 'dialogue', speaker: dialogue[1], text: dialogue[2] }
+  const scene = isSceneHeading(line) ? line : (/^(?:场景|场)\s*[：:]\s*(.+)$/.exec(line)?.[1] ?? /^(?:\d+[-.]\d+|(?:INT|EXT)\.)\s*(.+)$/i.exec(line)?.[1])
+  if (scene) return { kind: 'scene', place: placeOf(scene) }
+  const dialogue = parseDialogue(line)
+  if (dialogue?.text) return { kind: 'dialogue', speaker: dialogue.speaker, text: dialogue.text }
   return { kind: 'action', text: line.replace(/^[△▲※]\s*/, '') }
 }
+
+/** 「人物：」行只是这一场的出场名单，不算正文 */
+const isCastLine = (line: string) => /^人物\s*[：:]/.test(line)
 
 /** 去掉台词开头的（表演提示） */
 const stripCue = (text: string) => text.replace(/^[（(][^）)]*[）)]\s*/, '')
@@ -97,14 +80,16 @@ const GENRE_WORDS: Table = [
   ['豪门', ['豪门', '千金', '少爷', '家族']],
   ['契约婚姻', ['契约', '协议', '婚约']],
   ['萌宝', ['宝宝', '妈咪', '爹地']],
-  ['黑手党', ['教父', '黑手党', '家族生意']],
+  ['黑帮', ['教父', '黑手党', '家族生意']],
+  ['真假千金', ['真千金', '假千金', '抱错']],
+  ['穿越', ['穿越', '古代', '时空']],
   ['神医', ['医术', '神医', '针灸']],
 ]
 
 const TONE_WORDS: Table = [
-  ['虐心', ['拒绝', '泪', '不信', '逐出', '冰冷', '哄笑']],
-  ['爽感', ['击倒', '按在', '还你', '欢呼', '溃败', '碎裂']],
-  ['悬疑', ['秘密', '真相', '灭门', '画像', '矛盾']],
+  ['虐恋', ['拒绝', '泪', '不信', '逐出', '冰冷', '哄笑']],
+  ['打脸', ['击倒', '按在', '还你', '欢呼', '溃败', '碎裂']],
+  ['反转', ['秘密', '真相', '灭门', '画像', '矛盾']],
   ['甜宠', ['吻', '宠', '抱', '心动']],
 ]
 
@@ -264,7 +249,10 @@ function snap(targets: number[], score: (ep: number) => number, total: number) {
 
 export function analyzeSource(source: SourceScript): Breakdown {
   const episodes: EpisodeLines[] = source.episodes.map((e) => {
-    const lines = e.text.split('\n').map(parseLine)
+    const lines = e.text
+      .split('\n')
+      .filter((l) => !isCastLine(l))
+      .map(parseLine)
     return { ep: e.ep, lines, text: e.text, speakers: [...new Set(lines.flatMap((l) => (l.kind === 'dialogue' ? [l.speaker] : [])))] }
   })
   const total = Math.max(...episodes.map((e) => e.ep), 1)

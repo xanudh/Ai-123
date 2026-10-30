@@ -86,7 +86,7 @@ export const reviseRounds = (work: ProjectWork, ep: number) => draftsOf(work, ep
 
 /** 正文指纹：审稿后正文没改过就不必重复审稿 */
 export const linesSig = (d: Pick<EpisodeDraft, 'lines'>) => {
-  const text = d.lines.map((l) => `${l.kind}|${l.speaker ?? ''}|${l.zh}`).join('\n')
+  const text = d.lines.map((l) => `${l.kind}|${l.speaker ?? ''}${l.voice ? `|${l.voice}` : ''}|${l.zh}`).join('\n')
   let h = 0
   for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0
   return `${text.length}-${h}`

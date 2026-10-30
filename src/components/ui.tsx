@@ -236,7 +236,21 @@ export function Chip({
   )
 }
 
-/** 多选下拉框：已选项以标签显示在框内，达到上限后其余选项禁用 */
+/** 下拉选项：value 为存档值；en 为平台英文原词，灰字显示在后面 */
+export interface SelectOption {
+  value: string
+  en?: string
+}
+
+export interface SelectGroup {
+  label: string
+  options: SelectOption[]
+}
+
+/**
+ * 多选下拉框：已选项以标签显示在框内，达到上限后其余选项禁用。
+ * 选项可以分组；已选但不在选项里的旧值放在最前面，仍可取消。
+ */
 export function MultiSelect({
   value,
   options,
@@ -246,7 +260,7 @@ export function MultiSelect({
   invalid,
 }: {
   value: string[]
-  options: readonly string[]
+  options: readonly SelectOption[] | readonly SelectGroup[]
   onChange: (v: string[]) => void
   max?: number
   placeholder?: string
@@ -261,6 +275,11 @@ export function MultiSelect({
     if (value.includes(o)) onChange(value.filter((x) => x !== o))
     else if (value.length < max) onChange([...value, o])
   }
+
+  const groups: readonly { label?: string; options: readonly SelectOption[] }[] = options.length && 'options' in options[0] ? (options as readonly SelectGroup[]) : [{ options: options as readonly SelectOption[] }]
+  const known = new Set(groups.flatMap((g) => g.options.map((o) => o.value)))
+  const legacy = value.filter((v) => !known.has(v))
+  const all = legacy.length ? [{ label: '已选（不在现有选项里）', options: legacy.map((v): SelectOption => ({ value: v })) }, ...groups] : groups
 
   return (
     <div ref={ref} className="relative">
@@ -292,29 +311,36 @@ export function MultiSelect({
         <div
           role="listbox"
           aria-multiselectable="true"
-          className="scrollbar-thin absolute inset-x-0 top-full z-30 mt-1 max-h-64 animate-fade-in overflow-y-auto rounded-lg border border-line bg-white p-1 shadow-pop"
+          className="scrollbar-thin absolute inset-x-0 top-full z-30 mt-1 max-h-72 animate-fade-in overflow-y-auto rounded-lg border border-line bg-white p-1 shadow-pop"
         >
-          {options.map((o) => {
-            const selected = value.includes(o)
-            return (
-              <button
-                key={o}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                disabled={!selected && value.length >= max}
-                onClick={() => toggle(o)}
-                className={clsx(
-                  'flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[13px] disabled:cursor-not-allowed disabled:opacity-40',
-                  selected ? 'font-medium text-brand-700' : 'text-ink-700',
-                  'enabled:hover:bg-canvas',
-                )}
-              >
-                {o}
-                {selected && <Check size={14} strokeWidth={2.5} />}
-              </button>
-            )
-          })}
+          {all.map((g, gi) => (
+            <div key={g.label ?? gi} role={g.label ? 'group' : undefined} aria-label={g.label}>
+              {g.label && <div className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-ink-400">{g.label}</div>}
+              {g.options.map((o) => {
+                const selected = value.includes(o.value)
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    disabled={!selected && value.length >= max}
+                    onClick={() => toggle(o.value)}
+                    className={clsx(
+                      'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] disabled:cursor-not-allowed disabled:opacity-40',
+                      selected ? 'font-medium text-brand-700' : 'text-ink-700',
+                      'enabled:hover:bg-canvas',
+                    )}
+                  >
+                    <span>{o.value}</span>
+                    {o.en && <span className="truncate text-xs font-normal text-ink-400">{o.en}</span>}
+                    <span className="flex-1" />
+                    {selected && <Check size={14} strokeWidth={2.5} className="shrink-0" />}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>

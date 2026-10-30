@@ -1,19 +1,78 @@
 import type { Audience, CharacterRole, DraftStatus, ForeshadowType, HookType, PlanEventKind, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
 
-/** 类型：故事发生的大背景，单选 */
-export const CATEGORIES = ['都市', '言情', '玄幻', '仙侠', '科幻', '悬疑', '古装', '年代', '奇幻', '末世', '武侠', '历史', '校园', '家庭'] as const
+/** 平台原生标签：value 为中文名（存档与 AI 用），en 为平台上的英文原词 */
+export interface TagOption {
+  value: string
+  en: string
+}
 
-/** 题材元素：需求文档路径 B 列出的类型 + 出海短剧常见元素 */
-export const GENRES = [
-  '重生', '复仇', '霸总', '狼人', '马甲', '替嫁', '闪婚', '契约婚姻',
-  '隐藏身份', '豪门', '萌宝', '逆袭', '战神', '先婚后爱', '追妻火葬场',
-  '黑手党', '吸血鬼', '灰姑娘', '神医', '宫斗',
-] as const
+export interface TagGroup {
+  label: string
+  options: TagOption[]
+}
+
+const tags = (list: [string, string][]) => list.map(([value, en]) => ({ value, en }))
+
+/*
+ * 类型 / 题材元素 / 风格基调对齐海外短剧平台的原生分类（2026-10 交叉核对）：
+ * 以 FlexTV「全部短剧」筛选为骨架（类型 / 时代 / 情节 / 关系 / 角色五行，与收到的中文截图一致），
+ * 再用 ReelShort（Story Beats / Identities / Moods）、DramaBox（Genres）、GoodShort（Genres / Tags）、
+ * NetShort（All plots）、ShortMax（Genres）核对：至少两家平台都有的标签才收录，英文为平台原词。
+ */
+
+/** 类型：故事的大类，单选。对应 FlexTV 第一行与 GoodShort / ShortMax 的 Genres */
+export const CATEGORIES: TagOption[] = tags([
+  ['都市', 'Urban'], ['言情', 'Romance'], ['奇幻', 'Fantasy'], ['悬疑', 'Suspense'], ['古装', 'Historical'],
+  ['家庭', 'Family'], ['玄幻', 'Cultivation'], ['灵异', 'Supernatural'], ['科幻', 'Sci-Fi'], ['末世', 'Apocalypse'],
+  ['武侠', 'Martial Arts'], ['职场', 'Workplace'], ['青春', 'Youth'], ['成长', 'Coming-of-Age'], ['惊悚', 'Thriller'],
+])
+
+/** 题材元素：平台上的剧情标签，按人设身份 / 情感关系 / 情节套路分组，最多选 MAX_GENRES 个 */
+export const GENRE_GROUPS: TagGroup[] = [
+  {
+    label: '人设身份',
+    options: tags([
+      ['霸总', 'CEO'], ['豪门', 'Rich Family'], ['神豪', 'Billionaire'], ['狼人', 'Werewolf'], ['吸血鬼', 'Vampire'],
+      ['黑帮', 'Mafia'], ['战神', 'War God'], ['赘婿', 'Son-in-Law'], ['神医', 'Miracle Doctor'], ['萌宝', 'Genius Babies'],
+      ['龙族', 'Dragon'], ['大女主', 'Strong Female Lead'],
+    ]),
+  },
+  {
+    label: '情感关系',
+    options: tags([
+      ['闪婚', 'Flash Marriage'], ['先婚后爱', 'Love After Marriage'], ['契约婚姻', 'Contract Marriage'], ['替嫁', 'Substitute Bride'], ['真假千金', 'Real vs Fake Heiress'],
+      ['年上年下', 'Age Gap'], ['破镜重圆', 'Second Chance'], ['追妻火葬场', 'All-Too-Late'], ['离婚后爱', 'Love After Divorce'], ['冤家变恋人', 'Enemies to Lovers'],
+      ['三角恋', 'Love Triangle'], ['禁忌之恋', 'Forbidden Love'], ['强制爱', 'Toxic Love'], ['一夜情', 'One-Night Stand'], ['灵魂互换', 'Freaky Friday'],
+    ]),
+  },
+  {
+    label: '情节套路',
+    options: tags([
+      ['重生', 'Rebirth'], ['穿越', 'Time Travel'], ['复仇', 'Revenge'], ['隐藏身份', 'Hidden Identity'], ['马甲', 'Multiple Identities'],
+      ['逆袭', 'Underdog Rise'], ['强者回归', 'Comeback'], ['灰姑娘', 'Cinderella'], ['团宠', 'Group Favorite'], ['超能力', 'Super Power'],
+      ['系统', 'System'], ['读心', 'Mind Reading'], ['失忆', 'Memory Loss'], ['宫斗', 'Palace Scheming'], ['商战', 'Corporate Warfare'],
+    ]),
+  },
+]
+
+export const GENRES = GENRE_GROUPS.flatMap((g) => g.options)
 
 export const MAX_GENRES = 4
 
-/** 风格基调 / 情绪类型 */
-export const TONES = ['爽感', '虐心', '甜宠', '悬疑', '搞笑', '热血', '暗黑', '治愈'] as const
+/** 风格基调：看完是什么感觉，最多 MAX_TONES 个。对应 FlexTV「情节」行里的情绪标签与 ReelShort Moods */
+export const TONES: TagOption[] = tags([
+  ['打脸', 'Clapback'], ['甜宠', 'Sweet Romance'], ['虐恋', 'Love-Torture'], ['治愈', 'Feel-Good'], ['喜剧', 'Comedy'],
+  ['励志', 'Inspirational'], ['反转', 'Plot Twist'], ['热血', 'Action'], ['权谋', 'Power Play'],
+])
+
+export const MAX_TONES = 3
+
+/** 改版前的选项 → 现在的平台标签；旧项目读档时换过来，对不上的保留原值 */
+export const LEGACY_TAGS: Record<'category' | 'genres' | 'tones', Record<string, string>> = {
+  category: { 仙侠: '玄幻', 历史: '古装', 校园: '青春' },
+  genres: { 黑手党: '黑帮' },
+  tones: { 爽感: '打脸', 虐心: '虐恋', 搞笑: '喜剧', 悬疑: '反转' },
+}
 
 export const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
   { value: 'female', label: '女频', hint: '情感线主导' },

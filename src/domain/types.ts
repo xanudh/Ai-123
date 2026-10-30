@@ -165,8 +165,12 @@ export interface Architecture {
   viewpoint: string
   /** 伏笔 / 叙事线索连续多少集没有推进就提醒 */
   silenceThreshold: number
-  /** 世界观 / 初始设定 */
+  /** 世界观设定 */
   world: string
+  /** 主要势力：主角阵营 / 敌对阵营各有谁（旧数据没有） */
+  factions: string
+  /** 故事背景：开场前发生了什么、主角被逼到什么处境（旧数据没有） */
+  background: string
   /** 金手指 / 核心卖点 */
   goldenFinger: string
   /** 主角人设（一句话版，人物设定里再展开） */
@@ -188,7 +192,12 @@ export interface Character {
   age: string
   /** 身份：外在标签 */
   profile: string
+  /** 外形：身高身材、长相、发型、眼神、标志性细节 */
   appearance: string
+  /** 服装：可按阶段写，如「战甲（1–51 集）：…」 */
+  costume: string
+  /** 外形参考：参考演员、参考图或对美术的要求 */
+  lookRef: string
   personality: string
   background: string
   /** 能力 / 金手指 */
@@ -278,11 +287,17 @@ export interface EpisodeBlueprint {
 
 export type ScriptLineKind = 'scene' | 'action' | 'dialogue' | 'hook'
 
+/** 台词的声音：os 内心独白（写作「余霍os：」）、ov 画外音（写作「母亲（ov）：」，人不在场） */
+export type ScriptVoice = 'os' | 'ov'
+
 export interface ScriptLine {
   id: string
   kind: ScriptLineKind
   speaker?: string
   speakerEn?: string
+  /** 只用于台词；不写为正常对白 */
+  voice?: ScriptVoice
+  /** 场景标题只存「日，外，地点」，场次号与人物行在展示 / 导出时自动生成 */
   zh: string
   /** 英文台词；中文改动后清空，等待重新翻译 */
   en?: string
@@ -441,11 +456,13 @@ export interface Shot {
   end: number
   /** 景别：特写 / 近景 / 中景 / 全景 / 远景 */
   size: string
-  /** 换场时的场景标题 */
+  /** 换场时的场景标题：日，外，地点 */
   scene?: string
   /** 画面与动作 */
   action: string
   speaker?: string
+  /** 内心独白（os）/ 画外音（ov）；不填为对白 */
+  voice?: ScriptVoice
   /** 表演提示，如“冷笑” */
   cue?: string
   line?: string

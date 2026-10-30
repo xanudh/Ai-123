@@ -1,6 +1,7 @@
 /**
  * 剧本正文编辑器：草稿与正文章节共用。排成 Word 式的稿纸：顶部格式栏（加粗 / 斜体 / 对齐）；段落样式用 Markdown 写法切换，
  * 支持 Markdown 写法（# 场景标题、> 集末钩子、**加粗** …），回车另起一段、行首退格并回上一段。
+ * 按样稿格式显示：场景标题前自动编场次号「1-1：」、下面自动列「人物：」，台词可标内心独白（os）/ 画外音（ov），【特写】等镜头提示高亮。
  * 点选一段在上方浮出 AI 工具条；框选部分文字时只改选中的部分。选中的段落经 onPick 交给页面，由页面侧栏加标注。
  */
 import clsx from 'clsx'
@@ -8,7 +9,8 @@ import { AlignCenter, AlignLeft, AlignRight, Bold, CircleHelp, Italic, ListPlus,
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, KeyboardEvent, MouseEvent, ReactNode, TextareaHTMLAttributes } from 'react'
 import { latestProject, useAiTask } from '../../../components/stage/StageKit'
-import type { LineNote, Project, ScriptLine } from '../../../domain/types'
+import { VOICE_LABEL, formatScene, parseSpeaker, sceneCast, sceneNumbers } from '../../../domain/scriptFormat'
+import type { LineNote, Project, ScriptLine, ScriptVoice } from '../../../domain/types'
 import { newId } from '../../../lib/id'
 import { extendText, nextSeed, reviseText } from '../../../services/ai'
 import type { ExtendMode, ReviseMode } from '../../../services/ai'
@@ -48,6 +50,16 @@ function ToolButton({ loading, children, ...rest }: { loading?: boolean; childre
 
 const Divider = () => <span className="mx-1 h-4 w-px shrink-0 bg-line" />
 
+/** 场景标题下的「人物：」——按这一场的台词与动作自动列出，不能直接改 */
+function SceneCast({ cast }: { cast: string[] }) {
+  if (!cast.length) return null
+  return (
+    <p className="text-[13px] leading-6 text-ink-500 select-none" title="按这一场说话的人与动作里写到的已登记人物自动列出">
+      人物：{cast.join('，')}
+    </p>
+  )
+}
+
 const ALIGNS = [
   { value: undefined, label: '左对齐', icon: AlignLeft },
   { value: 'center', label: '居中', icon: AlignCenter },
@@ -74,6 +86,9 @@ function FormatButton({ label, pressed, disabled, onClick, children }: { label: 
     </button>
   )
 }
+
+/** 台词声音依次切换：对白 → 内心独白（os）→ 画外音（ov）→ 对白 */
+const NEXT_VOICE: Record<string, ScriptVoice | undefined> = { none: 'os', os: 'ov', ov: undefined }
 
 /** 动作行开头的「△ 」 */
 const bodyOf = (l: ScriptLine) => (l.kind === 'action' ? l.zh.replace(/^△\s*/, '') : l.zh)
@@ -106,7 +121,7 @@ function Rendered({ raw }: { raw: string }) {
   return (
     <>
       {parseInline(raw).map((s, i) => (
-        <span key={i} data-at={s.at} className={clsx(s.bold && 'font-bold text-ink-900', s.italic && 'italic')}>
+        <span key={i} data-at={s.at} className={clsx(s.bold && 'font-bold text-ink-900', s.italic && 'italic', s.cue && 'font-medium text-brand-700')}>
           {s.text}
         </span>
       ))}
@@ -139,6 +154,7 @@ function Prose({ className, value, inputRef, ...rest }: TextareaHTMLAttributes<H
 
 export function ScriptEditor({
   project,
+  ep,
   lines,
   readOnly,
   showEn,
@@ -150,6 +166,8 @@ export function ScriptEditor({
   tips,
 }: {
   project: Project
+  /** 第几集：场次号按「集-场」编 */
+  ep: number
   lines: ScriptLine[]
   /** 只读：正文不能改，但仍可选中、标注 */
   readOnly: boolean
@@ -170,6 +188,7 @@ export function ScriptEditor({
   const [active, setActive] = useState<string | null>(null)
   const [quote, setQuote] = useState('')
   const names = project.work.characters.map((c) => c.name.trim()).filter(Boolean)
+  const sceneNo = sceneNumbers(ep, lines)
   // 每段的输入框；换段 / 拆段后要把光标放到哪里
   const inputs = useRef(new Map<string, HTMLTextAreaElement>())
   const caret = useRef<{ id: string; start: number; end?: number } | null>(null)
@@ -220,7 +239,7 @@ export function ScriptEditor({
     const who = l.kind === 'action' ? names : []
     const hit = zh.length > l.zh.length && !blockShortcut(l.zh, who) ? blockShortcut(zh, who) : null
     if (!hit) return edit(l.id, { zh, en: undefined })
-    edit(l.id, { speaker: undefined, ...hit, en: undefined })
+    edit(l.id, { speaker: undefined, voice: undefined, ...hit, en: undefined })
     later(l.id, hit.zh?.length ?? 0)
   }
 
@@ -231,7 +250,7 @@ export function ScriptEditor({
     let next: ScriptLine
     if (!after.trim()) next = { id: newId(), kind: 'action', zh: '△ ' }
     else if (l.kind === 'action') next = { id: newId(), kind: 'action', zh: `△ ${after.replace(/^△?\s*/, '')}` }
-    else next = { id: newId(), kind: l.kind, zh: after, ...(l.speaker !== undefined ? { speaker: l.speaker, speakerEn: l.speakerEn } : {}), ...(l.align ? { align: l.align } : {}) }
+    else next = { id: newId(), kind: l.kind, zh: after, ...(l.speaker !== undefined ? { speaker: l.speaker, speakerEn: l.speakerEn, voice: l.voice } : {}), ...(l.align ? { align: l.align } : {}) }
     onLines((ls) => ls.flatMap((x) => (x.id === l.id ? [{ ...x, zh: before, en: undefined }, next] : [x])))
     later(next.id, next.kind === 'action' ? 2 : 0)
   }
@@ -281,7 +300,7 @@ export function ScriptEditor({
     const [first, ...rest] = text.trim().split(/\r?\n/).filter((x) => x.trim())
     const before = l.zh.slice(0, el.selectionStart)
     const after = l.zh.slice(el.selectionEnd)
-    const extra = rest.map((x) => parseBlock(x.trim(), names))
+    const extra = rest.map((x) => parseBlock(x.trim(), names)).filter((x) => x !== null)
     const last = extra.at(-1)
     if (!last) return
     const end = last.zh.length
@@ -363,6 +382,11 @@ export function ScriptEditor({
           else inputs.current.delete(l.id)
         }}
         onChange={(e) => change(l, e.target.value)}
+        // 场景标题离开时整理成「日，外，地点」
+        onBlur={() => {
+          const zh = l.kind === 'scene' && !readOnly ? formatScene(l.zh) : l.zh
+          if (zh !== l.zh) edit(l.id, { zh })
+        }}
         onKeyDown={(e) => keyDown(l, i, e)}
         onPaste={(e) => paste(l, e)}
         onSelect={(e) => {
@@ -506,7 +530,15 @@ export function ScriptEditor({
 
               <div className="py-0.5">
                 {l.kind === 'scene' ? (
-                  field(l, i, 'font-semibold text-ink-900')
+                  <>
+                    <div className="flex items-start">
+                      <span className="shrink-0 text-[15px] leading-8 font-semibold text-ink-400 tabular-nums select-none" title="场次号：集-场，按顺序自动编">
+                        {sceneNo.get(l.id)}：
+                      </span>
+                      <div className="min-w-0 flex-1">{field(l, i, 'font-semibold text-ink-900')}</div>
+                    </div>
+                    <SceneCast cast={sceneCast(lines, i, names)} />
+                  </>
                 ) : l.kind === 'dialogue' ? (
                   <div className="flex items-start">
                     <input
@@ -514,9 +546,33 @@ export function ScriptEditor({
                       value={l.speaker ?? ''}
                       readOnly={readOnly}
                       onChange={(e) => edit(l.id, { speaker: e.target.value })}
+                      // 说话人里直接写了 os / （ov）：拆成名字与声音
+                      onBlur={() => {
+                        const who = parseSpeaker(l.speaker ?? '')
+                        if (who.voice) edit(l.id, { speaker: who.speaker, voice: who.voice })
+                      }}
                       style={{ width: `${Math.max(2, (l.speaker ?? '').length)}em` }}
                       className="h-8 shrink-0 border-0 bg-transparent p-0 text-[15px] leading-8 font-semibold text-ink-900 focus:outline-none"
                     />
+                    {(l.voice || (isActive && !readOnly)) && (
+                      <button
+                        type="button"
+                        aria-label={`第 ${i + 1} 段台词声音`}
+                        title={`${l.voice ? VOICE_LABEL[l.voice] : '对白'}；点击切换：对白 → 内心独白（os）→ 画外音（ov）`}
+                        disabled={readOnly}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          edit(l.id, { voice: NEXT_VOICE[l.voice ?? 'none'] })
+                        }}
+                        className={clsx(
+                          'h-8 shrink-0 rounded px-0.5 leading-8 disabled:cursor-default',
+                          l.voice ? 'text-[15px] font-semibold text-brand-700' : 'text-[11px] text-ink-300 hover:text-brand-600',
+                        )}
+                      >
+                        {l.voice === 'os' ? 'os' : l.voice === 'ov' ? '（ov）' : 'os/ov'}
+                      </button>
+                    )}
                     <span className="text-[15px] leading-8 text-ink-500">：</span>
                     <div className="min-w-0 flex-1">{field(l, i, 'text-ink-900')}</div>
                   </div>

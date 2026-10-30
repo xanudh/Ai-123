@@ -3,7 +3,8 @@
  * 与状态库一样不单独存储；全剧状态只认定稿，本集快照没有定稿时按草稿或集纲推断并注明。
  */
 import { nodeKind } from './rhythm'
-import { buildState, placeOf, silenceThreshold } from './state'
+import { placeOf } from './scriptFormat'
+import { buildState, silenceThreshold } from './state'
 import type { SceneEntry } from './state'
 import type { CharacterRole, EpisodeDraft, Foreshadow, Project, Relation, ScriptLine } from './types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, hookOf, lateStep, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'

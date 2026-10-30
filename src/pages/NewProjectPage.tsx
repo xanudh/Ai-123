@@ -27,7 +27,7 @@ const CATEGORY_HINTS: [RegExp, string][] = [
 
 function initialDraft(params: URLSearchParams): ProjectDraft {
   const mode = (['original', 'adaptation', 'video'] as const).find((m) => m === params.get('mode')) ?? 'original'
-  const genres = (params.get('genres') ?? '').split(',').filter((g) => (GENRES as readonly string[]).includes(g))
+  const genres = (params.get('genres') ?? '').split(',').filter((g) => GENRES.some((o) => o.value === g))
   // 首页输入的一句话保留为原始灵感，同时预填到核心设定供继续打磨
   const idea = params.get('idea') ?? ''
   return {

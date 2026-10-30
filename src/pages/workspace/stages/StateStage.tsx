@@ -120,7 +120,7 @@ export default function StateStage({ project }: { project: Project }) {
         </Card>
 
         <Card className="overflow-hidden">
-          <CardHeader title={<span className="flex items-center gap-1.5"><MapPin size={15} className="text-ink-400" />场景</span>} desc="正文场景标题去掉日 / 夜 / 内 / 外后汇总" />
+          <CardHeader title={<span className="flex items-center gap-1.5"><MapPin size={15} className="text-ink-400" />场景</span>} desc="按正文场景标题「日，外，地点」里的地点汇总" />
           {lib.scenes.length ? (
             <Table columns={['场景', '出现集数']} minWidth={360}>
               {lib.scenes.map((s) => (

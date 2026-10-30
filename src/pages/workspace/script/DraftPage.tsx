@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
-import { WriteButton } from '../../../components/project/ModelBits'
+import { ReviewButton, WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Card, EmptyState, buttonClass, dotBefore } from '../../../components/ui'
 import { DRAFT_STATUS_META } from '../../../domain/constants'
-import { modelLabel } from '../../../domain/models'
+import { modelLabel, modelOf } from '../../../domain/models'
 import { REVIEW_BASIS, basisLabel } from '../../../domain/review'
 import { preWriteCheck } from '../../../domain/state'
 import type { DraftReview, DraftRevision, EpisodeDraft, ModelId, Project } from '../../../domain/types'
@@ -151,7 +151,11 @@ export default function DraftPage() {
   const rounds = reviseRounds(w, draft.ep)
   const reviseCapped = rounds >= MAX_REVISE_ROUNDS
   const lastReview = draft.reviews.at(-1)
-  const reviewed = !!lastReview?.sig && lastReview.sig === linesSig(draft)
+  const sig = linesSig(draft)
+  const reviewed = !!lastReview?.sig && lastReview.sig === sig
+  // 已经审过当前正文的模型：它们不重复审，换个模型还能再审一遍（没记模型的旧审稿算项目的文本模型）
+  const textModel = modelOf(project, 'text')
+  const reviewedBy = [...new Set(draft.reviews.filter((r) => r.sig === sig).map((r) => r.model ?? textModel))]
   const source = draft.from ? w.drafts.find((d) => d.id === draft.from) : undefined
   // AI 修稿出来的版本：审稿是复审，对照修稿依据的那份审稿
   const base = reviewBase(w, draft)
@@ -199,15 +203,16 @@ export default function DraftPage() {
     openPanel('reviews')
   }
 
-  /** AI 审稿：修稿出来的版本默认复审（只查上一轮意见与改过的段落），full 全量重审 */
-  const audit = async (kind?: 'full') => {
+  /** AI 审稿：修稿出来的版本默认复审（只查上一轮意见与改过的段落），full 全量重审；model：这次换用的模型 */
+  const audit = async (kind?: 'full', model?: ModelId) => {
     const cur = latestProject(project.id)
     const d = cur?.work.drafts.find((x) => x.id === draft.id)
     if (!cur || !d) return
-    const result = await run('review', (signal) => reviewDraft(cur, d, { base: reviewBase(cur.work, d), kind }, signal))
+    const result = await run('review', (signal) => reviewDraft(cur, d, { base: reviewBase(cur.work, d), kind }, signal, model))
     if (!result) return
     const r: DraftReview = { id: newId(), at: new Date().toISOString(), ...result, sig: linesSig(d) }
-    patch((x) => ({ reviews: [...x.reviews, r] }), `AI 审稿：第 ${d.ep} 集 ${draftLabel(d)}`)
+    const via = model && model !== modelOf(cur, 'text') ? `（换用 ${modelLabel(model)}）` : ''
+    patch((x) => ({ reviews: [...x.reviews, r] }), `AI 审稿：第 ${d.ep} 集 ${draftLabel(d)}${via}`)
     setNotice(r)
     setParams({ review: r.id })
   }
@@ -292,15 +297,24 @@ export default function DraftPage() {
             AI 修稿
           </AiButton>
           <span className="flex items-center gap-1">
-            <AiButton
+            <ReviewButton
+              project={project}
+              draft={draft}
+              reviewed={reviewedBy}
               variant={suggested('review')}
               loading={running === 'review'}
-              disabled={!!running || reviewed}
-              title={reviewed ? '正文自上次审稿后没有改动，无需重复审稿' : base ? `复审：只查${baseNo}的意见改没改掉、改过的段落有没有新问题；要从头查用审核报告里的「全量重审」` : undefined}
-              onClick={() => audit()}
+              busy={!!running}
+              title={
+                reviewedBy.includes(textModel)
+                  ? '正文自上次审稿后没有改动，无需重复审稿；想听第二意见可点 ▾ 换个模型再审'
+                  : base
+                    ? `复审：只查${baseNo}的意见改没改掉、改过的段落有没有新问题；要从头查用审核报告里的「全量重审」`
+                    : undefined
+              }
+              onReview={(model) => audit(undefined, model)}
             >
               AI 审稿
-            </AiButton>
+            </ReviewButton>
             <span className="group relative">
               <button type="button" aria-label="审稿范围说明" className="flex rounded-md p-1 text-ink-400 hover:text-ink-700 focus:text-ink-700 focus:outline-none">
                 <Info size={15} />
@@ -379,6 +393,7 @@ export default function DraftPage() {
 
       <ScriptEditor
         project={project}
+        ep={draft.ep}
         lines={draft.lines}
         readOnly={!editable}
         showEn={false}
@@ -462,6 +477,7 @@ export default function DraftPage() {
                           <span className="font-medium text-ink-900">#{reviewNo(r)}</span>
                           <span className="flex-1 text-xs text-ink-400">
                             {r.kind === 'recheck' ? '复审 · ' : r.baseId ? '全量 · ' : ''}
+                            {r.model ? `${modelLabel(r.model)} · ` : ''}
                             {formatDateTime(r.at)}
                           </span>
                           <span className="text-xs tabular-nums">
@@ -483,7 +499,7 @@ export default function DraftPage() {
                                   {baseNo || '上一轮审稿'}的意见{recheck ? '改没改掉、改过的段落有没有新问题' : ''}
                                 </span>
                                 {recheck && r.id === lastReview?.id && editable && (
-                                  <button type="button" data-full-review disabled={!!running} onClick={() => audit('full')} className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">
+                                  <button type="button" data-full-review disabled={!!running} onClick={() => audit('full', r.model)} className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">
                                     全量重审
                                   </button>
                                 )}
@@ -542,6 +558,7 @@ export default function DraftPage() {
                     <span className="text-xs text-ink-500 tabular-nums">
                       {block} 严重 · {warn} 建议
                     </span>
+                    {notice.model && <span className="ml-auto text-xs text-ink-400">{modelLabel(notice.model)} 审稿</span>}
                   </div>
                   {notice.baseId && (
                     <p data-recheck-tally className="mt-1 text-xs text-ink-500">

@@ -153,7 +153,8 @@ export function Menu({
   note,
 }: {
   trigger: (props: { onClick: (e: React.MouseEvent) => void; 'aria-expanded': boolean }) => ReactNode
-  items: { label: string; icon?: ReactNode; danger?: boolean; onSelect: () => void }[]
+  /** disabled：点不了，title 写明原因 */
+  items: { label: string; icon?: ReactNode; danger?: boolean; disabled?: boolean; title?: string; onSelect: () => void }[]
   align?: 'left' | 'right'
   /** 菜单顶部的小标题 */
   header?: string
@@ -189,6 +190,8 @@ export function Menu({
             <button
               key={item.label}
               role="menuitem"
+              disabled={item.disabled}
+              title={item.title}
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -196,8 +199,8 @@ export function Menu({
                 item.onSelect()
               }}
               className={clsx(
-                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]',
-                item.danger ? 'text-red-600 hover:bg-red-50' : 'text-ink-700 hover:bg-canvas',
+                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] whitespace-nowrap',
+                item.disabled ? 'cursor-not-allowed text-ink-300' : item.danger ? 'text-red-600 hover:bg-red-50' : 'text-ink-700 hover:bg-canvas',
               )}
             >
               {item.icon}
@@ -212,6 +215,7 @@ export function Menu({
 
 export function Toaster() {
   const toasts = useToast((s) => s.toasts)
+  const dismiss = useToast((s) => s.dismiss)
   return createPortal(
     <div className="pointer-events-none fixed top-4 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {toasts.map((t) => (
@@ -219,11 +223,24 @@ export function Toaster() {
           key={t.id}
           role="status"
           className={clsx(
-            'pointer-events-auto animate-slide-up rounded-lg px-4 py-2 text-sm font-medium shadow-pop',
+            'pointer-events-auto flex animate-slide-up items-center gap-3 rounded-lg px-4 py-2 text-sm font-medium shadow-pop',
             t.tone === 'error' ? 'bg-red-600 text-white' : t.tone === 'info' ? 'bg-ink-900 text-white' : 'bg-emerald-600 text-white',
           )}
         >
           {t.text}
+          {t.action && (
+            <button
+              type="button"
+              data-toast-action
+              onClick={() => {
+                dismiss(t.id)
+                t.action!.run()
+              }}
+              className="shrink-0 rounded-md bg-white/20 px-2 py-0.5 text-[13px] font-semibold hover:bg-white/30"
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>,

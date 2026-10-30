@@ -7,6 +7,7 @@ import { ModelPicker } from '../../../components/project/ModelBits'
 import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, Input, Segmented } from '../../../components/ui'
 import { modelLabel, modelOf } from '../../../domain/models'
+import { episodeHeading, formatScene, speakerLabel } from '../../../domain/scriptFormat'
 import type { ModelId, Project, ProofItem, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
 import { downloadText } from '../../../lib/download'
 import { formatDateTime } from '../../../lib/format'
@@ -66,9 +67,10 @@ const csvCell = (v: string | number | undefined) => `"${String(v ?? '').replace(
 
 /** 带时间码的分镜剧本（CSV，Excel 可直接打开） */
 function storyboardCsv(job: VideoJob) {
-  const rows = [['集数', '镜头', '开始', '结束', '景别', '场景', '画面', '角色', '台词', '音效']]
+  const rows = [['集数', '镜头', '开始', '结束', '景别', '场次', '场景', '画面', '角色', '台词', '音效']]
   for (const e of job.episodes) {
-    e.shots.forEach((s, i) => rows.push([`${e.ep}`, `${i + 1}`, timecode(s.start), timecode(s.end), s.size, s.scene ?? '', s.action, s.speaker ?? '', s.line ?? '', s.sound ?? '']))
+    const no = sceneNos(e.ep, e.shots)
+    e.shots.forEach((s, i) => rows.push([`${e.ep}`, `${i + 1}`, timecode(s.start), timecode(s.end), s.size, no[i] ?? '', s.scene ? formatScene(s.scene) : '', s.action, s.speaker ? speakerLabel(s) : '', s.line ?? '', s.sound ?? '']))
   }
   // 开头加 BOM，让 Excel 按 UTF-8 打开中文
   return String.fromCharCode(0xfeff) + rows.map((r) => r.map(csvCell).join(',')).join('\n')
@@ -77,7 +79,7 @@ function storyboardCsv(job: VideoJob) {
 /** 全集对白文本 */
 const dialogueText = (job: VideoJob) =>
   job.episodes
-    .map((e) => [`第${e.ep}集`, ...e.shots.filter((s) => s.speaker).map((s) => `[${timecode(s.start)}] ${s.speaker}：${s.line}`)].join('\n'))
+    .map((e) => [episodeHeading(e.ep), ...e.shots.filter((s) => s.speaker).map((s) => `[${timecode(s.start)}] ${speakerLabel(s)}：${s.line}`)].join('\n'))
     .join('\n\n')
 
 /* ---------------------------------- 获取全集 ---------------------------------- */
@@ -413,7 +415,14 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
 
 /* ---------------------------------- 分镜查看 ---------------------------------- */
 
-function ShotTable({ shots }: { shots: Shot[] }) {
+/** 换场镜头的场次号「集-场」，按出现顺序编 */
+function sceneNos(ep: number, shots: Shot[]) {
+  let k = 0
+  return shots.map((s) => (s.scene ? `${ep}-${++k}` : undefined))
+}
+
+function ShotTable({ ep, shots }: { ep: number; shots: Shot[] }) {
+  const no = sceneNos(ep, shots)
   return (
     <Table columns={['时间码', '景别', '画面', '台词', '音效']} minWidth={760}>
       {shots.map((s, i) => (
@@ -421,7 +430,7 @@ function ShotTable({ shots }: { shots: Shot[] }) {
           {s.scene && (
             <tr>
               <td colSpan={5} className="bg-canvas px-4 py-1.5 text-xs font-medium text-ink-700">
-                场景：{s.scene}
+                {no[i]}：{formatScene(s.scene)}
               </td>
             </tr>
           )}
@@ -434,7 +443,7 @@ function ShotTable({ shots }: { shots: Shot[] }) {
             <td className="px-4 py-2">
               {s.speaker ? (
                 <>
-                  <span className="font-medium">{s.speaker}：</span>
+                  <span className="font-medium">{speakerLabel(s)}：</span>
                   {s.line}
                 </>
               ) : (
@@ -488,7 +497,7 @@ function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number
       </div>
       <div className="scrollbar-thin max-h-[58vh] overflow-y-auto rounded-lg border border-line">
         {view === 'shots' ? (
-          <ShotTable shots={episode.shots} />
+          <ShotTable ep={episode.ep} shots={episode.shots} />
         ) : (
           <ol className="space-y-1.5 px-4 py-3 text-[13px] leading-6">
             {episode.shots
@@ -497,7 +506,7 @@ function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number
                 <li key={i} className="flex gap-3">
                   <span className="shrink-0 pt-px font-mono text-xs leading-6 text-ink-400">{timecode(s.start)}</span>
                   <span>
-                    <span className="font-medium">{s.speaker}：</span>
+                    <span className="font-medium">{speakerLabel(s)}：</span>
                     {s.line}
                   </span>
                 </li>

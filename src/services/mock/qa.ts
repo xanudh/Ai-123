@@ -5,15 +5,13 @@
 import { QA_CHECKS } from '../../domain/pipeline'
 import { estimateChars, targetCurve } from '../../domain/rhythm'
 import type { EpisodeScript, Project, QaCheckKey, QaCheckResult, QaIssue, QaReport } from '../../domain/types'
-import { placeOf } from '../../domain/state'
+import { SCENE_RE, placeOf } from '../../domain/scriptFormat'
 import { foreshadowKey, foreshadowName, hookOf, phaseNames, phaseOf, projectPhases, wordCount } from '../../domain/work'
 import { AI_FILLERS } from './kits'
 import { clip, hash } from './rng'
 
 type Found = Omit<QaIssue, 'id'>
 
-/** 场景标题：地点 + 日 / 夜 + 内 / 外 */
-const SCENE_RE = /\S\s+(日|夜|晨|黄昏)\s+(内|外)$/
 /** 情绪强点：揭秘、冲突、身体动作 */
 const PEAK_RE = /真相|揭晓|原来|身份|背叛|跪|耳光|当众|打脸|反转|证据|对峙|摊牌|撕|离婚|签字|血|死|滚|闭嘴|求你/g
 const REVEAL_RE = /真相|原来|揭晓|身份|竟然|才是|一直在骗/
@@ -88,10 +86,10 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
     /* 格式合规 */
     const first = lines[0]
     if (first && first.kind !== 'scene') {
-      add({ check: 'format', level: 'block', ep, lineId: first.id, title: '开场缺少场景标题', detail: `第一行是「${clip(first.zh, 16)}」，制作线无法据此排场`, suggestion: '在开头补一行场景标题：地点 + 日 / 夜 + 内 / 外，如「宴会厅 夜 内」' })
+      add({ check: 'format', level: 'block', ep, lineId: first.id, title: '开场缺少场景标题', detail: `第一行是「${clip(first.zh, 16)}」，制作线无法据此排场`, suggestion: '在开头补一行场景标题：日 / 夜，内 / 外，地点，如「夜，内，宴会厅」' })
     }
     for (const l of lines.filter((x) => x.kind === 'scene' && !SCENE_RE.test(x.zh.trim()))) {
-      add({ check: 'format', level: 'warn', ep, lineId: l.id, quote: l.zh.trim(), title: '场景标题格式不规范', detail: '缺少日 / 夜或内 / 外，分场表无法自动生成', suggestion: '按「地点 日/夜 内/外」书写' })
+      add({ check: 'format', level: 'warn', ep, lineId: l.id, quote: l.zh.trim(), title: '场景标题格式不规范', detail: '缺少日 / 夜、内 / 外或地点，分场表无法自动生成', suggestion: '按「日，外，地点」书写，场次号「1-1」会自动编' })
     }
     if (!lines.some((l) => l.kind === 'hook')) {
       add({ check: 'format', level: 'block', ep, lineId: lines.at(-1)?.id ?? null, title: '结尾没有钩子', detail: '最后一行不是集末钩子，观众没有理由点下一集', suggestion: '用悬念、反转或半句话收尾，并标成「集末钩子」行' })

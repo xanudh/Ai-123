@@ -241,12 +241,16 @@ const KITS: Record<string, Kit> = {
 
 const KIT_OF_GENRE: Record<string, string> = {
   狼人: 'werewolf',
+  龙族: 'werewolf',
   吸血鬼: 'vampire',
-  黑手党: 'mafia',
+  黑帮: 'mafia',
+  强制爱: 'mafia',
   霸总: 'billionaire',
+  神豪: 'billionaire',
   契约婚姻: 'billionaire',
   闪婚: 'billionaire',
   先婚后爱: 'billionaire',
+  一夜情: 'billionaire',
   豪门: 'billionaire',
   灰姑娘: 'billionaire',
   替嫁: 'billionaire',
@@ -254,12 +258,17 @@ const KIT_OF_GENRE: Record<string, string> = {
   重生: 'revenge',
   复仇: 'revenge',
   追妻火葬场: 'revenge',
+  离婚后爱: 'revenge',
+  真假千金: 'revenge',
   逆袭: 'revenge',
   宫斗: 'revenge',
+  商战: 'revenge',
   隐藏身份: 'hidden',
-  战神: 'hidden',
-  神医: 'hidden',
   马甲: 'hidden',
+  战神: 'hidden',
+  强者回归: 'hidden',
+  赘婿: 'hidden',
+  神医: 'hidden',
 }
 
 /** 按立项题材的先后顺序取第一个能匹配的套件 */
@@ -417,7 +426,7 @@ export const SCENES: Record<SceneType, ScenePool> = {
   confront: {
     actions: [
       '△ {villain}端着酒杯走近，故意提高音量，周围的人纷纷看过来。',
-      '△ {hero}站在原地没有退，指尖悄悄攥紧了{prop}。',
+      '△ {hero}站在原地没有退，【特写】指尖悄悄攥紧了{prop}。',
       '△ 众人窃窃私语，有人举起手机开始录像。',
       '△ {villain}的笑容僵在脸上，第一次露出慌乱。',
       '△ 空气安静得只剩下呼吸声。',
@@ -526,7 +535,7 @@ export const SCENES: Record<SceneType, ScenePool> = {
       '△ 深夜，{villain}独自坐在昏暗的房间里，手机屏幕亮起。',
       '△ {villain}把一张照片丢进壁炉，看着它烧成灰烬。',
       '△ {villain}对着镜子整理衣领，眼神阴冷。',
-      '△ 桌上摊着{hero}的资料，上面被红笔划了一个叉。',
+      '△【特写】桌上摊着{hero}的资料，上面被红笔划了一个叉。',
     ],
     exchanges: [
       [{ who: 'villain', zh: '（打电话）{hero}回来了。按原计划行事，别留下任何痕迹。', en: '(on the phone) {hero} is back. Stick to the plan. Leave no trace.' }],
@@ -620,7 +629,7 @@ export const EXPAND_SPEECH: { zh: string; en: string }[] = [
 ]
 
 export const EXPAND_ACTION = [
-  '镜头缓缓推近，定格在{hero}的眼睛上。',
+  '【特写】{hero}的眼睛，一眨不眨。',
   '四周一片死寂，只剩下钟表的滴答声。',
   '窗外雷声炸响，灯光闪了一下。',
   '所有人的目光都集中到这里。',

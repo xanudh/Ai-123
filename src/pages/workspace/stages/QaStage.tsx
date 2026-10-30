@@ -10,7 +10,9 @@ import { Link, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card } from '../../../components/ui'
+import { AUDIENCES } from '../../../domain/constants'
 import { QA_CHECKS, STAGES } from '../../../domain/pipeline'
+import { castBios, episodeText, sceneCast, sceneNumbers, speakerLabel } from '../../../domain/scriptFormat'
 import type { EpisodeScript, Project, QaCheckKey, QaIssue, QaReport, ScriptLine } from '../../../domain/types'
 import { plainText, qaStale } from '../../../domain/work'
 import { downloadText } from '../../../lib/download'
@@ -105,23 +107,38 @@ const epRanges = (eps: number[]) => {
   return out.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join('、')
 }
 
-function lineText(l: ScriptLine, en: boolean) {
-  const text = plainText(l.zh)
-  const zh = l.kind === 'dialogue' ? `${l.speaker ?? ''}：${text}` : l.kind === 'hook' ? `【集末钩子】${text}` : text
-  if (!en || !l.en) return zh
-  return `${zh}\n${l.kind === 'dialogue' ? `${l.speakerEn || l.speaker || ''}: ` : ''}${l.en}`
-}
+const minutes = (n: number) => String(Math.round(n * 10) / 10)
 
-/** 可交付剧本包：项目信息 + 质检结论 + 全部定稿正文 */
+/**
+ * 可交付剧本包，按样稿格式排：（一）剧本信息（二）故事简介（三）核心设定（四）人物小传，再接全部定稿正文；质检结论附在最后。
+ * 免费集数取首付费卡点集（卡点集结尾才开始收费）。
+ */
 function packageText(p: Project, scripts: EpisodeScript[], report: QaReport | null) {
+  const a = p.work.architecture
+  const { totalEpisodes, episodeSeconds } = p.spec
+  const section = (title: string, text?: string) => [title, text?.trim() || '（待补充）']
   const head = [
-    `《${p.title}》${p.titleEn ? ` ${p.titleEn}` : ''}`,
-    p.logline && `核心设定：${p.logline}`,
-    `共 ${p.spec.totalEpisodes} 集，已定稿 ${scripts.length} 集 · 单集约 ${p.spec.episodeSeconds} 秒`,
-    report && `质检：${report.score} 分（${formatDateTime(report.at)}）· ${report.checks.map((c) => `${CHECK_LABEL[c.key]} ${c.score}`).join(' / ')}`,
+    p.title,
+    '（一）剧本信息',
+    `剧名：《${p.title}》`,
+    p.titleEn && `英文剧名：${p.titleEn}`,
+    `题材元素：${[AUDIENCES.find((x) => x.value === p.audience)?.label, p.category, ...p.genres, ...p.tones].filter(Boolean).join(' ')}`,
+    `总集数：${totalEpisodes}集`,
+    p.rhythm.paywalls[0] && `免费集数：${p.rhythm.paywalls[0]}集`,
+    `预估总时长：${minutes((totalEpisodes * episodeSeconds) / 60)}分钟（按${minutes(episodeSeconds / 60)}分钟/集估算）`,
+    '（二）故事简介',
+    [p.logline, p.work.plot?.overview].map((t) => t?.trim()).filter(Boolean).join('\n') || p.idea || '（待补充）',
+    '（三）核心设定',
+    ...section('世界观设定', a?.world),
+    ...section('主要势力', a?.factions),
+    ...section('故事背景', a?.background),
+    '（四）人物小传',
+    castBios(p.work.characters, p.work.relations) || '（待补充）',
   ].filter(Boolean)
-  const eps = scripts.map((s) => [`第 ${s.ep} 集　${s.title}`, '', ...s.lines.map((l) => lineText(l, p.spec.language !== 'zh' && s.translated))].join('\n'))
-  return [head.join('\n'), ...eps].join('\n\n\n')
+  const names = p.work.characters.map((c) => c.name.trim())
+  const eps = scripts.map((s) => episodeText(s.ep, s.lines, names, p.spec.language !== 'zh' && s.translated))
+  const qa = report && `附：质检 ${report.score} 分（${formatDateTime(report.at)}，已定稿 ${scripts.length}/${totalEpisodes} 集）· ${report.checks.map((c) => `${CHECK_LABEL[c.key]} ${c.score}`).join(' / ')}`
+  return [head.join('\n'), ...eps, qa].filter(Boolean).join('\n\n')
 }
 
 /* ---------------------------------- 总结 ---------------------------------- */
@@ -313,12 +330,22 @@ function Directory({
 
 /* ---------------------------------- 中栏 ---------------------------------- */
 
-function LineBody({ l, quotes }: { l: ScriptLine; quotes: { text: string; level: Level }[] }) {
-  if (l.kind === 'scene') return <div className="font-semibold text-ink-900">{highlight(plainText(l.zh), quotes)}</div>
+function LineBody({ l, no, cast, quotes }: { l: ScriptLine; no?: string; cast: string[]; quotes: { text: string; level: Level }[] }) {
+  if (l.kind === 'scene') {
+    return (
+      <>
+        <div className="font-semibold text-ink-900">
+          {no && `${no}：`}
+          {highlight(plainText(l.zh), quotes)}
+        </div>
+        {cast.length > 0 && <div className="text-ink-500">人物：{cast.join('，')}</div>}
+      </>
+    )
+  }
   if (l.kind === 'dialogue') {
     return (
       <div className="flex items-start">
-        <span className={clsx('w-16 shrink-0 text-right font-semibold', l.speaker?.trim() ? 'text-ink-900' : 'text-red-600')}>{l.speaker?.trim() ? highlight(l.speaker, quotes) : '（无）'}</span>
+        <span className={clsx('w-16 shrink-0 text-right font-semibold', l.speaker?.trim() ? 'text-ink-900' : 'text-red-600')}>{l.speaker?.trim() ? highlight(speakerLabel(l), quotes) : '（无）'}</span>
         <span className="text-ink-400">：</span>
         <span className="min-w-0 flex-1 text-ink-900">{highlight(plainText(l.zh), quotes)}</span>
       </div>
@@ -355,6 +382,8 @@ function ScriptView({
   for (const i of issues) if (i.lineId) byLine.set(i.lineId, [...(byLine.get(i.lineId) ?? []), i].sort(byLevel))
   // 整集问题：没定位到行，或定位的行已经不在正文里
   const whole = issues.filter((i) => !i.lineId || !script.lines.some((l) => l.id === i.lineId)).sort(byLevel)
+  const sceneNo = sceneNumbers(script.ep, script.lines)
+  const names = project.work.characters.map((c) => c.name.trim())
 
   return (
     <Card className="overflow-hidden">
@@ -406,7 +435,12 @@ function ScriptView({
             >
               <div className="pt-1.5 pr-2 text-right text-[11px] text-ink-300 tabular-nums select-none">{idx + 1}</div>
               <div className="min-w-0 py-1.5 pr-3">
-                <LineBody l={l} quotes={list.filter((i) => i.quote).map((i) => ({ text: i.quote!, level: i.level }))} />
+                <LineBody
+                  l={l}
+                  no={sceneNo.get(l.id)}
+                  cast={l.kind === 'scene' ? sceneCast(script.lines, idx, names) : []}
+                  quotes={list.filter((i) => i.quote).map((i) => ({ text: i.quote!, level: i.level }))}
+                />
                 {list.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {list.map((i) => (

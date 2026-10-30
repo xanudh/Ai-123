@@ -3,6 +3,7 @@
  * 不单独存储——每次都由最新定稿重新计算；草稿不计入，定稿后自动更新。
  */
 import { PLAN_EVENT_META } from './constants'
+import { placeOf } from './scriptFormat'
 import type { CharacterRole, EpisodeScript, Foreshadow, Project, Relation } from './types'
 import { SILENCE_DEFAULT, blueprintOf, carryOf, foreshadowAlert, foreshadowName, latestDraft, lateStep, scriptOf, silenceOf, traceForeshadow } from './work'
 import type { ForeshadowTrace, LateStep } from './work'
@@ -56,9 +57,6 @@ export interface StateLibrary {
 }
 
 const speakersOf = (s: EpisodeScript) => [...new Set(s.lines.flatMap((l) => (l.kind === 'dialogue' && l.speaker ? [l.speaker] : [])))]
-
-/** 场景标题去掉“日 / 夜 / 内 / 外” */
-export const placeOf = (heading: string) => heading.replace(/(\s+(日|夜|晨|黄昏|内|外))+\s*$/, '').trim()
 
 const short = (text: string) => (text.length > 16 ? `${text.slice(0, 16)}…` : text)
 

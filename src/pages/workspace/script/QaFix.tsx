@@ -9,6 +9,7 @@ import { Modal } from '../../../components/overlay'
 import { AiButton, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Button } from '../../../components/ui'
 import { modelLabel } from '../../../domain/models'
+import { speakerLabel } from '../../../domain/scriptFormat'
 import type { ModelId, Project, QaIssue, ScriptLine } from '../../../domain/types'
 import { plainText, scriptOf } from '../../../domain/work'
 import { fixQaIssue } from '../../../services/ai'
@@ -49,7 +50,7 @@ function diffLines(before: ScriptLine[], after: ScriptLine[]): Diff[] {
 
 function lineLabel(l: ScriptLine, en = false) {
   const text = en && l.en ? l.en : plainText(l.zh)
-  if (l.kind === 'dialogue') return `${(en ? l.speakerEn : '') || l.speaker || '（无）'}：${text}`
+  if (l.kind === 'dialogue') return `${(en ? l.speakerEn : '') || speakerLabel(l) || '（无）'}：${text}`
   return l.kind === 'hook' ? `【集末钩子】${text}` : text
 }
 

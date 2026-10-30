@@ -4,7 +4,8 @@
  */
 import { BASIS_OF, MANUAL_CODES, TACITURN, TACITURN_MAX, forbiddenTerms, isStuck, itemKey, keptOf } from '../../domain/review'
 import { estimateChars, nodeKind } from '../../domain/rhythm'
-import { buildState, placeOf } from '../../domain/state'
+import { parseScene, placeOf, sceneText } from '../../domain/scriptFormat'
+import { buildState } from '../../domain/state'
 import type {
   Architecture,
   Character,
@@ -351,12 +352,12 @@ export function architectureIssues(a: Architecture) {
 }
 
 /** 故事架构里可以单独让 AI 生成的段落 */
-export type ArchitectureSection = 'world' | 'goldenFinger' | 'heroSetup' | 'writingRules'
+export type ArchitectureSection = 'world' | 'factions' | 'background' | 'goldenFinger' | 'heroSetup' | 'writingRules'
 
 const VIEWPOINT_RULES: Record<string, string> = {
   '第三人称 · 跟随主角': '镜头始终跟着主角，观众只知道主角知道的事',
   '第三人称 · 全知': '允许切到反派视角，制造“观众知道、主角不知道”的信息差',
-  '第一人称 · 主角': '主角内心独白（VO）贯穿全剧，每集开场一句独白',
+  '第一人称 · 主角': '主角内心独白（os）贯穿全剧，每集开场一句独白',
   多视角轮换: '主角 / 感情线 / 反派三视角轮换，每集以主角视角收尾',
 }
 
@@ -373,12 +374,13 @@ export function draftSection(p: Project, section: ArchitectureSection): string {
   const { paywalls, twists, climaxFrom } = p.rhythm
   switch (section) {
     case 'world':
-      return [
-        `${kit.world}。`,
-        `核心秘密：${fill(kit.secret, ctx)}`,
-        `前情恩怨：${fill(kit.grudge, ctx)}`,
-        `主要场景：${kit.places.map((pl) => pl.zh).join('、')}`,
-      ].join('\n')
+      return [`${kit.world}。`, `核心秘密：${fill(kit.secret, ctx)}`, `主要场景：${kit.places.map((pl) => pl.zh).join('、')}`].join('\n')
+    case 'factions': {
+      const who = (s: Slot) => `${ctx[s]}（${fill(kit.roles[s].profile, ctx).split('，')[0]}）`
+      return [`主角阵营：${who('hero')}、${who('ally')}、${who('mentor')}`, `感情线：${who('lover')}，${kit.roles.lover.arc}`, `敌对阵营：${who('villain')}，${fill(kit.roles.villain.desire, ctx)}`].join('\n')
+    }
+    case 'background':
+      return `${fill(kit.grudge, ctx)}，${ctx.hero}对此一无所知。${fill(kit.opening, ctx)}——走投无路之际，${kit.prop}成了唯一的依仗，${ctx.hero}从此走上「${hero.arc}」的路。`
     case 'goldenFinger':
       return [
         `金手指：${kit.prop}——${ctx.hero}唯一的依仗，也是「${kit.identity}」身份的钥匙`,
@@ -416,7 +418,9 @@ const BENCH_ROLE: Record<Slot, (role: string) => boolean> = {
 
 interface RoleExtra {
   age: number
+  /** 外形：身高按性别另加在前面 */
   appearance: string
+  costume: string
   personality: string
   background: string
   ability: string
@@ -429,7 +433,8 @@ interface RoleExtra {
 const ROLE_EXTRAS: Record<Slot, RoleExtra> = {
   hero: {
     age: 22,
-    appearance: '清瘦，眉眼干净，习惯把情绪压在平静的表情下；随身带着{prop}',
+    appearance: '身材清瘦，眉眼干净，皮肤偏白；习惯把情绪压在平静的表情下，被逼到绝境时眼神会一下子冷下来；随身带着{prop}',
+    costume: '前期：洗得发白的旧衣服，处处透着落魄；身份揭开后：衣着利落考究，{prop}始终戴在身上',
     personality: '外柔内刚，隐忍、记仇，被逼到绝境时比谁都狠',
     background: '从小被当作无用之人，看尽冷眼；{grudge}',
     ability: '{prop}带来的特殊能力；「{identity}」的身份是最大的底牌',
@@ -439,7 +444,8 @@ const ROLE_EXTRAS: Record<Slot, RoleExtra> = {
   },
   lover: {
     age: 26,
-    appearance: '高大冷峻，衣着一丝不苟，只有在{hero}面前才会失态',
+    appearance: '身形高大，肩宽腿长；五官冷峻，眉骨高，不笑的时候压迫感很强，只有在{hero}面前才会失态',
+    costume: '深色正装，一丝不苟；只在{hero}面前穿便装',
     personality: '克制、骄傲、嘴硬心软',
     background: '家族继承人，从小被要求把责任放在感情之前',
     ability: '权势与资源，能在关键时刻扭转局面',
@@ -449,7 +455,8 @@ const ROLE_EXTRAS: Record<Slot, RoleExtra> = {
   },
   villain: {
     age: 24,
-    appearance: '精致得体，笑意从不到达眼底',
+    appearance: '精致得体，妆容和发型永远无可挑剔；笑意从不到达眼底',
+    costume: '永远比场合多打扮一分，名贵首饰不离身',
     personality: '虚伪、善妒、算计深',
     background: '{grudge}——自己正是当年的知情者',
     ability: '人脉与手段，擅长借刀杀人',
@@ -459,7 +466,8 @@ const ROLE_EXTRAS: Record<Slot, RoleExtra> = {
   },
   ally: {
     age: 21,
-    appearance: '圆脸，笑起来有酒窝，紧张时会结巴',
+    appearance: '圆脸，笑起来有酒窝；紧张时会结巴，手不知道往哪放',
+    costume: '简单舒适的日常装，背着装满杂物的包',
     personality: '善良、胆小、讲义气',
     background: '曾受过{hero}的恩惠，一直记在心里',
     ability: '消息灵通，能接触到核心人物身边的人',
@@ -469,7 +477,8 @@ const ROLE_EXTRAS: Record<Slot, RoleExtra> = {
   },
   mentor: {
     age: 58,
-    appearance: '须发花白，拄着手杖，眼神却很锐利',
+    appearance: '须发花白，背微驼，拄着手杖；眼神却很锐利，看人像在看穿什么',
+    costume: '多年不换的旧式衣着，洗得很干净',
     personality: '谨慎、沉稳、心怀愧疚',
     background: '当年旧案的亲历者，为自保沉默多年',
     ability: '掌握「{identity}」的全部秘密',
@@ -510,7 +519,8 @@ export function draftCharacters(p: Project, seed: number): { characters: Charact
       gender: genders[s] === 'f' ? '女' : '男',
       age: String(extra.age + Math.floor(r() * 4)),
       profile: fill(role.profile, ctx),
-      appearance: fill(extra.appearance, ctx),
+      appearance: `身高 ${genders[s] === 'f' ? 165 + Math.floor(r() * 6) : 180 + Math.floor(r() * 8)}cm 左右，${fill(extra.appearance, ctx)}`,
+      costume: fill(extra.costume, ctx),
       personality: fill(extra.personality, ctx),
       background: fill(extra.background, ctx),
       ability: fill(extra.ability, ctx),
@@ -540,8 +550,8 @@ export function draftCharacters(p: Project, seed: number): { characters: Charact
 function loverTie(p: Project, kit: Kit) {
   if (p.genres.includes('契约婚姻')) return '契约夫妻'
   if (p.genres.some((g) => ['闪婚', '替嫁', '先婚后爱'].includes(g))) return '夫妻'
-  if (p.genres.includes('追妻火葬场')) return '前任'
-  if (p.category === '校园') return '同学'
+  if (p.genres.some((g) => ['追妻火葬场', '离婚后爱', '破镜重圆'].includes(g))) return '前任'
+  if (p.category === '青春') return '同学'
   return kit.ties[0]
 }
 
@@ -908,14 +918,16 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     const parts = text.length > 30 ? splitLong(text) : null
     if (parts) n.split++
     // 改过的台词英文对不上了，等翻译时重新译
-    for (const t of parts ?? [text]) push({ kind: 'dialogue', speaker: who.zh, speakerEn: who.en, zh: t, ...(t === raw && { en: fill(s.en, en) }) })
+    // 自言自语按样稿写成内心独白：余霍os：（自言自语）……
+    const voice = /^（(自言自语|内心)）/.test(text) ? ({ voice: 'os' } as const) : {}
+    for (const t of parts ?? [text]) push({ kind: 'dialogue', speaker: who.zh, speakerEn: who.en, ...voice, zh: t, ...(t === raw && { en: fill(s.en, en) }) })
   }
 
   types.forEach((type, i) => {
     const place = places[i % places.length]
     const night = r() < 0.55
     const inside = r() < 0.65
-    push({ kind: 'scene', zh: `${place.zh} ${night ? '夜' : '日'} ${inside ? '内' : '外'}`, en: `${inside ? 'INT.' : 'EXT.'} ${place.en} – ${night ? 'NIGHT' : 'DAY'}` })
+    push({ kind: 'scene', zh: `${night ? '夜' : '日'}，${inside ? '内' : '外'}，${place.zh}`, en: `${inside ? 'INT.' : 'EXT.'} ${place.en} – ${night ? 'NIGHT' : 'DAY'}` })
     const start = size
 
     if (i === 0) {
@@ -977,8 +989,8 @@ type PlanLine = { kind: 'action'; zh: string } | { kind: 'dialogue'; speech: Spe
 function planLines(f: Foreshadow, kind: PlanEventKind): PlanLine[] {
   const c = clauseOf(f)
   if (f.type === '叙事线索') return [{ kind: 'action', zh: `△ ${c}${kind === 'payoff' ? '，终于有了结果' : ''}。` }]
-  if (kind === 'plant') return [{ kind: 'action', zh: `△ 特写：${c}。` }, { kind: 'dialogue', speech: PLANT_LINE }]
-  if (kind === 'echo') return [{ kind: 'action', zh: `△ 闪回：${c}。` }]
+  if (kind === 'plant') return [{ kind: 'action', zh: `△【特写】${c}。` }, { kind: 'dialogue', speech: PLANT_LINE }]
+  if (kind === 'echo') return [{ kind: 'action', zh: `△【闪回】${c}。` }]
   return [{ kind: 'action', zh: `△ 真相揭晓——${c}。` }, { kind: 'dialogue', speech: PAYOFF_LINE }]
 }
 
@@ -1070,7 +1082,7 @@ function findIssues(p: Project, d: DraftLike): ReviewItem[] {
   const goal = `单集 ${p.spec.episodeSeconds} 秒约 ${target} 字`
   if (words < target * 0.7) items.push({ level: 'block', code: 'short', text: `字数 ${words}，低于${goal}的 70%`, ref: goal })
   else if (words > target * 1.3) items.push({ level: 'warn', code: 'long', text: `字数 ${words}，超出${goal} 30% 以上，注意单集时长`, ref: goal })
-  if (!d.lines.some((l) => l.kind === 'scene')) items.push({ level: 'block', code: 'scene', text: '缺少场景标题，无法对接制作线', ref: '剧本格式：每场戏以场景标题开头（地点 日/夜 内/外）' })
+  if (!d.lines.some((l) => l.kind === 'scene')) items.push({ level: 'block', code: 'scene', text: '缺少场景标题，无法对接制作线', ref: '剧本格式：每场戏以场景标题开头（日 / 夜，内 / 外，地点）' })
   if (!d.lines.some((l) => l.kind === 'hook'))
     items.push({ level: 'block', code: 'hook', text: '结尾没有钩子，观众没有理由点下一集', ref: blueprint?.hook.trim() ? `蓝图末尾钩子：${blueprint.hook.trim()}` : outline?.hookLine ? `集纲钩子：${outline.hookLine}` : '每集结尾留钩子' })
 
@@ -1343,8 +1355,8 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
 
   if (todo.has('scene') && !lines.some((l) => l.kind === 'scene')) {
     const place = kit.places[d.ep % kit.places.length]
-    lines.unshift({ kind: 'scene', zh: `${place.zh} 日 内`, en: `INT. ${place.en} – DAY` })
-    changes.push(`补上场景标题「${place.zh} 日 内」`)
+    lines.unshift({ kind: 'scene', zh: `日，内，${place.zh}`, en: `INT. ${place.en} – DAY` })
+    changes.push(`补上场景标题「日，内，${place.zh}」`)
   }
 
   // 补写的内容放在结尾钩子之前
@@ -1449,14 +1461,11 @@ function registeredAs(p: Project, name: string) {
   return same.length === 1 ? same[0] : undefined
 }
 
-/** 场景标题补齐「地点 日/夜 内/外」 */
+/** 场景标题补齐成「日，外，地点」：缺日夜按地点猜，缺内外按是不是外景地点猜 */
 function normalizeScene(zh: string) {
-  const parts = zh.trim().replace(/[（(]([日夜晨内外、/\s]|黄昏)+[)）]/g, ' ').split(/\s+/).filter(Boolean)
-  const tags = parts.filter((t) => /^(日|夜|晨|黄昏|内|外|白天|晚上)$/.test(t))
-  const place = parts.filter((t) => !tags.includes(t)).join(' ') || placeOf(zh)
-  const time = tags.find((t) => /^(日|夜|晨|黄昏)$/.test(t)) ?? (tags.includes('晚上') || /夜|晚/.test(place) ? '夜' : '日')
-  const io = tags.find((t) => t === '内' || t === '外') ?? (OUTDOOR_RE.test(place) ? '外' : '内')
-  return `${place} ${time} ${io}`
+  const h = parseScene(zh)
+  const place = placeOf(zh)
+  return sceneText({ time: h.time || (/夜|晚/.test(place) ? '夜' : '日'), space: h.space || (OUTDOOR_RE.test(place) ? '外' : '内'), place })
 }
 
 /** 缺名的台词：同一场两人对戏时，轮到另一个人说 */
@@ -1549,7 +1558,7 @@ export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: n
     case '开场缺少场景标题': {
       const prev = [...(scriptOf(p.work, ep - 1)?.lines ?? [])].reverse().find((l) => l.kind === 'scene')
       const own = lines.find((l) => l.kind === 'scene')
-      const heading = prev ? normalizeScene(prev.zh) : own ? normalizeScene(own.zh) : `${kit.places[ep % kit.places.length].zh} 日 内`
+      const heading = prev ? normalizeScene(prev.zh) : own ? normalizeScene(own.zh) : `日，内，${kit.places[ep % kit.places.length].zh}`
       lines.unshift(add({ kind: 'scene', zh: heading }))
       changes.push(`开头补上场景标题「${heading}」（${prev ? '接着上集结尾的场景' : own ? '沿用本集的场景' : '取题材常用场景'}）`)
       break
@@ -1757,9 +1766,9 @@ export function extractPoints(p: Project, d: DraftLike & { states: Record<string
   const flat = flatText(d.lines)
 
   const earlier = p.work.scripts.filter((s) => s.ep < d.ep)
-  const seenPlaces = new Set(earlier.flatMap((s) => s.lines.filter((l) => l.kind === 'scene').map((l) => l.zh.split(' ')[0])))
+  const seenPlaces = new Set(earlier.flatMap((s) => s.lines.filter((l) => l.kind === 'scene').map((l) => placeOf(l.zh))))
   const seenPeople = new Set(earlier.flatMap((s) => speakers(s.lines)))
-  const newPlaces = [...new Set(d.lines.filter((l) => l.kind === 'scene').map((l) => l.zh.split(' ')[0]))].filter((x) => !seenPlaces.has(x))
+  const newPlaces = [...new Set(d.lines.filter((l) => l.kind === 'scene').map((l) => placeOf(l.zh)))].filter((x) => !seenPlaces.has(x))
   const newPeople = speakers(d.lines).filter((n) => !seenPeople.has(n))
   const plans = p.work.foreshadows.filter((f) => foreshadowKey(f) && flat.includes(foreshadowKey(f)))
 

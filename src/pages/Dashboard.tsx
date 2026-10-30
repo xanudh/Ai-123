@@ -4,14 +4,15 @@ import { Link, useNavigate } from 'react-router'
 import { ConfirmDialog } from '../components/overlay'
 import { MODE_ICON, ProjectCard } from '../components/project/ProjectBits'
 import { Badge, Button, Card, Chip, EmptyState, buttonClass } from '../components/ui'
-import { GENRES, MAX_GENRES, MODE_META } from '../domain/constants'
+import { MAX_GENRES, MODE_META } from '../domain/constants'
 import { MASTER_FLOW } from '../domain/pipeline'
 import type { ProjectMode } from '../domain/types'
 import { SAMPLE_IDEAS } from '../services/ai'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
 
-const QUICK_GENRES = GENRES.slice(0, 9)
+/** 首页快捷题材：几家平台标签里最常见的 9 个 */
+const QUICK_GENRES = ['重生', '复仇', '霸总', '狼人', '隐藏身份', '先婚后爱', '追妻火葬场', '逆袭', '萌宝']
 
 export default function Dashboard() {
   const navigate = useNavigate()

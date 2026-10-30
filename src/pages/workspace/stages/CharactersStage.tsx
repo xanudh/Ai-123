@@ -8,6 +8,7 @@ import { AiButton, AutoTextarea, CheckList, InlineInput, RelationKindList, Table
 import type { CheckItem } from '../../../components/stage/StageKit'
 import { Button, Card, CardHeader, EmptyState, Input, Segmented, Select } from '../../../components/ui'
 import { CHARACTER_ROLES } from '../../../domain/constants'
+import { characterBio } from '../../../domain/scriptFormat'
 import type { Character, CharacterRole, Project, Relation } from '../../../domain/types'
 import { newCharacter, relationGroup } from '../../../domain/work'
 import { draftCharacters, nextSeed } from '../../../services/ai'
@@ -16,12 +17,14 @@ import { toast } from '../../../store/toast'
 
 const ROLE_DOT: Record<CharacterRole, string> = { 主角: 'bg-brand-500', 暧昧对象: 'bg-rose-400', 反派: 'bg-red-600', 配角: 'bg-ink-300' }
 
-type TextField = keyof Pick<Character, 'profile' | 'appearance' | 'personality' | 'background' | 'ability' | 'goal' | 'desire' | 'fear' | 'flaw' | 'arc' | 'notes'>
+type TextField = keyof Pick<Character, 'profile' | 'appearance' | 'costume' | 'lookRef' | 'personality' | 'background' | 'ability' | 'goal' | 'desire' | 'fear' | 'flaw' | 'arc' | 'notes'>
 
-/** 人物小传字段，顺序与展示文档一致 */
+/** 人物小传字段；外形、服装、外形参考对应样稿小传后的三项，交给选角与美术 */
 const FIELDS: { key: TextField; label: string; placeholder: string }[] = [
   { key: 'profile', label: '身份', placeholder: '职业、身份、外在标签' },
-  { key: 'appearance', label: '外貌', placeholder: '身形、衣着、标志性细节、随身物件' },
+  { key: 'appearance', label: '外形', placeholder: '身高身材、长相、发型、眼神、标志性细节、随身物件' },
+  { key: 'costume', label: '服装', placeholder: '可按阶段写，如「战甲（1–51 集）：前期破损沾血，后期锃亮」' },
+  { key: 'lookRef', label: '外形参考', placeholder: '参考演员、参考图链接，或对选角 / 美术的要求' },
   { key: 'personality', label: '性格', placeholder: '核心性格与行为习惯' },
   { key: 'background', label: '背景', placeholder: '出身、经历、与主线的关联' },
   { key: 'ability', label: '能力', placeholder: '能力 / 金手指，以及它的代价与限制' },
@@ -71,24 +74,6 @@ function characterChecks(project: Project): CheckItem[] {
 const relationsOf = (c: Character, relations: Relation[]) =>
   relations.map((r, i) => ({ r, i, other: r.a === c.name ? r.b : r.a })).filter(({ r }) => c.name && (r.a === c.name || r.b === c.name))
 
-/** 人物小传的文本版，用于预览与复制 */
-function characterDoc(c: Character, relations: Relation[]) {
-  const v = (s: string) => s.trim() || '—'
-  const motive = [c.goal && `表面追求：${c.goal}`, c.desire && `终极渴望：${c.desire}`, c.fear && `潜意识恐惧：${c.fear}`].filter(Boolean).join('；')
-  const rel = relationsOf(c, relations)
-    .map(({ r, other }) => `与${other}${r.kind ? `（${r.kind}）` : ''}：${r.label || '—'}`)
-    .join('。')
-  return [
-    `## ${c.role}：${c.name || '未命名'}${c.nameEn ? `（${c.nameEn}）` : ''}`,
-    `- 性别：${v(c.gender)}`,
-    `- 年龄：${c.age.trim() ? `${c.age.replace(/岁$/, '')}岁` : '—'}`,
-    ...FIELDS.map((f) => `- ${f.label}：${v(c[f.key])}`),
-    `- 动机：${motive || '—'}`,
-    ...TAIL.map((f) => `- ${f.label}：${v(c[f.key])}`),
-    `- 关系备注：${rel || '—'}`,
-  ].join('\n')
-}
-
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-start gap-3">
@@ -134,7 +119,7 @@ function CharacterEditor({
   )
   const copy = () =>
     navigator.clipboard
-      .writeText(characterDoc(c, relations))
+      .writeText(characterBio(c, relations))
       .then(() => toast('人物小传已复制'))
       .catch(() => toast('复制失败，请在预览中手动选择', 'error'))
 
@@ -163,7 +148,7 @@ function CharacterEditor({
       </div>
 
       {view === 'doc' ? (
-        <pre className="p-5 font-sans text-[13px] leading-7 whitespace-pre-wrap text-ink-900">{characterDoc(c, relations)}</pre>
+        <pre className="p-5 font-sans text-[13px] leading-7 whitespace-pre-wrap text-ink-900">{characterBio(c, relations)}</pre>
       ) : (
         <div className="space-y-5 p-5">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -326,7 +311,7 @@ export default function CharactersStage({ project, blocked }: { project: Project
       <Card id="character-bios" className="scroll-mt-4">
         <CardHeader
           title="人物小传"
-          desc="外貌、性格、背景、能力、动机（表面追求 / 终极渴望 / 潜意识恐惧）、缺陷、弧光与关系备注；写作时按这里约束人物言行"
+          desc="外形、服装、性格、背景、能力、动机（表面追求 / 终极渴望 / 潜意识恐惧）、缺陷、弧光与关系备注；写作时按这里约束人物言行"
           action={
             <div className="flex gap-2">
               {characters.length > 0 && (

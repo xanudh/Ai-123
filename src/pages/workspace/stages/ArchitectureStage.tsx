@@ -6,7 +6,7 @@ import { ConfirmDialog, Modal, UnsavedChangesPrompt } from '../../../components/
 import { RhythmEditor } from '../../../components/project/RhythmEditor'
 import { AiButton, AutoTextarea, EpisodeInput, InlineInput, ReviewBadge, Table, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, Field, Input, MultiSelect, Select } from '../../../components/ui'
-import { AUDIENCES, CATEGORIES, EPISODE_RANGE, EPISODE_SECONDS, GENRES, LANGUAGES, MAX_GENRES, STORY_STRUCTURES, VIEWPOINTS } from '../../../domain/constants'
+import { AUDIENCES, CATEGORIES, EPISODE_RANGE, EPISODE_SECONDS, GENRE_GROUPS, LANGUAGES, MAX_GENRES, STORY_STRUCTURES, VIEWPOINTS } from '../../../domain/constants'
 import { rhythmFromPhases, rhythmOnResize, sameRhythm, secondsHint, validateRhythm } from '../../../domain/rhythm'
 import type { Architecture, Audience, PlotBeat, Project, ScriptLanguage, StoryStructure } from '../../../domain/types'
 import { PHASE_LIMIT, SILENCE_DEFAULT, defaultPhaseName, emptyArchitecture, phaseRanges, rangeLabel } from '../../../domain/work'
@@ -392,7 +392,9 @@ type SectionKey = 'core' | TextKey
 
 /** 纯文本设定段落；参考作品只能手填 */
 const TEXT_SECTIONS: { key: TextKey; title: string; placeholder: string }[] = [
-  { key: 'world', title: '世界观 / 初始设定', placeholder: '故事发生在什么样的环境里：时代、地点、规则、核心秘密与前情恩怨……' },
+  { key: 'world', title: '世界观设定', placeholder: '故事发生在什么样的世界里：时代、地点、规则与核心秘密……' },
+  { key: 'factions', title: '主要势力', placeholder: '主角阵营：有谁、各自什么身份；敌对阵营：有谁、想要什么……' },
+  { key: 'background', title: '故事背景', placeholder: '开场前发生了什么、主角被逼到什么处境，故事从哪里开始……' },
   { key: 'goldenFinger', title: '金手指 / 核心卖点', placeholder: '主角的依仗是什么，观众为什么追下去……' },
   { key: 'heroSetup', title: '主角人设', placeholder: '一句话主角人设；完整小传在人物设定里展开' },
   { key: 'writingRules', title: '全局写作要求', placeholder: '每集写作都会带上的要求：篇幅、钩子、台词风格、视角……' },
@@ -630,14 +632,16 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="类型">
               <Select aria-label="类型" value={project.category} onChange={(e) => updateProject(project.id, { category: e.target.value }, `类型改为「${e.target.value}」`)}>
-                {!(CATEGORIES as readonly string[]).includes(project.category) && <option value={project.category}>{project.category || '选择类型'}</option>}
+                {!CATEGORIES.some((c) => c.value === project.category) && <option value={project.category}>{project.category || '选择类型'}</option>}
                 {CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
+                  <option key={c.value} value={c.value}>
+                    {c.value} · {c.en}
+                  </option>
                 ))}
               </Select>
             </Field>
-            <Field label="细分类型" error={project.genres.length ? null : '至少选择 1 个'} aside={<span className="text-xs text-ink-400">最多 {MAX_GENRES} 个</span>}>
-              <MultiSelect value={project.genres} options={GENRES} max={MAX_GENRES} invalid={!project.genres.length} onChange={(genres) => updateProject(project.id, { genres })} placeholder="如：重生 / 复仇 / 豪门" />
+            <Field label="题材元素" error={project.genres.length ? null : '至少选择 1 个'} aside={<span className="text-xs text-ink-400">最多 {MAX_GENRES} 个</span>}>
+              <MultiSelect value={project.genres} options={GENRE_GROUPS} max={MAX_GENRES} invalid={!project.genres.length} onChange={(genres) => updateProject(project.id, { genres })} placeholder="如：重生 / 复仇 / 豪门" />
             </Field>
             <Field label="目标受众">
               <Select aria-label="目标受众" value={project.audience} onChange={(e) => updateProject(project.id, { audience: e.target.value as Audience })}>

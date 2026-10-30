@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { LEGACY_TAGS } from '../domain/constants'
 import { defaultRhythm } from '../domain/rhythm'
-import type { EpisodeDraft, EpisodeScript, Project, ProjectDraft, ProjectWork } from '../domain/types'
+import { formatScene } from '../domain/scriptFormat'
+import type { EpisodeDraft, EpisodeScript, Project, ProjectDraft, ProjectWork, ScriptLine } from '../domain/types'
 import { emptyArchitecture, emptyWork, inferRelationKind, newCharacter } from '../domain/work'
 import { newId } from '../lib/id'
 
@@ -24,7 +26,7 @@ function sampleProjects(): Project[] {
       category: '都市',
       genres: ['重生', '复仇', '豪门'],
       audience: 'female',
-      tones: ['爽感', '虐心'],
+      tones: ['打脸', '虐恋'],
       markets: ['北美'],
       platforms: ['ReelShort', 'DramaBox'],
       spec: { totalEpisodes: 70, episodeSeconds: 90, aspectRatio: '9:16', language: 'en_zh' },
@@ -51,7 +53,7 @@ function sampleProjects(): Project[] {
       category: '奇幻',
       genres: ['狼人', '隐藏身份', '追妻火葬场'],
       audience: 'female',
-      tones: ['虐心', '爽感'],
+      tones: ['虐恋', '打脸'],
       markets: ['北美', '欧洲'],
       platforms: ['ReelShort'],
       spec: { totalEpisodes: 60, episodeSeconds: 90, aspectRatio: '9:16', language: 'en_zh' },
@@ -133,6 +135,26 @@ function toV6(p: Project): Project {
   return {
     ...p,
     work: { ...p.work, relations: withKind(p.work.relations), breakdown: b && { ...b, relations: withKind(b.relations) }, qa: p.work.qa ?? null },
+  }
+}
+
+/** 类型 / 题材 / 风格换成海外平台的分类词；场景标题改成样稿格式「日，外，地点」；补上主要势力、故事背景与人物服装、外形参考 */
+function toV7(p: Project): Project {
+  const tags = (list: string[], table: Record<string, string>) => [...new Set(list.map((v) => table[v] ?? v))]
+  const withScenes = <T extends { lines: ScriptLine[] }>(s: T): T => ({ ...s, lines: s.lines.map((l) => (l.kind === 'scene' ? { ...l, zh: formatScene(l.zh) } : l)) })
+  const a = p.work.architecture
+  return {
+    ...p,
+    category: LEGACY_TAGS.category[p.category] ?? p.category,
+    genres: tags(p.genres, LEGACY_TAGS.genres),
+    tones: tags(p.tones, LEGACY_TAGS.tones),
+    work: {
+      ...p.work,
+      architecture: a && { ...a, factions: a.factions ?? '', background: a.background ?? '' },
+      characters: p.work.characters.map((c) => newCharacter(c)),
+      drafts: p.work.drafts.map(withScenes),
+      scripts: p.work.scripts.map(withScenes),
+    },
   }
 }
 
@@ -233,9 +255,9 @@ export const useProjects = create<ProjectsState>()(
     }),
     {
       name: 'zhiying.projects.v1',
-      version: 6,
+      version: 7,
       // v0 → v1：规格新增每集字数；v1 → v2：新增环节产出 work；v2 → v3：二期字段（类型、情节、蓝图、草稿箱）；v3 → v4：三期视频转写任务；
-      // v4 → v5：每集字数改由单集时长换算，冲突主线可调整分段；v5 → v6：人物关系类型、质检报告
+      // v4 → v5：每集字数改由单集时长换算，冲突主线可调整分段；v5 → v6：人物关系类型、质检报告；v6 → v7：平台分类词、样稿剧本格式
       migrate: (persisted, version) => {
         const state = persisted as Pick<ProjectsState, 'projects'>
         if (version < 2) {
@@ -245,6 +267,7 @@ export const useProjects = create<ProjectsState>()(
         if (version < 4) state.projects = state.projects.map((p) => ({ ...p, work: { ...p.work, video: p.work.video ?? null } }))
         if (version < 5) state.projects = state.projects.map(toV5)
         if (version < 6) state.projects = state.projects.map(toV6)
+        if (version < 7) state.projects = state.projects.map(toV7)
         return state as ProjectsState
       },
     },

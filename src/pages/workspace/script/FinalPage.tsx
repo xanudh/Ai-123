@@ -203,6 +203,7 @@ export default function FinalPage() {
 
       <ScriptEditor
         project={project}
+        ep={script.ep}
         lines={script.lines}
         readOnly={false}
         showEn={showEn}

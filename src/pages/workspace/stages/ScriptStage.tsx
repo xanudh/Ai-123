@@ -8,12 +8,14 @@ import { WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, AutoTextarea, CheckList, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, EmptyState, Field, Input, NumberInput, Select, dotBefore } from '../../../components/ui'
 import { DRAFT_STATUS_META, EPISODE_POSITIONS, EPISODE_RANGE, SCRIPT_BATCH } from '../../../domain/constants'
+import { modelLabel, modelOf } from '../../../domain/models'
 import { rhythmOnResize } from '../../../domain/rhythm'
 import { buildState, preWriteCheck } from '../../../domain/state'
 import type { EpisodeBlueprint, Foreshadow, ModelId, Project } from '../../../domain/types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowName, plainText, prevHookOf, scriptOf } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { draftBlueprints, nextSeed, positionOf, writeEpisode } from '../../../services/ai'
+import { setBatchRun, useBatchRun } from '../../../store/batchRun'
 import { useProjects } from '../../../store/projects'
 import { useStateFocus } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
@@ -67,8 +69,8 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     if (epParam) setSelected(epParam)
   }
   const [pending, setPending] = useState<Pending | null>(null)
-  // 批量写作进度：正在写的集、第几集 / 共几集
-  const [batchAt, setBatchAt] = useState<{ ep: number; i: number; n: number } | null>(null)
+  // 批量写作进度：正在写的集、第几集 / 共几集、本批的模型；页头换模型时也要看
+  const batchAt = useBatchRun((s) => (s.run?.projectId === project.id ? s.run : null))
   // 批量写作的集数范围：直接输入集数，结束集可到最后一集，默认从第一个没写过的集起写 SCRIPT_BATCH 集；起始集不能越过没写的集
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
 
@@ -181,6 +183,10 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
 
   /** 按选好的范围逐集写；遇到不能写的集就停，中途可以停止，已写出的草稿保留 */
   const batch = async (from: number, to: number) => {
+    const start = latestProject(project.id)
+    if (!start) return
+    // 整批用开写时的文本模型：中途在页头换模型，本批剩下的集仍用它写完，同一批文风一致
+    const model = modelOf(start, 'text')
     let done = 0
     const result = await run('batch', async (signal) => {
       for (let ep = from; ep <= to; ep++) {
@@ -188,8 +194,8 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
         if (!cur) break
         const block = preWriteCheck(cur, ep).find((c) => c.level === 'block')
         if (block) return { stop: `第 ${ep} 集：${block.text}` }
-        setBatchAt({ ep, i: ep - from + 1, n: to - from + 1 })
-        const content = await writeEpisode(cur, ep, 0, signal)
+        setBatchRun({ projectId: project.id, model, ep, i: ep - from + 1, n: to - from + 1, stop: cancel })
+        const content = await writeEpisode(cur, ep, 0, signal, model)
         const latest = latestProject(project.id)
         if (!latest) break
         patchWork(project.id, { drafts: addDraft(latest.work, ep, content).drafts }, `批量写作：第 ${ep} 集草稿`)
@@ -197,13 +203,13 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
       }
       return { stop: '' }
     })
-    setBatchAt(null)
+    setBatchRun(null)
     setRange(null)
     if (done) markWriting()
     if (!result) {
       if (done) toast(`已停止批量写作，写出的 ${done} 集草稿已保存`)
     } else if (done) {
-      toast(`已写出 ${done} 集草稿，逐集审稿后定稿${result.stop ? `（${result.stop}）` : ''}`)
+      toast(`已用 ${modelLabel(model)} 写出 ${done} 集草稿，逐集审稿后定稿${result.stop ? `（${result.stop}）` : ''}`)
     } else if (result.stop) {
       toast(result.stop, 'error')
     }
@@ -335,7 +341,11 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                   variant="secondary"
                   loading={running === 'batch'}
                   disabled={blocked || !!running}
-                  title={`按顺序逐集写，范围可选到第 ${total} 集；起始集不能越过第 ${startMax} 集（不能跳过没写的集）`}
+                  title={
+                    batchAt
+                      ? `本批用 ${modelLabel(batchAt.model)} 写：开写时定下，中途在页头换模型不影响本批`
+                      : `按顺序逐集写，用 ${modelLabel(modelOf(project, 'text'))} 写，范围可选到第 ${total} 集；起始集不能越过第 ${startMax} 集（不能跳过没写的集）`
+                  }
                   onClick={askBatch}
                 >
                   {running === 'batch' && batchAt ? `正在写第 ${batchAt.ep} 集（${batchAt.i}/${batchAt.n}）…` : '批量写作'}

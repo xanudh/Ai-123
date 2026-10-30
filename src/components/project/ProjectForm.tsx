@@ -7,11 +7,12 @@ import {
   CATEGORIES,
   EPISODE_RANGE,
   EPISODE_SECONDS,
-  GENRES,
+  GENRE_GROUPS,
   LANGUAGES,
   MARKETS,
   MAX_GENRES,
   MAX_SOURCE_BYTES,
+  MAX_TONES,
   PLATFORMS,
   TONES,
 } from '../../domain/constants'
@@ -222,7 +223,7 @@ export function ScriptUploadField({
               setText(e.target.value)
               setError(null)
             }}
-            placeholder={'第1集\n场景：议事厅 夜 内\n△ 满月高悬，全族屏息。\n凯恩：我拒绝艾拉成为我的伴侣。\n\n第2集\n……'}
+            placeholder={'第一集\n1-1：夜，内，议事厅\n人物：凯恩，艾拉\n△ 满月高悬，全族屏息。\n凯恩：我拒绝艾拉成为我的伴侣。\n艾拉os：你会后悔的。\n\n第二集\n……'}
             className="font-mono text-[12.5px]"
           />
           <div className="flex justify-end gap-2">
@@ -262,7 +263,7 @@ export function ScriptUploadField({
         >
           <FileUp size={22} className="text-brand-600" />
           <span className="mt-2 text-[13px] font-medium">点击或拖拽上传要仿写的剧本</span>
-          <span className="mt-1 text-xs text-ink-500">支持 .txt / .md，不超过 2 MB；每集以「第1集」或「EP1」单独成行</span>
+          <span className="mt-1 text-xs text-ink-500">支持 .txt / .md，不超过 2 MB；每集以「第一集」「第1集」或「EP1」单独成行</span>
         </button>
       )}
       <input
@@ -490,20 +491,22 @@ export function StorySection({ draft, patch, errors, index, withAssistant = true
             onChange={(e) => patch({ category: e.target.value })}
             className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-3 focus:ring-brand-500/15"
           >
-            {!(CATEGORIES as readonly string[]).includes(draft.category) && <option value={draft.category}>{draft.category || '选择类型'}</option>}
+            {!CATEGORIES.some((c) => c.value === draft.category) && <option value={draft.category}>{draft.category || '选择类型'}</option>}
             {CATEGORIES.map((c) => (
-              <option key={c}>{c}</option>
+              <option key={c.value} value={c.value}>
+                {c.value} · {c.en}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="题材元素" required error={errors.genres} aside={<span className="text-xs text-ink-400">最多 {MAX_GENRES} 个 · 已选 {draft.genres.length}</span>}>
-          <MultiSelect value={draft.genres} options={GENRES} max={MAX_GENRES} invalid={!!errors.genres} onChange={(genres) => patch({ genres })} placeholder="选择题材元素" />
+          <MultiSelect value={draft.genres} options={GENRE_GROUPS} max={MAX_GENRES} invalid={!!errors.genres} onChange={(genres) => patch({ genres })} placeholder="选择题材元素" />
         </Field>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="风格基调" aside={<span className="text-xs text-ink-400">最多 3 个</span>}>
-          <MultiSelect value={draft.tones} options={TONES} max={3} onChange={(tones) => patch({ tones })} placeholder="选择风格基调" />
+        <Field label="风格基调" aside={<span className="text-xs text-ink-400">最多 {MAX_TONES} 个</span>}>
+          <MultiSelect value={draft.tones} options={TONES} max={MAX_TONES} onChange={(tones) => patch({ tones })} placeholder="选择风格基调" />
         </Field>
         <Field label="目标受众">
           <Segmented value={draft.audience} onChange={(audience) => patch({ audience })} options={AUDIENCES.map((a) => ({ value: a.value, label: a.label }))} />

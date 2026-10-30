@@ -108,8 +108,35 @@ const SEEDS: Record<string, GenreSeed[]> = {
   萌宝: [
     { hero: '带着天才萌宝回国的设计师', dilemma: '必须躲开五年前那一夜的男人', twist: '萌宝主动帮妈妈“相亲”亲爹', formula: '每 3 集一次萌宝助攻' },
   ],
-  黑手党: [
+  黑帮: [
     { hero: '误闯黑手党婚礼的护士', dilemma: '被迫成为教父的“临时新娘”', twist: '她的父亲正是教父追查多年的仇人', formula: '每 3 集一次立场反转' },
+  ],
+  真假千金: [
+    { hero: '被抱错二十年的真千金', dilemma: '回到豪门却被全家偏爱的假千金处处设局', twist: '她早就知道真相，回来只为查清当年是谁调的包', formula: '每 2 集一次真假身份对决' },
+  ],
+  穿越: [
+    { hero: '误入古代王朝的现代农民', dilemma: '要靠一口鱼塘给两个时空运物资', twist: '古代人把他当成了神仙', formula: '每 3 集一次现代物资降维打击' },
+  ],
+  神豪: [
+    { hero: '刚被女友甩掉的外卖员', dilemma: '突然继承千亿家产，却必须隐瞒一年', twist: '嫌贫爱富的前女友正是遗嘱的见证人', formula: '每 2 集一次花钱打脸' },
+  ],
+  赘婿: [
+    { hero: '入赘三年被全家当佣人使唤的女婿', dilemma: '妻子家族濒临破产，岳母逼他离婚让位', twist: '让家族起死回生的神秘投资人就是他自己', formula: '每 2 集一次赘婿翻身打脸' },
+  ],
+  战神: [
+    { hero: '隐退五年回乡的北境战神', dilemma: '回家发现妻女被恶霸欺凌，却不能暴露身份', twist: '欺负她们的恶霸背后，是当年出卖他的战友', formula: '每 3 集一次身份压制' },
+  ],
+  神医: [
+    { hero: '被逐出师门的天才神医', dilemma: '在豪门当私人医生，却被诬陷治死病人', twist: '“病死”的老爷子是装的，就为考验他', formula: '每 2 集一次医术打脸' },
+  ],
+  追妻火葬场: [
+    { hero: '离婚当天才知道真相的冷血总裁', dilemma: '前妻已经带着孩子开始新生活', twist: '当年逼走她的“证据”是他母亲伪造的', formula: '每 3 集一次追妻受挫' },
+  ],
+  吸血鬼: [
+    { hero: '被吸血鬼亲王误标记的人类女孩', dilemma: '必须假扮他的血契新娘才能活过满月', twist: '她体内流着猎人家族的血', formula: '每 3 集一次身份危机' },
+  ],
+  契约婚姻: [
+    { hero: '为救弟弟签下婚约的落魄千金', dilemma: '契约期内要在豪门婆家面前扮恩爱', twist: '契约丈夫早在十年前就认识她', formula: '每 2 集一次假戏真做' },
   ],
 }
 
@@ -164,7 +191,29 @@ const GENRE_TITLES: Record<string, string[]> = {
   战神: ['Return of the War God', 'The Dragon King Returns'],
   先婚后爱: ['Married First, Love Later', 'Love After the Vows'],
   追妻火葬场: ['Too Late to Love Me', 'Begging for Her Forgiveness'],
-  黑手党: ['The Mafia Boss’s Bride', 'Bound to the Don'],
+  黑帮: ['The Mafia Boss’s Bride', 'Bound to the Don'],
+  神豪: ['The Secret Billionaire Next Door', 'Broke Today, Billionaire Tomorrow'],
+  赘婿: ['The Son-in-Law Strikes Back', 'Don’t Underestimate the Son-in-Law'],
+  龙族: ['The Dragon King’s Bride', 'Return of the Dragon Heir'],
+  大女主: ['The Queen Bows to No One', 'She Rules Alone'],
+  真假千金: ['The Real Heiress Returns', 'Swapped at Birth'],
+  年上年下: ['Too Young to Be My Husband', 'Love Knows No Age'],
+  破镜重圆: ['Back to My Ex-Husband', 'Second Chance at Forever'],
+  离婚后爱: ['Love After Divorce', 'Remarry Me, Mr. CEO'],
+  冤家变恋人: ['From Rivals to Lovers', 'My Nemesis, My Husband'],
+  三角恋: ['Between Two Billionaires', 'Torn Between Brothers'],
+  禁忌之恋: ['Forbidden Desire', 'My Stepbrother’s Secret'],
+  强制爱: ['Caged by the CEO', 'You Belong to Me'],
+  一夜情: ['One Night with the Billionaire', 'The Morning After'],
+  灵魂互换: ['Swapped Souls', 'In My Husband’s Body'],
+  穿越: ['Time Traveler’s Empire', 'Lost in the Dynasty'],
+  强者回归: ['The King Returns', 'Return of the Legend'],
+  团宠: ['Everyone’s Little Princess', 'Spoiled by Seven Brothers'],
+  超能力: ['Awakened', 'The Hidden Power Within'],
+  系统: ['The Billionaire System', 'Level Up, Husband'],
+  读心: ['I Can Hear Your Heart', 'Reading the Billionaire’s Mind'],
+  失忆: ['The Wife He Forgot', 'Remember Me, Darling'],
+  商战: ['The Boardroom Queen', 'War of Empires'],
   吸血鬼: ['The Vampire King’s Bride', 'Bitten by Destiny'],
   灰姑娘: ['Cinderella’s Revenge', 'The Billionaire’s Cinderella'],
   神医: ['The Miracle Doctor', 'The Divine Healer Returns'],
@@ -297,10 +346,10 @@ export async function writeEpisode(project: Project, ep: number, seed: number, s
   return { ...writer.writeEpisode(project, ep, seed), model }
 }
 
-/** AI 审稿：返回一份审查报告；opts.base 是修稿依据的那份审稿，有它时做复审 */
-export async function reviewDraft(project: Project, draft: Parameters<typeof writer.reviewDraft>[1], opts?: Parameters<typeof writer.reviewDraft>[2], signal?: AbortSignal) {
+/** AI 审稿：返回一份审查报告；opts.base 是修稿依据的那份审稿，有它时做复审；model 不传用项目的文本模型 */
+export async function reviewDraft(project: Project, draft: Parameters<typeof writer.reviewDraft>[1], opts?: Parameters<typeof writer.reviewDraft>[2], signal?: AbortSignal, model = modelOf(project, 'text')) {
   await think(signal, 900)
-  return { ...writer.reviewDraft(project, draft, opts), model: modelOf(project, 'text') }
+  return { ...writer.reviewDraft(project, draft, opts), model }
 }
 
 /** AI 修稿：按审稿意见逐条改（没审稿时按自检），标注过的行按标注改写；生成新版本 */

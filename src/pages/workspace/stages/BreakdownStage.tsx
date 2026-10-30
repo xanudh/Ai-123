@@ -60,7 +60,7 @@ function ImportCard({ project }: { project: Project }) {
     <Card>
       <CardHeader
         title="导入对标剧剧本"
-        desc="粘贴全文或上传 .txt / .md；每集以「第1集」或「EP1」单独成行，系统按分集切分后再拆解"
+        desc="粘贴全文或上传 .txt / .md；每集以「第一集」「第1集」或「EP1」单独成行，系统按分集切分后再拆解"
         action={
           <Button
             variant="ghost"
@@ -93,7 +93,7 @@ function ImportCard({ project }: { project: Project }) {
             setText(e.target.value)
             setError(null)
           }}
-          placeholder={'第1集\n场景：议事厅 夜 内\n△ 满月高悬，全族屏息。\n凯恩：我拒绝艾拉成为我的伴侣。\n\n第2集\n……'}
+          placeholder={'第一集\n1-1：夜，内，议事厅\n人物：凯恩，艾拉\n△ 满月高悬，全族屏息。\n凯恩：我拒绝艾拉成为我的伴侣。\n艾拉os：你会后悔的。\n\n第二集\n……'}
           className="font-mono text-[12.5px]"
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
