@@ -9,11 +9,14 @@ import type {
   Breakdown,
   Foreshadow,
   EpisodeBlueprint,
+  EpisodeScript,
   MergedScript,
+  ModelId,
   OutlineEpisode,
   Plot,
   PlotBeat,
   Project,
+  QaIssue,
   QaReport,
   ScriptLine,
   ScriptLineKind,
@@ -24,13 +27,14 @@ import type {
   VideoJob,
 } from '../domain/types'
 import { PLAN_EVENT_META } from '../domain/constants'
+import { modelOf } from '../domain/models'
 import { eventCandidates, foreshadowName, plainText } from '../domain/work'
 import type { EventCandidate } from '../domain/work'
 import { analyzeSource } from './mock/breakdown'
 import * as qa from './mock/qa'
 import * as video from './mock/video'
 import * as writer from './mock/writer'
-import type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, ReviseMode } from './mock/writer'
+import type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, QaFix, ReviewBase, ReviseMode } from './mock/writer'
 
 export { parseSource } from './mock/breakdown'
 export { SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME } from './mock/sampleScript'
@@ -38,7 +42,7 @@ export { DEMO_SHOW, episodesFromFiles, linkError, platformOf } from './mock/vide
 export { architectureIssues, positionOf, viewpointRule } from './mock/writer'
 export { innovationLanding } from './mock/qa'
 export type { InnovationLanding } from './mock/qa'
-export type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, ReviseMode }
+export type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, QaFix, ReviewBase, ReviseMode }
 
 export interface LoglineRequest {
   idea: string
@@ -58,6 +62,12 @@ export interface LoglineCandidate {
 }
 
 export const AI_MODE: 'mock' | 'live' = 'mock'
+
+/*
+ * 模型路由：项目页头选两类模型——视频解析只用于逐集转写，其余文本环节（拆解、策划、写作、审稿、质检、翻译）都用文本模型，写作可临时换一个。
+ * 逐集转写、写作、审稿、修稿与质检把用到的模型记在分镜、草稿与报告上。
+ * 模拟模式下模型只做记录，生成内容不随模型变化；接真实接口时在这里按模型分发。
+ */
 
 interface GenreSeed {
   hero: string
@@ -279,21 +289,21 @@ export async function draftBlueprints(project: Project, from: number, to: number
 }
 
 /** 逐集剧本：输入 = 本集蓝图（含作者微操指导）+ 最新状态库（人物、伏笔与前集正文） */
-export async function writeEpisode(project: Project, ep: number, seed: number, signal?: AbortSignal): Promise<DraftContent> {
+export async function writeEpisode(project: Project, ep: number, seed: number, signal?: AbortSignal, model = modelOf(project, 'text')): Promise<DraftContent & { model: ModelId }> {
   await think(signal, 1400)
-  return writer.writeEpisode(project, ep, seed)
+  return { ...writer.writeEpisode(project, ep, seed), model }
 }
 
-/** AI 审稿：返回一份审查报告 */
-export async function reviewDraft(project: Project, draft: Parameters<typeof writer.reviewDraft>[1], signal?: AbortSignal) {
+/** AI 审稿：返回一份审查报告；opts.base 是修稿依据的那份审稿，有它时做复审 */
+export async function reviewDraft(project: Project, draft: Parameters<typeof writer.reviewDraft>[1], opts?: Parameters<typeof writer.reviewDraft>[2], signal?: AbortSignal) {
   await think(signal, 900)
-  return writer.reviewDraft(project, draft)
+  return { ...writer.reviewDraft(project, draft, opts), model: modelOf(project, 'text') }
 }
 
 /** AI 修稿：按审稿意见逐条改（没审稿时按自检），标注过的行按标注改写；生成新版本 */
 export async function reviseDraft(project: Project, draft: Parameters<typeof writer.reviseDraft>[1], seed: number, review?: Parameters<typeof writer.reviseDraft>[3], signal?: AbortSignal) {
   await think(signal, 1300)
-  return writer.reviseDraft(project, draft, seed, review)
+  return { ...writer.reviseDraft(project, draft, seed, review), model: modelOf(project, 'text') }
 }
 
 /** 定稿后提炼集要点 */
@@ -321,10 +331,16 @@ export async function translateEpisode(project: Project, lines: ScriptLine[], si
 
 export const QA_STEPS = ['一致性终检', '节奏曲线对比', '付费点专项', '创新点落地', '格式合规'] as const
 
+/** 质检里的 AI 修稿：按一条问题改定稿，补写只取已有设定，不合设定的改动留给编剧；返回预览，确认后才写进正文 */
+export async function fixQaIssue(project: Project, script: EpisodeScript, issue: QaIssue, seed: number, signal?: AbortSignal): Promise<QaFix & { model: ModelId }> {
+  await think(signal, 1000)
+  return { ...writer.fixQaIssue(project, script, issue, seed), model: modelOf(project, 'text') }
+}
+
 /** 质检：对全部正文章节跑七项检查；resolved 由页面合并保留 */
 export async function runQa(project: Project, signal?: AbortSignal): Promise<Omit<QaReport, 'resolved'>> {
   await think(signal, 1400)
-  return { at: new Date().toISOString(), ...qa.runQa(project) }
+  return { at: new Date().toISOString(), ...qa.runQa(project), model: modelOf(project, 'text') }
 }
 
 /* ------------------------------ 第三阶段：视频转剧本 ------------------------------ */
@@ -352,14 +368,16 @@ const PHASE_MS: [Exclude<TranscribeStatus, 'queued' | 'done' | 'failed'>, number
 ]
 
 /**
- * 单集转写：下载 → 压缩 → 交给能直接读视频的多模态模型，按固定格式逐镜头转写。
- * onProgress 回报当前步骤与百分比；失败抛出 TranscribeError。
+ * 单集转写：下载 → 压缩 → 交给能直接读视频的多模态模型（model：项目的视频解析模型），按固定格式逐镜头转写。
+ * onProgress 回报当前步骤与百分比；失败抛出 TranscribeError。演示版转写内容不随模型变化。
  */
 export async function transcribeEpisode(
   job: VideoJob,
   ep: VideoEpisode,
   onProgress: (status: TranscribeStatus, percent: number) => void,
   signal?: AbortSignal,
+  // 接入真实接口时按模型分发；模拟数据用不到
+  _model?: ModelId,
 ): Promise<Shot[]> {
   const fail = video.failureOf(job, ep)
   const ticks = 10

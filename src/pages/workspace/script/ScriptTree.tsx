@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../../../components/overlay'
 import { latestProject } from '../../../components/stage/StageKit'
 import { DRAFT_STATUS_META } from '../../../domain/constants'
 import type { Project } from '../../../domain/types'
+import { modelLabel } from '../../../domain/models'
 import { draftLabel, draftsOf, scriptOf } from '../../../domain/work'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
@@ -127,7 +128,7 @@ export function ScriptTree({ project }: { project: Project }) {
                         return (
                           <li key={d.id}>
                             <div className="group relative">
-                              <NavLink to={draftPath(project, d.id)} end className={(s) => clsx(leaf(s), 'pl-8')}>
+                              <NavLink to={draftPath(project, d.id)} end title={d.model ? `${draftLabel(d)} · ${modelLabel(d.model)} ${d.revision ? '修稿' : '生成'}` : undefined} className={(s) => clsx(leaf(s), 'pl-8')}>
                                 <span className={clsx('size-1.5 shrink-0 rounded-full', DOT_TONE[meta.tone])} />
                                 <span className="truncate">{draftLabel(d)}</span>
                                 <span className="shrink-0 text-[11px] font-normal text-ink-400">{meta.label}</span>

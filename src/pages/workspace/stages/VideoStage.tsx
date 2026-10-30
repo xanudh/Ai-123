@@ -3,8 +3,10 @@ import { ArrowRight, CircleCheck, Download, Eye, Film, Loader2, Pause, Play, Rot
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { ConfirmDialog, Menu, Modal } from '../../../components/overlay'
+import { ModelPicker } from '../../../components/project/ModelBits'
 import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, Input, Segmented } from '../../../components/ui'
+import { modelLabel, modelOf } from '../../../domain/models'
 import type { Project, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
 import { downloadText } from '../../../lib/download'
 import { formatDateTime } from '../../../lib/format'
@@ -193,6 +195,11 @@ function SourcePicker({ project }: { project: Project }) {
             <span className="mt-1 text-xs text-ink-500">支持 .mp4 / .mov / .webm；按文件名识别集数，如「第3集」「EP03」「03.mp4」</span>
           </button>
         )}
+        {/* 和页头的视频解析模型是同一个选择，在这里改两边一起变 */}
+        <div data-video-model className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-ink-500">
+          <ModelPicker project={project} group="video" align="left" />
+          <span>只用于逐集转写；合并后的拆解与写作用文本模型 {modelLabel(modelOf(project, 'text'))}</span>
+        </div>
         {origin === 'upload' && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg bg-canvas px-4 py-2.5 text-xs text-ink-500">
             <Film size={14} className="text-ink-400" />
@@ -293,7 +300,7 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
     <Card className="overflow-hidden">
       <CardHeader
         title="逐集转写"
-        desc={`${job.origin === 'link' ? job.platform || '剧集链接' : '本地上传'} · ${eps.length} 集 · 总时长 ${clock(totalSec)} · 同时转写 ${CONCURRENCY} 集`}
+        desc={`${job.origin === 'link' ? job.platform || '剧集链接' : '本地上传'} · ${eps.length} 集 · 总时长 ${clock(totalSec)} · 同时转写 ${CONCURRENCY} 集 · ${modelLabel(modelOf(project, 'video'))} 解析`}
         action={
           <div className="flex gap-2">
             {running ? (
@@ -446,7 +453,7 @@ function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number
       onClose={onClose}
       width={920}
       title={`第 ${episode.ep} 集 · ${view === 'shots' ? '分镜剧本' : '对白文本'}`}
-      desc={`时长 ${clock(episode.duration)} · ${episode.shots.length} 个镜头 · 对白 ${dialogueWords(episode.shots)} 字`}
+      desc={`时长 ${clock(episode.duration)} · ${episode.shots.length} 个镜头 · 对白 ${dialogueWords(episode.shots)} 字${episode.model ? ` · ${modelLabel(episode.model)} 解析` : ''}`}
       footer={
         <>
           <Button variant="secondary" disabled={!prev} onClick={() => prev && onNavigate(prev.ep)}>

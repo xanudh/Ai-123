@@ -1,5 +1,6 @@
 /**
- * 质检交付：左侧质检总结（总分 → 分项）+ 章节目录，中间是定稿正文（问题行与字段标色），右侧逐条看问题详情。
+ * 质检交付：顶部质检总结（总分 → 分项）与全部问题，按分项角度 / 级别筛；
+ * 下面左侧章节目录，中间是定稿正文（问题行与字段标色），右侧逐条看本集问题。正文上的问题可直接 AI 修稿。
  */
 import clsx from 'clsx'
 import { AlertTriangle, ArrowUpRight, CircleCheck, ClipboardCheck, Download, Info, Loader2, OctagonX, ShieldCheck, Undo2, X } from 'lucide-react'
@@ -8,17 +9,19 @@ import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, Segmented } from '../../../components/ui'
+import { Badge, Button, Card } from '../../../components/ui'
 import { QA_CHECKS, STAGES } from '../../../domain/pipeline'
 import type { EpisodeScript, Project, QaCheckKey, QaIssue, QaReport, ScriptLine } from '../../../domain/types'
 import { plainText, qaStale } from '../../../domain/work'
 import { downloadText } from '../../../lib/download'
+import { modelLabel } from '../../../domain/models'
 import { formatDateTime } from '../../../lib/format'
 import { QA_STEPS, innovationLanding, runQa } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
 import { finalPath } from '../script/ops'
+import { QaFixButton } from '../script/QaFix'
 
 type Level = QaIssue['level']
 type Selection = number | 'global'
@@ -121,61 +124,125 @@ function packageText(p: Project, scripts: EpisodeScript[], report: QaReport | nu
   return [head.join('\n'), ...eps].join('\n\n\n')
 }
 
-/* ---------------------------------- 左栏 ---------------------------------- */
+/* ---------------------------------- 总结 ---------------------------------- */
 
-function Summary({ report, open, check, onCheck }: { report: QaReport; open: QaIssue[]; check: QaCheckKey | null; onCheck: (k: QaCheckKey | null) => void }) {
+function Summary({
+  report,
+  open,
+  check,
+  onCheck,
+  level,
+  onLevel,
+  children,
+}: {
+  report: QaReport
+  open: QaIssue[]
+  check: QaCheckKey | null
+  onCheck: (k: QaCheckKey | null) => void
+  level: Level | 'all'
+  onLevel: (l: Level | 'all') => void
+  children: ReactNode
+}) {
   const blocks = open.filter((i) => i.level === 'block').length
   const grade = gradeOf(report.score, blocks)
+  // 横排：左边总分，右边各分项；点分项（角度）或级别，下方全部问题跟着筛
   return (
-    <div className="px-3 pt-4 pb-3">
-      <div className="px-2">
-        <div className="text-xs text-ink-500">质检总分</div>
-        <div className="mt-0.5 flex items-baseline gap-1">
-          <span className="text-5xl font-semibold tracking-tight text-ink-900">{report.score}</span>
-          <span className="text-sm text-ink-400">/ 100</span>
+    <Card id="qa-summary" className="overflow-hidden">
+      <div className="flex flex-col gap-3 p-3 lg:flex-row">
+        <div className="shrink-0 px-2 pt-1 lg:w-44 lg:border-r lg:border-line lg:pr-4">
+          <div className="text-xs text-ink-500">质检总分</div>
+          <div className="mt-0.5 flex items-baseline gap-1">
+            <span className="text-5xl font-semibold tracking-tight text-ink-900">{report.score}</span>
+            <span className="text-sm text-ink-400">/ 100</span>
+          </div>
+          <Badge tone={grade.tone} className="mt-2">
+            <grade.Icon size={12} />
+            {grade.text}
+          </Badge>
+          <div className="mt-3 -ml-1.5 flex flex-wrap gap-0.5 text-xs text-ink-500">
+            {LEVELS.map((l) => {
+              const on = level === l
+              return (
+                <button
+                  key={l}
+                  aria-pressed={on}
+                  title={on ? '取消筛选' : `只看${LEVEL[l].label}问题`}
+                  onClick={() => onLevel(on ? 'all' : l)}
+                  className={clsx('flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors', on ? 'bg-brand-50 text-brand-700' : 'hover:bg-canvas')}
+                >
+                  <LevelIcon level={l} size={12} />
+                  {LEVEL[l].label}
+                  <span className="font-medium text-ink-900 tabular-nums">{open.filter((i) => i.level === l).length}</span>
+                </button>
+              )
+            })}
+          </div>
         </div>
-        <Badge tone={grade.tone} className="mt-2">
-          <grade.Icon size={12} />
-          {grade.text}
-        </Badge>
-        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-500">
-          {LEVELS.map((l) => (
-            <span key={l} className="flex items-center gap-1">
-              <LevelIcon level={l} size={12} />
-              {LEVEL[l].label}
-              <span className="font-medium text-ink-900 tabular-nums">{open.filter((i) => i.level === l).length}</span>
-            </span>
-          ))}
+        <div className="min-w-0 flex-1">
+          <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
+            {QA_CHECKS.map((c) => {
+              const r = report.checks.find((x) => x.key === c.key)
+              if (!r) return null
+              const on = check === c.key
+              return (
+                <li key={c.key}>
+                  <button
+                    aria-pressed={on}
+                    title={on ? '取消筛选' : `只看${c.label}的问题`}
+                    onClick={() => onCheck(on ? null : c.key)}
+                    className={clsx('w-full rounded-lg px-2 py-2 text-left transition-colors', on ? 'bg-brand-50' : 'hover:bg-canvas')}
+                  >
+                    <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                      <span className={clsx('font-medium', on ? 'text-brand-700' : 'text-ink-900')}>{c.label}</span>
+                      <span className="font-semibold text-ink-700 tabular-nums">{r.score}</span>
+                    </div>
+                    <div className="mt-1.5">
+                      <Meter score={r.score} />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-4 text-ink-500">{r.summary}</p>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <p className="mt-1 px-2 text-[11px] leading-4 text-ink-400">总分按权重加权：{QA_CHECKS.map((c) => `${shortLabel(c.label)} ${Math.round(c.weight * 100)}%`).join(' + ')}</p>
         </div>
       </div>
-      <ul className="mt-4 space-y-0.5">
-        {QA_CHECKS.map((c) => {
-          const r = report.checks.find((x) => x.key === c.key)
-          if (!r) return null
-          const on = check === c.key
-          return (
-            <li key={c.key}>
-              <button
-                aria-pressed={on}
-                title={on ? '取消筛选' : `只看${c.label}的问题`}
-                onClick={() => onCheck(on ? null : c.key)}
-                className={clsx('w-full rounded-lg px-2 py-2 text-left transition-colors', on ? 'bg-brand-50' : 'hover:bg-canvas')}
-              >
-                <div className="flex items-baseline justify-between gap-2 text-[13px]">
-                  <span className={clsx('font-medium', on ? 'text-brand-700' : 'text-ink-900')}>{c.label}</span>
-                  <span className="font-semibold text-ink-700 tabular-nums">{r.score}</span>
-                </div>
-                <div className="mt-1.5">
-                  <Meter score={r.score} />
-                </div>
-                <p className="mt-1 text-[11px] leading-4 text-ink-500">{r.summary}</p>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      <p className="mt-2 px-2 text-[11px] leading-4 text-ink-400">总分按权重加权：{QA_CHECKS.map((c) => `${shortLabel(c.label)} ${Math.round(c.weight * 100)}%`).join(' + ')}</p>
-    </div>
+      {children}
+    </Card>
+  )
+}
+
+/** 全部问题里的一行：整行宽，问题与建议一行读完，右侧是处理动作 */
+function IssueRow({ project, issue, active, done, fixed, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; fixed: boolean; onPick: () => void; onToggle: () => void }) {
+  const fix = fixOf(project, issue, useV2())
+  return (
+    <li data-qa-row={issue.id} className={clsx('flex flex-wrap items-start gap-x-4 gap-y-1 px-5 py-2 transition-colors', active ? 'bg-brand-50/60' : 'hover:bg-canvas/60', done && 'opacity-60')}>
+      <button className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={onPick}>
+        <LevelIcon level={issue.level} className="mt-[3px]" />
+        <span className="w-14 shrink-0 text-xs leading-5 text-ink-500 tabular-nums">{issue.ep === null ? '全剧' : `第 ${issue.ep} 集`}</span>
+        <span className="min-w-0 text-[13px] leading-5">
+          <span className={clsx('font-medium text-ink-900', done && 'line-through')}>{issue.title}</span>
+          <span className="ml-1.5 text-[11px] text-ink-400">{CHECK_LABEL[issue.check]}</span>
+          <span className="block text-xs text-ink-500">
+            {issue.detail}
+            <span className="text-ink-700"> · 建议：{issue.suggestion}</span>
+          </span>
+        </span>
+      </button>
+      <div className="ml-auto flex shrink-0 items-center gap-3 pt-0.5">
+        <Link to={fix.to} className="flex items-center gap-0.5 text-xs text-brand-600 hover:text-brand-700">
+          {fix.label}
+          <ArrowUpRight size={12} />
+        </Link>
+        {!done && <QaFixButton project={project} issue={issue} />}
+        {done && fixed && <span className="text-xs text-emerald-700">AI 已修稿</span>}
+        <button onClick={onToggle} className="flex items-center gap-1 text-xs text-ink-500 hover:text-ink-900">
+          {done ? <Undo2 size={12} /> : <CircleCheck size={12} />}
+          {done ? '恢复' : '标记已处理'}
+        </button>
+      </div>
+    </li>
   )
 }
 
@@ -215,7 +282,7 @@ function Directory({
   const global = open.filter((i) => i.ep === null)
   const row = (active: boolean) => clsx('flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors', active ? 'bg-brand-50' : 'hover:bg-canvas')
   return (
-    <div className="border-t border-line px-3 py-3">
+    <div className="px-3 py-3">
       <div className="mb-1 px-2 text-[11px] font-medium tracking-wider text-ink-400">章节目录</div>
       <ul className="space-y-0.5">
         <li>
@@ -404,9 +471,9 @@ function GlobalView({ project, issues, activeId, onPick }: { project: Project; i
   )
 }
 
-/* ---------------------------------- 右栏 ---------------------------------- */
+/* ---------------------------------- 右栏：本集问题 ---------------------------------- */
 
-function IssueItem({ project, issue, active, done, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; onPick: () => void; onToggle: () => void }) {
+function IssueItem({ project, issue, active, done, fixed, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; fixed: boolean; onPick: () => void; onToggle: () => void }) {
   const fix = fixOf(project, issue, useV2())
   return (
     <li id={`qa-issue-${issue.id}`} className={clsx('scroll-mt-4 rounded-lg border px-3 py-2.5 transition-colors', active ? 'border-brand-300 bg-brand-50/50' : 'border-line bg-white', done && 'opacity-60')}>
@@ -429,6 +496,8 @@ function IssueItem({ project, issue, active, done, onPick, onToggle }: { project
           {fix.label}
           <ArrowUpRight size={12} />
         </Link>
+        {!done && <QaFixButton project={project} issue={issue} />}
+        {done && fixed && <span className="text-xs text-emerald-700">AI 已修稿</span>}
         <button onClick={onToggle} className="ml-auto flex items-center gap-1 text-xs text-ink-500 hover:text-ink-900">
           {done ? <Undo2 size={12} /> : <CircleCheck size={12} />}
           {done ? '恢复' : '标记已处理'}
@@ -475,8 +544,8 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
   })
   const [sel, setSel] = useState<Selection | null>(back?.sel ?? null)
   const [activeId, setActiveId] = useState<string | null>(back?.issue?.id ?? null)
-  const [scope, setScope] = useState<'ep' | 'all'>('ep')
   const [level, setLevel] = useState<Level | 'all'>('all')
+  const [allLevel, setAllLevel] = useState<Level | 'all'>('all')
   const [check, setCheck] = useState<QaCheckKey | null>(null)
   const [showResolved, setShowResolved] = useState(false)
   const [confirmDeliver, setConfirmDeliver] = useState(false)
@@ -489,6 +558,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
   const delivered = project.status === 'delivered'
   const stale = qaStale(project)
   const resolved = new Set(report?.resolved ?? [])
+  const fixed = new Set(report?.fixed ?? [])
   const open = report ? report.issues.filter((i) => !resolved.has(i.id)) : []
   const blocks = open.filter((i) => i.level === 'block').length
 
@@ -510,8 +580,9 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
     const result = await run('qa', (signal) => runQa(cur, signal))
     if (!result) return
     const ids = new Set(result.issues.map((i) => i.id))
-    // 同一个问题重新质检后 id 不变，已处理的标记保留
-    const kept = (latestProject(project.id)?.work.qa?.resolved ?? []).filter((id) => ids.has(id))
+    // 同一个问题重新质检后 id 不变，已处理的标记保留；AI 修稿过却还在的问题重新列出
+    const prev = latestProject(project.id)?.work.qa
+    const kept = (prev?.resolved ?? []).filter((id) => ids.has(id) && !prev?.fixed?.includes(id))
     const n = result.issues.filter((i) => i.level === 'block' && !kept.includes(i.id)).length
     patchWork(project.id, { qa: { ...result, resolved: kept } }, `质检完成：${result.score} 分，${n} 个严重问题`)
     if (cur.status !== 'delivered') updateProject(project.id, { status: 'reviewing' })
@@ -523,20 +594,18 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
   const toggleResolved = (id: string) => {
     const qa = latestProject(project.id)?.work.qa
     if (!qa) return
-    patchWork(project.id, { qa: { ...qa, resolved: qa.resolved.includes(id) ? qa.resolved.filter((x) => x !== id) : [...qa.resolved, id] } })
+    const undo = qa.resolved.includes(id)
+    patchWork(project.id, { qa: { ...qa, resolved: undo ? qa.resolved.filter((x) => x !== id) : [...qa.resolved, id], fixed: (qa.fixed ?? []).filter((x) => x !== id) } })
   }
 
-  /** 选中一个问题：切到所在集，并滚动到对应位置 */
-  const pick = (i: QaIssue, from: 'list' | 'script') => {
+  /** 选中一个问题：切到所在集，并滚动到对应位置（全部问题里点的：有行定位到行，否则到右侧本集问题） */
+  const pick = (i: QaIssue, from: 'list' | 'script' | 'all') => {
     setActiveId(i.id)
     setSel(i.ep ?? 'global')
-    if (from === 'list' && i.lineId) setScrollTo({ id: i.lineId, target: 'line' })
-    if (from === 'script') {
-      // 被筛选条件挡住时放开筛选，让右侧能看到
-      if ((level !== 'all' && level !== i.level) || (check && check !== i.check)) {
-        setLevel('all')
-        setCheck(null)
-      }
+    if (from !== 'script' && i.lineId) setScrollTo({ id: i.lineId, target: 'line' })
+    else if (from !== 'list') {
+      // 被级别筛选挡住时放开，让右侧能看到
+      if (level !== 'all' && level !== i.level) setLevel('all')
       setScrollTo({ id: i.id, target: 'issue' })
     }
   }
@@ -577,7 +646,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
                   <ClipboardCheck size={14} className="text-brand-500" />
                   质检报告
                 </div>
-                <p className="mt-1 text-xs leading-5 text-ink-500">问题会定位到集和行：中间看标色的定稿，右侧看问题详情与修改建议。</p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">问题会定位到集和行：总分下面列出全部问题，中间看标色的定稿，右侧看这一集的问题与修改建议。</p>
                 <AiButton size="md" className="mt-3 w-full" disabled={blocked || !scripts.length} onClick={start}>
                   开始质检
                 </AiButton>
@@ -589,12 +658,20 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
     )
   }
 
-  // 右栏：先按范围与分项筛，再统计各级数量，最后按级别筛
-  const scoped = report.issues.filter(
-    (i) => (scope === 'all' || (current === 'global' ? i.ep === null : i.ep === current)) && (!check || i.check === check) && (showResolved || !resolved.has(i.id)),
-  )
-  const visible = scoped.filter((i) => level === 'all' || i.level === level).sort((a, b) => (a.ep ?? 0) - (b.ep ?? 0) || byLevel(a, b))
+  // 全部问题：按分项角度与级别筛，严重的在前
+  const all = report.issues
+    .filter((i) => (!check || i.check === check) && (allLevel === 'all' || i.level === allLevel) && (showResolved || !resolved.has(i.id)))
+    .sort((a, b) => byLevel(a, b) || (a.ep ?? 0) - (b.ep ?? 0))
+  // 右栏本集问题：先按所选集筛，再统计各级数量，最后按级别筛
+  const scoped = report.issues.filter((i) => (current === 'global' ? i.ep === null : i.ep === current) && (showResolved || !resolved.has(i.id)))
+  const visible = scoped.filter((i) => level === 'all' || i.level === level).sort(byLevel)
   const resolvedCount = report.issues.filter((i) => resolved.has(i.id)).length
+  const showResolvedBox = resolvedCount > 0 && (
+    <label className="flex items-center gap-1.5 text-xs text-ink-500">
+      <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} className="accent-brand-600" />
+      显示已处理（{resolvedCount}）
+    </label>
+  )
 
   return (
     <>
@@ -608,7 +685,8 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
               </Badge>
             )}
             <span>
-              质检于 {formatDateTime(report.at)} · 覆盖 {Object.keys(report.versions).length} 集定稿{missing > 0 ? ` · ${missing} 集未定稿` : ''}
+              质检于 {formatDateTime(report.at)}
+              {report.model && ` · ${modelLabel(report.model)} 质检`} · 覆盖 {Object.keys(report.versions).length} 集定稿{missing > 0 ? ` · ${missing} 集未定稿` : ''}
             </span>
             {stale && (
               <span className="flex items-center gap-1 text-amber-700">
@@ -646,9 +724,49 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
         )}
       </Card>
 
+      <Summary report={report} open={open} check={check} onCheck={setCheck} level={allLevel} onLevel={setAllLevel}>
+        <div id="qa-all" className="border-t border-line">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
+            <h3 className="text-[13px] font-semibold text-ink-900">
+              全部问题
+              <span className="ml-1.5 font-normal text-ink-500">
+                {check ? CHECK_LABEL[check] : '全部角度'}
+                {allLevel !== 'all' && ` · ${LEVEL[allLevel].label}`} · {all.length} 条
+              </span>
+            </h3>
+            <div className="flex flex-wrap items-center gap-3">
+              {(check || allLevel !== 'all') && (
+                <button
+                  onClick={() => {
+                    setCheck(null)
+                    setAllLevel('all')
+                  }}
+                  className="flex items-center gap-1 rounded-md bg-brand-50 px-2 py-1 text-xs text-brand-700 hover:bg-brand-100"
+                >
+                  清除筛选
+                  <X size={12} />
+                </button>
+              )}
+              {showResolvedBox}
+            </div>
+          </div>
+          {all.length ? (
+            <ul className="scrollbar-thin max-h-[360px] divide-y divide-line overflow-y-auto border-t border-line">
+              {all.map((i) => (
+                <IssueRow key={i.id} project={project} issue={i} active={i.id === activeId} done={resolved.has(i.id)} fixed={fixed.has(i.id)} onPick={() => pick(i, 'all')} onToggle={() => toggleResolved(i.id)} />
+              ))}
+            </ul>
+          ) : (
+            <p className="flex items-center justify-center gap-1.5 border-t border-line px-4 py-6 text-[13px] text-ink-400">
+              <CircleCheck size={14} className="text-emerald-500" />
+              {check || allLevel !== 'all' ? '这个角度没有待处理的问题' : '没有待处理的问题'}
+            </p>
+          )}
+        </div>
+      </Summary>
+
       <div className="grid items-start gap-4 md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_300px]">
-        <Card className="scrollbar-thin md:row-span-2 xl:sticky xl:top-4 xl:row-span-1 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
-          <Summary report={report} open={open} check={check} onCheck={setCheck} />
+        <Card className="scrollbar-thin md:row-span-2 xl:sticky xl:top-stick xl:row-span-1 xl:max-h-stick xl:overflow-y-auto">
           <Directory
             scripts={scripts}
             report={report}
@@ -679,19 +797,9 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
           )}
         </div>
 
-        <Card className="scrollbar-thin md:col-start-2 xl:sticky xl:top-4 xl:col-start-3 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+        <Card className="scrollbar-thin md:col-start-2 xl:sticky xl:top-stick xl:col-start-3 xl:max-h-stick xl:overflow-y-auto">
           <div className="space-y-2.5 border-b border-line px-4 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-[15px] font-semibold text-ink-900">问题详情</h3>
-              <Segmented
-                value={scope}
-                onChange={setScope}
-                options={[
-                  { value: 'ep', label: current === 'global' ? '全剧' : '本集' },
-                  { value: 'all', label: '全部' },
-                ]}
-              />
-            </div>
+            <h3 className="text-[15px] font-semibold text-ink-900">{current === 'global' ? '全剧问题' : typeof current === 'number' ? `第 ${current} 集问题` : '本集问题'}</h3>
             <div className="flex flex-wrap gap-1">
               {(['all', ...LEVELS] as const).map((l) => {
                 const n = l === 'all' ? scoped.length : scoped.filter((i) => i.level === l).length
@@ -712,35 +820,18 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
                 )
               })}
             </div>
-            {(check || resolvedCount > 0) && (
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                {check ? (
-                  <button onClick={() => setCheck(null)} className="flex items-center gap-1 rounded-md bg-brand-50 px-2 py-1 text-brand-700 hover:bg-brand-100">
-                    {CHECK_LABEL[check]}
-                    <X size={12} />
-                  </button>
-                ) : (
-                  <span />
-                )}
-                {resolvedCount > 0 && (
-                  <label className="flex items-center gap-1.5 text-ink-500">
-                    <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} className="accent-brand-600" />
-                    显示已处理（{resolvedCount}）
-                  </label>
-                )}
-              </div>
-            )}
+            {showResolvedBox}
           </div>
           {visible.length ? (
             <ul className="space-y-2 p-3">
               {visible.map((i) => (
-                <IssueItem key={i.id} project={project} issue={i} active={i.id === activeId} done={resolved.has(i.id)} onPick={() => pick(i, 'list')} onToggle={() => toggleResolved(i.id)} />
+                <IssueItem key={i.id} project={project} issue={i} active={i.id === activeId} done={resolved.has(i.id)} fixed={fixed.has(i.id)} onPick={() => pick(i, 'list')} onToggle={() => toggleResolved(i.id)} />
               ))}
             </ul>
           ) : (
             <p className="flex items-center justify-center gap-1.5 px-4 py-10 text-[13px] text-ink-400">
               <CircleCheck size={14} className="text-emerald-500" />
-              {scoped.length ? '这个级别没有问题' : scope === 'ep' ? (current === 'global' ? '全剧层面没有待处理的问题' : '本集没有待处理的问题') : '没有待处理的问题'}
+              {scoped.length ? '这个级别没有问题' : current === 'global' ? '全剧层面没有待处理的问题' : '本集没有待处理的问题'}
             </p>
           )}
         </Card>

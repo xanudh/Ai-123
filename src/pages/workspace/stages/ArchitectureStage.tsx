@@ -587,7 +587,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
 
   return (
     <>
-      <Card className={clsx('px-5 py-4', approved && 'border-emerald-200', live && 'sticky top-2 z-20')}>
+      <Card className={clsx('px-5 py-4', approved && 'border-emerald-200', live && 'sticky top-stick-sm z-20')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[13px] text-ink-500">
             <ReviewBadge approved={approved} pendingText="草稿" />

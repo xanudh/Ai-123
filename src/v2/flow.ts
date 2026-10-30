@@ -3,10 +3,11 @@
  * 只读计算，不新增数据——版本一与版本二用的是同一份项目数据。
  */
 import { MODE_STAGES, STAGES } from '../domain/pipeline'
+import { isStuck } from '../domain/review'
 import { overallSnapshot } from '../domain/snapshot'
 import type { EpisodeDraft, Project, StageKey } from '../domain/types'
-import { blueprintOf, draftLabel, draftsOf, eventCandidates, finalCount, foreshadowName, outlineCount, pendingPaywalls, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
-import { MAX_REVISE_ROUNDS, draftPath, finalPath, linesSig, nextUnwritten, reviewCounts, reviseRounds, scriptStagePath } from '../pages/workspace/script/ops'
+import { blueprintOf, draftLabel, draftsOf, eventCandidates, finalCount, foreshadowName, outlineCount, pendingPaywalls, projectPhases, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
+import { MAX_REVISE_ROUNDS, draftPath, finalPath, linesSig, nextUnwritten, openBlocks, reviseRounds, scriptStagePath } from '../pages/workspace/script/ops'
 
 export const stageTo = (p: Project, key: StageKey) => (key === 'overview' ? `/projects/${p.id}` : `/projects/${p.id}/stage/${key}`)
 
@@ -126,9 +127,17 @@ export function draftAdvice(p: Project, d: EpisodeDraft): { action: DraftAction;
           text: d.revision?.reviewNo ? `这一版按审稿 #${d.revision.reviewNo} 改过：再审一遍，确认意见都改到了` : '先让 AI 对照蓝图、状态库与格式审一遍，再决定修稿还是定稿',
         }
   }
-  const { block } = reviewCounts(last)
-  if (block && !capped) return { action: 'revise', short: `审出 ${block} 个严重问题，待修稿`, text: `审稿有 ${block} 个严重问题：AI 修稿按这份意见逐条改出新版本，原版本保留` }
-  return { action: 'final', short: '审稿完成，待定稿', text: block ? `还有 ${block} 个严重问题，但已修稿 ${MAX_REVISE_ROUNDS} 轮：人工改完后定稿` : '审稿已通过：定稿后归入正文章节，状态库与本集要点随之更新' }
+  // 保留不改的不算；AI 改不动的不再推荐修稿
+  const blocks = openBlocks(p.work, d)
+  const block = blocks.length
+  const ai = blocks.filter((i) => !isStuck(i.status)).length
+  if (ai && !capped) return { action: 'revise', short: `审出 ${block} 个严重问题，待修稿`, text: `审稿有 ${block} 个严重问题：AI 修稿按这份意见逐条改出新版本，原版本保留` }
+  if (!block) return { action: 'final', short: '审稿完成，待定稿', text: '审稿已通过：定稿后归入正文章节，状态库与本集要点随之更新' }
+  return {
+    action: 'final',
+    short: `${block} 个严重问题待人工处理`,
+    text: capped ? `还有 ${block} 个严重问题，但已修稿 ${MAX_REVISE_ROUNDS} 轮：人工改掉，或写明理由保留不改后定稿` : `剩下的 ${block} 个严重问题 AI 改不动：人工改掉，或写明理由保留不改后定稿`,
+  }
 }
 
 /** 草稿箱里还停在「草稿」状态的最新版本，按集数排序 */
@@ -227,7 +236,8 @@ function stageTask(p: Project, key: StageKey): string {
     case 'characters':
       return '生成人物设定与关系'
     case 'outline': {
-      if (!w.plot && !outlineCount(p)) return '生成全剧总览与阶段粗纲'
+      if (!w.plot?.overview.trim()) return '生成全剧总纲'
+      if (projectPhases(p).some((_, i) => !w.plot?.phases[i]?.trim())) return '按总纲生成各段粗纲'
       const ep = firstMissing(w.outline.map((o) => o.ep), total)
       return ep <= total ? `生成第 ${ep} 集起的集纲` : '审核付费卡点集纲'
     }

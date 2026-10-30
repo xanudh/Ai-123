@@ -1,5 +1,20 @@
 @import 'tailwindcss';
 
+/* 项目页头吸顶后，页面里其他吸顶块让出页头的高度（--stick 由 ProjectLayout 量出；概览不吸顶为 0） */
+@utility top-stick {
+  top: calc(var(--stick, 0px) + 1rem);
+}
+@utility top-stick-sm {
+  top: calc(var(--stick, 0px) + 0.5rem);
+}
+@utility top-stick-0 {
+  top: var(--stick, 0px);
+}
+/* 可视高度：减去顶栏（4rem）、底部版本条（3rem）和吸顶页头 */
+@utility max-h-stick {
+  max-height: calc(100vh - var(--stick, 0px) - 7rem);
+}
+
 @theme {
   --font-sans: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
 

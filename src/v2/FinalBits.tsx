@@ -9,6 +9,7 @@ import { draftLabel, draftsOf, finalCount, scriptOf } from '../domain/work'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
 import { draftPath, scriptStagePath } from '../pages/workspace/script/ops'
+import { QaFixButton } from '../pages/workspace/script/QaFix'
 import { writeDraft } from '../pages/workspace/script/write'
 
 /** 正文页接力条：定稿之后直接接着写下一集；全部定稿后去质检交付 */
@@ -83,11 +84,12 @@ const LEVEL_LABEL: Record<QaIssue['level'], { label: string; tone: 'red' | 'ambe
 
 export const qaBackPath = (p: Project, issue: QaIssue) => `${stagePath(p, 'qa')}?issue=${issue.id}`
 
-/** 从质检「去改正文」过来：带上问题与建议，改完一步回到原来那条问题 */
+/** 从质检「去改正文」过来：带上问题与建议，可让 AI 按问题修稿，改完一步回到原来那条问题 */
 export function QaReturnBanner({ project, issue }: { project: Project; issue: QaIssue }) {
   const navigate = useNavigate()
   const patchWork = useProjects((s) => s.patchWork)
   const done = !!project.work.qa?.resolved.includes(issue.id)
+  const fixed = !!project.work.qa?.fixed?.includes(issue.id)
   const level = LEVEL_LABEL[issue.level]
 
   const resolveAndBack = () => {
@@ -114,13 +116,16 @@ export function QaReturnBanner({ project, issue }: { project: Project; issue: Qa
         {done ? (
           <span className="flex items-center gap-1 text-xs text-emerald-700">
             <CircleCheck size={13} />
-            已标记处理
+            {fixed ? 'AI 已修稿，重新质检后确认' : '已标记处理'}
           </span>
         ) : (
-          <button type="button" onClick={resolveAndBack} className={buttonClass('primary', 'sm')}>
-            <CircleCheck size={14} />
-            标记已处理并返回质检
-          </button>
+          <>
+            <QaFixButton project={project} issue={issue} look="button" />
+            <button type="button" onClick={resolveAndBack} className={buttonClass('primary', 'sm')}>
+              <CircleCheck size={14} />
+              标记已处理并返回质检
+            </button>
+          </>
         )}
         <Link to={qaBackPath(project, issue)} className={buttonClass(done ? 'primary' : 'ghost', 'sm')}>
           <ArrowLeft size={14} />

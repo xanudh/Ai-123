@@ -3,6 +3,7 @@
  * 每集的状态切换写进项目（随项目持久化），步骤百分比只放内存；刷新页面后，没跑完的集回到排队。
  */
 import { create } from 'zustand'
+import { modelOf } from '../domain/models'
 import type { TranscribeStatus, VideoEpisode } from '../domain/types'
 import { transcribeEpisode } from '../services/ai'
 import { useProjects } from './projects'
@@ -65,9 +66,12 @@ function claim(projectId: string): VideoEpisode | null {
 
 async function worker(projectId: string, signal: AbortSignal) {
   while (!signal.aborted) {
+    const project = useProjects.getState().projects.find((p) => p.id === projectId)
     const job = jobOf(projectId)
     const ep = claim(projectId)
-    if (!job || !ep) return
+    if (!project || !job || !ep) return
+    // 领取时的视频解析模型；中途换模型只影响之后领取的集
+    const model = modelOf(project, 'video')
     let status: TranscribeStatus = ep.status
     try {
       const shots = await transcribeEpisode(
@@ -81,8 +85,9 @@ async function worker(projectId: string, signal: AbortSignal) {
           setProgress(projectId, ep.ep, percent)
         },
         signal,
+        model,
       )
-      patchEpisode(projectId, ep.ep, { status: 'done', shots, doneAt: new Date().toISOString() })
+      patchEpisode(projectId, ep.ep, { status: 'done', shots, doneAt: new Date().toISOString(), model })
     } catch (e) {
       // 暂停：回到排队，这次不算尝试
       if ((e as Error).name === 'AbortError') patchEpisode(projectId, ep.ep, { status: 'queued', attempts: ep.attempts - 1 })

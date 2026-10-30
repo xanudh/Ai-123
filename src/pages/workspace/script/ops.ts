@@ -1,9 +1,10 @@
 /** 草稿箱与正文章节的数据操作：都返回要写回的 work 片段，由页面调用 patchWork */
-import type { DraftReview, DraftRevision, EpisodeBlueprint, EpisodeDraft, EpisodeScript, Project, ProjectWork } from '../../../domain/types'
+import { itemKey, keptOf } from '../../../domain/review'
+import type { DraftReview, DraftRevision, EpisodeBlueprint, EpisodeDraft, EpisodeScript, ModelId, Project, ProjectWork, ReviewItem } from '../../../domain/types'
 import { blueprintOf, draftsOf, scriptOf } from '../../../domain/work'
 import { newId } from '../../../lib/id'
 import { extractPoints, positionOf } from '../../../services/ai'
-import type { DraftContent } from '../../../services/ai'
+import type { DraftContent, ReviewBase } from '../../../services/ai'
 
 const now = () => new Date().toISOString()
 
@@ -14,14 +15,45 @@ export const draftPath = (p: Project, draftId: string, review?: string) =>
 
 export const finalPath = (p: Project, ep: number) => `/projects/${p.id}/stage/script/final/${ep}`
 
-/** 审查报告里的严重 / 建议条数 */
-export const reviewCounts = (r: DraftReview) => ({
-  block: r.items.filter((i) => i.level === 'block').length,
-  warn: r.items.filter((i) => i.level === 'warn').length,
+/** 审查报告里的严重 / 建议条数；传入 work 时不算编剧已保留不改的 */
+export const reviewCounts = (r: DraftReview, work?: ProjectWork, ep?: number) => {
+  const kept = work && ep !== undefined ? keptOf(work.keeps, ep) : null
+  const open = r.items.filter((i) => !kept?.has(itemKey(i)))
+  return { block: open.filter((i) => i.level === 'block').length, warn: open.filter((i) => i.level === 'warn').length }
+}
+
+/** 定稿前还没解决的严重问题：这一版最近一份审稿里没改掉、也没保留不改的 */
+export function openBlocks(work: ProjectWork, d: EpisodeDraft): ReviewItem[] {
+  const kept = keptOf(work.keeps, d.ep)
+  return (d.reviews.at(-1)?.items ?? []).filter((i) => i.level === 'block' && !kept.has(itemKey(i)))
+}
+
+/** 保留不改：之后的审稿不再提这条意见；严重问题要写理由 */
+export const keepIssue = (work: ProjectWork, ep: number, item: ReviewItem, reason?: string): Pick<ProjectWork, 'keeps'> => ({
+  keeps: [...(work.keeps ?? []).filter((k) => !(k.ep === ep && k.key === itemKey(item))), { ep, key: itemKey(item), text: item.text, level: item.level, ...(reason?.trim() && { reason: reason.trim() }), at: now() }],
 })
 
-/** 草稿箱里新增一个版本；同集其他还在“草稿”状态的旧版本标为已修稿 */
-export function addDraft(work: ProjectWork, ep: number, content: DraftContent, from?: string, revision?: DraftRevision): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
+/** 撤销保留：下次审稿重新提 */
+export const unkeepIssue = (work: ProjectWork, ep: number, key: string): Pick<ProjectWork, 'keeps'> => ({
+  keeps: (work.keeps ?? []).filter((k) => !(k.ep === ep && k.key === key)),
+})
+
+/**
+ * 复审对照：这一版是按某份审稿 AI 修稿改出来的 → 那份审稿、来源草稿的正文，以及更早几轮的审稿（认出改好又出现的问题）。
+ * 没审稿就修出来的版本没有对照，审稿走全量。
+ */
+export function reviewBase(work: ProjectWork, d: EpisodeDraft): ReviewBase | undefined {
+  const source = d.from ? work.drafts.find((x) => x.id === d.from) : undefined
+  const review = source?.reviews.find((r) => r.id === d.revision?.reviewId)
+  if (!source || !review) return undefined
+  const byId = new Map(work.drafts.flatMap((x) => x.reviews.map((r) => [r.id, r] as const)))
+  const history: DraftReview[] = []
+  for (let r = review.baseId ? byId.get(review.baseId) : undefined; r && history.length < MAX_REVISE_ROUNDS * 2; r = r.baseId ? byId.get(r.baseId) : undefined) history.push(r)
+  return { review, lines: source.lines, history }
+}
+
+/** 草稿箱里新增一个版本；同集其他还在“草稿”状态的旧版本标为已修稿。content.model：写出这一版的模型 */
+export function addDraft(work: ProjectWork, ep: number, content: DraftContent & { model?: ModelId }, from?: string, revision?: DraftRevision): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
   const ts = now()
   const version = Math.max(0, ...draftsOf(work, ep).map((d) => d.version)) + 1
   const draft: EpisodeDraft = {
@@ -37,6 +69,8 @@ export function addDraft(work: ProjectWork, ep: number, content: DraftContent, f
     notes: [],
     ...(from ? { from } : {}),
     ...(revision ? { revision } : {}),
+    ...(content.model ? { model: content.model } : {}),
+    ...(content.basis?.length ? { basis: content.basis } : {}),
     createdAt: ts,
     updatedAt: ts,
   }
@@ -57,18 +91,6 @@ export const linesSig = (d: Pick<EpisodeDraft, 'lines'>) => {
   for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0
   return `${text.length}-${h}`
 }
-
-/** AI 审稿检查的范围：悬停审稿旁的说明图标时显示 */
-export const REVIEW_SCOPE = [
-  '篇幅：按单集时长换算的字数是否过短或过长',
-  '格式：场景标题、集末钩子是否齐全',
-  '承接：开场是否接住上一集结尾的钩子',
-  '伏笔：本集计划埋设 / 回收的伏笔是否写进正文',
-  '人物：主角是否有戏、蓝图里的出场人物是否出场、有没有未登记人物',
-  '连贯：与前面已定稿的剧情线是否一致——人物状态、道具归属、已回收的伏笔',
-  '文风：AI 味词汇、过长的台词',
-  '标注：还没处理的标注',
-]
 
 /** 改某个草稿 */
 export const patchDraft = (work: ProjectWork, id: string, patch: Partial<EpisodeDraft>): Pick<ProjectWork, 'drafts'> => ({

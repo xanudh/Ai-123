@@ -66,7 +66,7 @@ function EpisodeBlock({
   o: OutlineEpisode | undefined
   onChange: (patch: Partial<OutlineEpisode>) => void
   onFocus: () => void
-  generate: { loading: boolean; disabled: boolean; onClick: () => void }
+  generate: { loading: boolean; disabled: boolean; hint?: string; onClick: () => void }
 }) {
   const paywall = project.rhythm.paywalls.includes(ep)
   return (
@@ -91,7 +91,7 @@ function EpisodeBlock({
             loading={generate.loading}
             disabled={generate.disabled}
             aria-label={`${o ? '重新生成' : '生成'}第 ${ep} 集集纲`}
-            title={o ? `只重新生成第 ${ep} 集的集纲，本段其他集不动` : `只生成第 ${ep} 集的集纲`}
+            title={generate.hint ?? (o ? `只重新生成第 ${ep} 集的集纲，本段其他集不动` : `只生成第 ${ep} 集的集纲`)}
             onClick={generate.onClick}
           >
             {o ? '重新生成集纲' : '生成集纲'}
@@ -130,7 +130,6 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   while (nextEp <= total && byEp.has(nextEp)) nextEp++
   const plotDone = !!plot?.overview.trim() && ranges.every((_, i) => plot.phases[i]?.trim())
   const hasOverview = !!plot?.overview.trim()
-  const hasPlot = hasOverview || !!plot?.phases.some((t) => t.trim())
   const allDone = nextEp > total && plotDone
 
   // ?ep=N 从单集流程跳过来时定位到这一集；否则定位到第一个还没生成的集
@@ -140,8 +139,8 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const [phase, setPhase] = useState(startPhase)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([startPhase]))
   const [full, setFull] = useState(false)
-  // 待确认的覆盖操作：总纲与粗纲 / 只有总纲 / 某一段的集纲 / 某一集的集纲
-  const [confirm, setConfirm] = useState<'plot' | 'overview' | { phase: number } | { ep: number } | null>(null)
+  // 待确认的覆盖操作：总纲 / 某一段的粗纲 / 某一段的集纲 / 某一集的集纲
+  const [confirm, setConfirm] = useState<'overview' | { rough: number } | { phase: number } | { ep: number } | null>(null)
   // 状态库侧栏跟着选中的层级：总览 → 全剧，阶段 → 粗纲，某一集 → 集纲
   const [level, setLevel] = useState<StateFocus | null>(epParam ? { kind: 'ep', ep: epParam } : null)
   useStateFocus(level ?? { kind: 'phase', index: phase })
@@ -152,16 +151,11 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const words =
     (plot ? plot.overview.length + plot.phases.join('').length : 0) + [...byEp.values()].reduce((n, o) => n + o.title.length + o.event.length + o.hookLine.length, 0)
   const segments = (plot ? 1 + plot.phases.filter((t) => t.trim()).length : 0) + covered
-  const pending = pendingPaywalls(project).length
-
-  const generatePlot = async () => {
-    const cur = latestProject(project.id)
-    if (!cur) return
-    const result = await run('plot', (signal) => draftPlot(cur, signal))
-    if (!result) return
-    patchWork(project.id, { plot: result }, '生成情节大纲：全剧总览与阶段粗纲')
-    toast('总览与各段粗纲已生成，可直接修改')
-  }
+  const pending = pendingPaywalls(project)
+    .map((o) => o.ep)
+    .sort((a, b) => a - b)
+  // 点「付费卡点待审核」依次跳到当前位置之后的下一个待审核集
+  const nextPending = pending.find((ep) => ep > (level?.kind === 'ep' ? level.ep : 0)) ?? pending[0]
 
   /** 只生成总纲（全剧总览），各段粗纲不动 */
   const generateOverview = async () => {
@@ -172,6 +166,19 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     const latest = latestProject(project.id)?.work.plot
     patchWork(project.id, { plot: { overview: result.overview, phases: latest?.phases ?? ranges.map(() => '') } }, '生成情节大纲：全剧总纲')
     toast('总纲已生成，各段粗纲未改动')
+  }
+
+  /** 只生成 / 重新生成这一段的粗纲：依据总纲，其他段与集纲不动 */
+  const generateRough = async (i: number) => {
+    const cur = latestProject(project.id)
+    if (!cur) return
+    const result = await run(`rough-${i}`, (signal) => draftPlot(cur, signal))
+    if (!result) return
+    const latest = latestProject(project.id)?.work.plot
+    const phases = ranges.map((_, k) => (k === i ? result.phases[i] : (latest?.phases[k] ?? '')))
+    patchWork(project.id, { plot: { overview: latest?.overview ?? '', phases } }, `生成情节大纲：${names[i]}粗纲`)
+    toast(`「${names[i]}」粗纲已生成，可直接修改`)
+    setLevel({ kind: 'phase', index: i })
   }
 
   /** 合并一段集纲：先清掉 a–b 的旧集纲 */
@@ -282,7 +289,19 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
             <span className="text-[13px] text-ink-400 tabular-nums">
               {segments} 段 · {words.toLocaleString()} 字 · 集纲 {covered}/{total}
             </span>
-            {pending > 0 && <Badge tone="orange">付费卡点待审核 {pending}</Badge>}
+            {pending.length > 0 && (
+              <button
+                type="button"
+                title={`跳到第 ${nextPending} 集${pending.length > 1 ? '；再点跳到下一个' : ''}`}
+                onClick={() => pick(phaseOf(nextPending, ranges), nextPending)}
+                className="rounded-md focus:outline-none focus-visible:ring-3 focus-visible:ring-brand-500/30"
+              >
+                <Badge tone="orange" className="cursor-pointer hover:bg-orange-100">
+                  付费卡点待审核 {pending.length}
+                  <ChevronRight size={12} />
+                </Badge>
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <AiButton
@@ -303,7 +322,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
 
       <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
         {/* 目录树 */}
-        <Card className="h-fit p-2 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+        <Card className="h-fit p-2 lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto">
           <button className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[13px] font-semibold text-ink-900 hover:bg-canvas" onClick={() => {
             setLevel({ kind: 'all' })
             scrollTo('outline-overview')
@@ -358,20 +377,15 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
           <Card id="outline-overview" className="scroll-mt-4 p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-[16px] font-semibold text-ink-900">总览</h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <AiButton
-                  variant="secondary"
-                  loading={running === 'overview'}
-                  disabled={blocked || !!running}
-                  title="只生成全剧总览（总纲），各段粗纲不动"
-                  onClick={() => (hasOverview ? setConfirm('overview') : generateOverview())}
-                >
-                  {hasOverview ? '重新生成总纲' : '生成总纲'}
-                </AiButton>
-                <AiButton variant={hasPlot ? 'secondary' : 'primary'} loading={running === 'plot'} disabled={blocked || !!running} onClick={() => (hasPlot ? setConfirm('plot') : generatePlot())}>
-                  {hasPlot ? '重新生成总览与粗纲' : 'AI 生成总览与阶段粗纲'}
-                </AiButton>
-              </div>
+              <AiButton
+                variant={hasOverview ? 'secondary' : 'primary'}
+                loading={running === 'overview'}
+                disabled={blocked || !!running}
+                title="只生成全剧总览（总纲），各段粗纲不动"
+                onClick={() => (hasOverview ? setConfirm('overview') : generateOverview())}
+              >
+                {hasOverview ? '重新生成总纲' : '生成总纲'}
+              </AiButton>
             </div>
             <div className="rounded-lg bg-canvas p-1">
               <AutoTextarea
@@ -390,6 +404,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
           {shownPhases.map((i) => {
             const [a, b] = ranges[i]
             const has = Array.from({ length: b - a + 1 }, (_, k) => a + k).some((ep) => byEp.has(ep))
+            const rough = !!plot?.phases[i]?.trim()
             return (
               <Card key={i} id={`outline-phase-${i}`} className="scroll-mt-4 overflow-hidden">
                 <div className="border-b border-line bg-canvas/50 px-5 py-3">
@@ -400,17 +415,28 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                     <span className="text-[13px] text-ink-500 tabular-nums">{rangeLabel([a, b])}</span>
                     <AiButton
                       className="ml-auto"
-                      variant={has ? 'secondary' : 'primary'}
+                      variant={has || !rough ? 'secondary' : 'primary'}
                       loading={running === `phase-${i}`}
-                      disabled={blocked || !!running}
-                      title={`按本段粗纲生成第 ${a}–${b} 集的集纲`}
+                      disabled={blocked || !!running || !rough}
+                      title={rough ? `按本段粗纲生成第 ${a}–${b} 集的集纲` : '先生成本段粗纲，再生成集纲'}
                       onClick={() => (has ? setConfirm({ phase: i }) : generatePhase(i, 0))}
                     >
                       {has ? '重新生成集纲' : '一键集纲'}
                     </AiButton>
                   </div>
                   <div className="mt-2">
-                    <div className="mb-0.5 text-xs font-medium text-ink-500">阶段粗纲</div>
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="text-xs font-medium text-ink-500">阶段粗纲</span>
+                      <AiButton
+                        variant={rough || !hasOverview ? 'ghost' : 'primary'}
+                        loading={running === `rough-${i}`}
+                        disabled={blocked || !!running || !hasOverview}
+                        title={hasOverview ? `按总纲只生成「${names[i]}」的粗纲，其他段不动` : '先生成总纲，再生成粗纲'}
+                        onClick={() => (rough ? setConfirm({ rough: i }) : generateRough(i))}
+                      >
+                        {rough ? '重新生成粗纲' : '生成粗纲'}
+                      </AiButton>
+                    </div>
                     <AutoTextarea
                       inline
                       aria-label={`${names[i]}粗纲`}
@@ -434,7 +460,8 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                       onFocus={() => setLevel({ kind: 'ep', ep })}
                       generate={{
                         loading: running === `ep-${ep}`,
-                        disabled: blocked || !!running,
+                        disabled: blocked || !!running || !rough,
+                        hint: rough ? undefined : '先生成本段粗纲，再生成集纲',
                         onClick: () => (byEp.has(ep) ? setConfirm({ ep }) : generateEpisode(ep, 0)),
                       }}
                     />
@@ -467,14 +494,6 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
       </div>
 
       <ConfirmDialog
-        open={confirm === 'plot'}
-        onClose={() => setConfirm(null)}
-        onConfirm={generatePlot}
-        title="重新生成总览与阶段粗纲？"
-        desc="全剧总览和各段粗纲会被替换；分集集纲不受影响。"
-        confirmText="重新生成"
-      />
-      <ConfirmDialog
         open={confirm === 'overview'}
         onClose={() => setConfirm(null)}
         onConfirm={generateOverview}
@@ -483,16 +502,24 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         confirmText="重新生成"
       />
       <ConfirmDialog
-        open={typeof confirm === 'object' && confirm !== null}
+        open={!!confirm && typeof confirm === 'object' && 'rough' in confirm}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => confirm && typeof confirm === 'object' && 'rough' in confirm && generateRough(confirm.rough)}
+        title={confirm && typeof confirm === 'object' && 'rough' in confirm ? `重新生成「${names[confirm.rough]}」的粗纲？` : ''}
+        desc="这一段的粗纲会被替换；总纲、其他段粗纲与已生成的集纲不受影响。"
+        confirmText="重新生成"
+      />
+      <ConfirmDialog
+        open={!!confirm && typeof confirm === 'object' && !('rough' in confirm)}
         onClose={() => setConfirm(null)}
         onConfirm={() => {
-          if (!confirm || typeof confirm !== 'object') return
+          if (!confirm || typeof confirm !== 'object' || 'rough' in confirm) return
           if ('phase' in confirm) generatePhase(confirm.phase, nextSeed())
           else generateEpisode(confirm.ep, nextSeed())
         }}
-        title={confirm && typeof confirm === 'object' ? ('phase' in confirm ? `重新生成「${names[confirm.phase]}」的集纲？` : `重新生成第 ${confirm.ep} 集的集纲？`) : ''}
+        title={confirm && typeof confirm === 'object' && !('rough' in confirm) ? ('phase' in confirm ? `重新生成「${names[confirm.phase]}」的集纲？` : `重新生成第 ${confirm.ep} 集的集纲？`) : ''}
         desc={
-          confirm && typeof confirm === 'object'
+          confirm && typeof confirm === 'object' && !('rough' in confirm)
             ? `${'phase' in confirm ? rangeLabel(ranges[confirm.phase]) : `第 ${confirm.ep} 集`}的集纲（含付费卡点审核状态）会被替换；分集蓝图与已写的剧本不受影响。`
             : ''
         }

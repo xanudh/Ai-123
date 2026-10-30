@@ -139,7 +139,7 @@ function toV6(p: Project): Project {
 interface ProjectsState {
   projects: Project[]
   createProject: (draft: ProjectDraft) => Project
-  updateProject: (id: string, patch: Partial<ProjectDraft & Pick<Project, 'status'>>, note?: string) => void
+  updateProject: (id: string, patch: Partial<ProjectDraft & Pick<Project, 'status' | 'models'>>, note?: string) => void
   /** 写入环节产出（自动保存）；note 有值时记一条项目动态 */
   patchWork: (id: string, patch: Partial<ProjectWork>, note?: string) => void
   duplicateProject: (id: string) => Project | null

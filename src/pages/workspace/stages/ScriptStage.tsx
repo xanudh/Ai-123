@@ -3,11 +3,12 @@ import { ArrowRight, Eye, Layers, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
+import { WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, AutoTextarea, CheckList, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, Select } from '../../../components/ui'
+import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, NumberInput, Select } from '../../../components/ui'
 import { DRAFT_STATUS_META, EPISODE_POSITIONS, SCRIPT_BATCH } from '../../../domain/constants'
 import { buildState, preWriteCheck } from '../../../domain/state'
-import type { EpisodeBlueprint, Foreshadow, Project } from '../../../domain/types'
+import type { EpisodeBlueprint, Foreshadow, ModelId, Project } from '../../../domain/types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowName, plainText, prevHookOf, scriptOf } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { draftBlueprints, nextSeed, positionOf, writeEpisode } from '../../../services/ai'
@@ -65,7 +66,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const [pending, setPending] = useState<Pending | null>(null)
   // 批量写作进度：正在写的集、第几集 / 共几集
   const [batchAt, setBatchAt] = useState<{ ep: number; i: number; n: number } | null>(null)
-  // 批量写作的集数范围：两端都能选到最后一集，默认从第一个没写过的集起写 SCRIPT_BATCH 集；起始集不能越过没写的集
+  // 批量写作的集数范围：直接输入集数，结束集可到最后一集，默认从第一个没写过的集起写 SCRIPT_BATCH 集；起始集不能越过没写的集
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
 
   const current = blueprints.find((b) => b.ep === selected) ?? blueprints[0]
@@ -139,8 +140,8 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     if (latestProject(project.id)?.status === 'draft') updateProject(project.id, { status: 'writing' })
   }
 
-  const write = async (ep: number) => {
-    const draft = await writeDraft(project.id, ep, run)
+  const write = async (ep: number, model?: ModelId) => {
+    const draft = await writeDraft(project.id, ep, run, model)
     if (draft) navigate(draftPath(project, draft.id))
   }
 
@@ -276,31 +277,27 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
               <>
                 <span className="flex items-center gap-1 text-[13px] text-ink-500">
                   第
-                  <Select
+                  <NumberInput
                     aria-label="批量写作起始集"
-                    className="h-8 w-16 px-2"
+                    title={`起始集最多到第 ${startMax} 集（要按顺序写，不能跳过没写的集）`}
+                    className="h-8 w-14 px-1"
                     value={batchFrom}
+                    min={1}
+                    max={startMax}
                     disabled={!!running}
-                    onChange={(e) => {
-                      const from = Number(e.target.value)
-                      setRange({ from, to: Math.min(total, from + SCRIPT_BATCH - 1) })
-                    }}
-                  >
-                    {/* 列出全部集；没写到的集要按顺序写，不能直接从那里起 */}
-                    {Array.from({ length: total }, (_, i) => i + 1).map((ep) => (
-                      <option key={ep} value={ep} disabled={ep > startMax}>
-                        {ep}
-                      </option>
-                    ))}
-                  </Select>
+                    onCommit={(from) => setRange({ from, to: Math.min(total, from + SCRIPT_BATCH - 1) })}
+                  />
                   –
-                  <Select aria-label="批量写作结束集" className="h-8 w-16 px-2" value={batchTo} disabled={!!running} onChange={(e) => setRange({ from: batchFrom, to: Number(e.target.value) })}>
-                    {Array.from({ length: total - batchFrom + 1 }, (_, i) => batchFrom + i).map((ep) => (
-                      <option key={ep} value={ep}>
-                        {ep}
-                      </option>
-                    ))}
-                  </Select>
+                  <NumberInput
+                    aria-label="批量写作结束集"
+                    title={`可写到第 ${total} 集`}
+                    className="h-8 w-14 px-1"
+                    value={batchTo}
+                    min={batchFrom}
+                    max={total}
+                    disabled={!!running}
+                    onCommit={(to) => setRange({ from: batchFrom, to })}
+                  />
                   集
                 </span>
                 <AiButton
@@ -357,7 +354,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[232px_minmax(0,1fr)]">
           {/* 蓝图列表 */}
-          <Card className="scrollbar-thin p-1.5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <Card className="scrollbar-thin p-1.5 lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto">
             <ul className="space-y-0.5">
               {blueprints.map((b) => {
                 const done = !!scriptOf(w, b.ep)
@@ -408,9 +405,21 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
             <Card>
               <div data-ep-head className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-5 py-3">
                 <div className="min-w-0">
-                  <h3 className="truncate text-[15px] font-semibold text-ink-900">
-                    第 {current.ep} 集：{current.title || <span className="text-ink-400">未命名</span>}
-                  </h3>
+                  {/* 删除放在标题旁，和右边的写作按钮隔开，免得误点 */}
+                  <div className="flex min-w-0 items-center gap-1">
+                    <h3 className="truncate text-[15px] font-semibold text-ink-900">
+                      第 {current.ep} 集：{current.title || <span className="text-ink-400">未命名</span>}
+                    </h3>
+                    <button
+                      type="button"
+                      aria-label="删除此集"
+                      title={`删除第 ${current.ep} 集蓝图`}
+                      onClick={() => askRemove(current.ep)}
+                      className="shrink-0 rounded-md p-1 text-ink-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                   <span className="text-xs text-ink-400">修改自动保存</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -441,12 +450,15 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                       查看本集
                     </Button>
                   )}
-                  <AiButton loading={running === 'write'} disabled={blocked || !!writeBlock || !!running} title={writeBlock?.text ?? `按第 ${writeEp} 集蓝图写作`} onClick={() => write(writeEp)}>
+                  <WriteButton
+                    project={project}
+                    loading={running === 'write'}
+                    disabled={blocked || !!writeBlock || !!running}
+                    title={writeBlock?.text ?? `按第 ${writeEp} 集蓝图写作`}
+                    onWrite={(model) => write(writeEp, model)}
+                  >
                     写作第 {writeEp} 集
-                  </AiButton>
-                  <Button variant="ghost" size="sm" aria-label="删除此集" title={`删除第 ${current.ep} 集蓝图`} onClick={() => askRemove(current.ep)}>
-                    <Trash2 size={14} />
-                  </Button>
+                  </WriteButton>
                 </div>
               </div>
               {v2 && <EpisodeSteps project={project} ep={current.ep} here="蓝图" className="border-b border-line bg-canvas/40 px-5 py-2.5" />}

@@ -482,7 +482,7 @@ export function StorySection({ draft, patch, errors, index, withAssistant = true
   const videoMode = draft.mode === 'video'
   return (
     <Section index={index} title="故事设定" desc="类型、题材、核心设定与体量决定后续 AI 的创作方向、剧本语言和逐集篇幅">
-      <div className="grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="类型" required>
           <select
             aria-label="类型"

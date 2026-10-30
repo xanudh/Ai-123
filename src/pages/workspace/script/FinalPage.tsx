@@ -8,6 +8,7 @@ import { PointsView } from '../../../components/project/PointsView'
 import { Badge, Card, EmptyState, Segmented, buttonClass, dotBefore } from '../../../components/ui'
 import { PLAN_EVENT_META } from '../../../domain/constants'
 import type { EpisodeScript, LineNote } from '../../../domain/types'
+import { modelLabel } from '../../../domain/models'
 import { blueprintOf, draftLabel, draftsOf, eventCandidates, foreshadowName, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { extractPoints, translateEpisode } from '../../../services/ai'
@@ -168,6 +169,7 @@ export default function FinalPage() {
             {source && (
               <Link to={draftPath(project, source.id)} className="hover:text-brand-600">
                 来自 {draftLabel(source)}
+                {source.model && `（${modelLabel(source.model)} ${source.revision ? '修稿' : '生成'}）`}
               </Link>
             )}
             <span className={clsx(dotBefore, 'tabular-nums')}>{wordCount(script).toLocaleString()} 字</span>

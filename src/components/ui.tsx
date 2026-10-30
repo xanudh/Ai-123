@@ -5,7 +5,7 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 import { useDismiss } from '../lib/useDismiss'
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type ButtonSize = 'sm' | 'md' | 'lg'
+type ButtonSize = 'sm' | 'md' | 'lg' | 'caret'
 
 const buttonBase =
   'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50'
@@ -21,6 +21,8 @@ const buttonSizes: Record<ButtonSize, string> = {
   sm: 'h-8 px-3 text-[13px]',
   md: 'h-9 px-4 text-sm',
   lg: 'h-11 px-5 text-[15px]',
+  // 拆分按钮右侧的 ▾：和 sm 同高、窄一些
+  caret: 'h-8 w-6 text-[13px]',
 }
 
 export function buttonClass(variant: ButtonVariant = 'primary', size: ButtonSize = 'md', className?: string) {
@@ -154,6 +156,52 @@ export function Select({ className, invalid, ...rest }: SelectHTMLAttributes<HTM
     <select
       className={clsx(inputBase, fillWidth(className), fieldSize(className, 'h-10'), 'disabled:bg-canvas disabled:text-ink-700', invalid ? 'border-red-400 focus:border-red-500' : 'border-line focus:border-brand-500', className)}
       {...rest}
+    />
+  )
+}
+
+/**
+ * 可直接键入的整数（集数等）：回车或失焦时生效，并限制在 min–max；↑ / ↓ 逐个加减，Esc 撤销输入。
+ * 打字途中的半截数字（想输 15 先敲了 1）不会立刻生效。
+ */
+export function NumberInput({
+  value,
+  min,
+  max,
+  onCommit,
+  className,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'min' | 'max' | 'type' | 'onChange'> & { value: number; min: number; max: number; onCommit: (value: number) => void }) {
+  const [text, setText] = useState<string | null>(null)
+  const commit = (n: number) => {
+    setText(null)
+    if (!Number.isFinite(n)) return
+    const v = Math.min(max, Math.max(min, Math.round(n)))
+    if (v !== value) onCommit(v)
+  }
+  return (
+    <Input
+      {...rest}
+      type="text"
+      inputMode="numeric"
+      value={text ?? String(value)}
+      onChange={(e) => setText(e.target.value.replace(/\D/g, ''))}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => text !== null && commit(text ? Number(text) : NaN)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          if (text !== null) commit(text ? Number(text) : NaN)
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          commit(Number(text || value) + (e.key === 'ArrowUp' ? 1 : -1))
+        } else if (e.key === 'Escape' && text !== null) {
+          // 只撤销输入，不连带关闭外层面板
+          e.stopPropagation()
+          setText(null)
+        }
+      }}
+      className={clsx('text-center tabular-nums', className)}
     />
   )
 }

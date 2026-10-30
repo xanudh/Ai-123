@@ -2,14 +2,16 @@
  * 仿写与写作环节的本地模拟：按题材套件 + 模板生成架构、人物、伏笔、情节大纲、分集蓝图与逐集剧本。
  * 输出结构与真实模型一致，内容只用于演示流程。
  */
+import { BASIS_OF, MANUAL_CODES, TACITURN, TACITURN_MAX, forbiddenTerms, isStuck, itemKey, keptOf } from '../../domain/review'
 import { estimateChars, nodeKind } from '../../domain/rhythm'
-import { buildState } from '../../domain/state'
+import { buildState, placeOf } from '../../domain/state'
 import type {
   Architecture,
   Character,
   CharacterRole,
   DraftReview,
   EpisodeBlueprint,
+  EpisodeScript,
   Foreshadow,
   ForeshadowType,
   HookType,
@@ -20,11 +22,13 @@ import type {
   Plot,
   PlotBeat,
   Project,
+  QaIssue,
   Relation,
   ReviewCode,
   ReviewItem,
   ScriptLine,
   ScriptLineKind,
+  WriteBasisItem,
 } from '../../domain/types'
 import {
   blueprintOf,
@@ -773,6 +777,46 @@ export interface DraftContent {
   title: string
   lines: ScriptLine[]
   states: Record<string, string>
+  /** 写这一集对照的依据：和审稿同一份清单 */
+  basis?: WriteBasisItem[]
+}
+
+/* ---------- 写作与审稿共用的依据：写的时候按它写，审的时候按它查 ---------- */
+
+/** 人物状态里出现这些词，说明这个人已经不能正常出场了 */
+const GONE = /死|身亡|去世|遇害|入狱|被捕|收监|失踪|昏迷|出国|离开了/
+
+/** 写到第 ep 集时已经不能出场说话的人（按之前的定稿） */
+const goneBefore = (p: Project, ep: number) => buildState(p, ep).characters.filter((c) => c.state && c.stateEp && GONE.test(c.state))
+
+/** 性格写着寡言、话少的人物 */
+const taciturnOf = (p: Project) => p.work.characters.filter((c) => c.name.trim() && TACITURN.test(c.personality))
+
+/** 全局写作要求里不许出现的词；AI 味词归文风那一项查，不重复算 */
+const ruleTermsOf = (p: Project) => forbiddenTerms(p.work.architecture?.writingRules ?? '').filter((t) => !AI_FILLERS.includes(t.term))
+
+/** 全局写作要求里讲某件事的那一条：审稿意见引用它作依据 */
+const ruleLine = (p: Project, re: RegExp) =>
+  (p.work.architecture?.writingRules ?? '')
+    .split('\n')
+    .map((l) => l.trim().replace(/^\d+[.、]\s*/, ''))
+    .find((l) => re.test(l))
+
+/** 集纲事件：写作写进正文的那一句，审稿按它的开头查 */
+function eventOf(p: Project, ep: number) {
+  const text = (p.work.outline.find((o) => o.ep === ep)?.event ?? '').split(/[；。]/)[0].trim().replace(/[，,]$/, '')
+  const key = text.split(/[，,]/)[0].replace(/\s/g, '').slice(0, 10)
+  return key.length >= 4 ? { text, key } : null
+}
+
+const dropTerms = (zh: string, terms: string[]) => terms.reduce((t, w) => t.split(w).join(''), zh)
+
+/** 寡言人物的台词压短：取第一句，还长就只留第一个分句 */
+function shortVoice(zh: string) {
+  const first = zh.match(/^.+?[。！？!?…]+/)?.[0] ?? zh
+  if (first.length <= TACITURN_MAX) return first
+  const clause = first.match(/^.+?[，,；;]/)?.[0]
+  return clause && clause.length > 4 ? clause.replace(/[，,；;]$/, '。') : first
 }
 
 /** 本集要推进的伏笔：计划本集埋设、本集回收，以及到了该呼应的一条活跃计划 */
@@ -833,8 +877,39 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     lines.push({ id: newId(), ...l })
     size += l.zh.length
   }
-  const say = (s: Speech) => push({ kind: 'dialogue', speaker: cast[s.who].zh, speakerEn: cast[s.who].en, zh: fill(s.zh, zh), en: fill(s.en, en) })
   const plans = plansOf(p, ep)
+
+  // 按审稿的那几项依据写：核心设定里不许出现的词、已经不能出场的人、寡言人物的台词、AI 味与长台词
+  const terms = ruleTermsOf(p).map((t) => t.term)
+  const gone = goneBefore(p, ep)
+  const quiet = new Set(taciturnOf(p).map((c) => c.name))
+  const event = eventOf(p, ep)
+  const n = { fillers: 0, terms: 0, gone: 0, quiet: 0, split: 0 }
+  const clean = (text: string) => {
+    const a = stripFillers(text)
+    const b = dropTerms(a, terms)
+    if (a !== text) n.fillers++
+    if (b !== a) n.terms++
+    return b
+  }
+  const act = (text: string) => push({ kind: 'action', zh: clean(text) })
+  const say = (s: Speech) => {
+    const who = cast[s.who]
+    const raw = fill(s.zh, zh)
+    let text = clean(raw)
+    if (gone.some((c) => c.name === who.zh)) {
+      n.gone++
+      return push({ kind: 'action', zh: `△（闪回）${who.zh}：${text}` })
+    }
+    if (quiet.has(who.zh) && text.length > TACITURN_MAX) {
+      text = shortVoice(text)
+      n.quiet++
+    }
+    const parts = text.length > 30 ? splitLong(text) : null
+    if (parts) n.split++
+    // 改过的台词英文对不上了，等翻译时重新译
+    for (const t of parts ?? [text]) push({ kind: 'dialogue', speaker: who.zh, speakerEn: who.en, zh: t, ...(t === raw && { en: fill(s.en, en) }) })
+  }
 
   types.forEach((type, i) => {
     const place = places[i % places.length]
@@ -846,6 +921,8 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     if (i === 0) {
       if (carry) push({ kind: 'action', zh: `△（${carry.auto ? '接上集' : '承接'}）${carry.text}` })
       if (conflict) push({ kind: 'action', zh: `△ ${conflict.split('；')[0].replace(/[。]$/, '')}。` })
+      // 蓝图改过冲突、没写集纲事件时，集纲事件也要写进开场
+      if (event && !(conflict ?? '').replace(/\s/g, '').includes(event.key)) push({ kind: 'action', zh: `△ ${event.text}。` })
     }
     // 作者微操指导与伏笔放在第二场（只有一场时放第一场），保证写进正文
     if (i === Math.min(1, types.length - 1)) {
@@ -861,7 +938,7 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     let a = 0
     let e = 0
     while (size - start < budget && (a < actions.length || e < exchanges.length)) {
-      if (a < actions.length && (a <= e || e >= exchanges.length)) push({ kind: 'action', zh: fill(actions[a++], { ...zh, place: place.zh }) })
+      if (a < actions.length && (a <= e || e >= exchanges.length)) act(fill(actions[a++], { ...zh, place: place.zh }))
       if (size - start < budget && e < exchanges.length) exchanges[e++].forEach(say)
     }
 
@@ -871,7 +948,27 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
   })
 
   if (hook) push({ kind: 'hook', zh: hook })
-  return { title: blueprint?.title.trim() || outline?.title || '', lines, states }
+
+  // 记下这一集按什么写的：和审稿同一份清单，草稿页「本集蓝图」里能看到
+  const before = buildState(p, ep)
+  const planned = (['plant', 'echo', 'payoff'] as const).flatMap((k) => plans[k].map((f) => `${{ plant: '埋设', echo: '呼应', payoff: '回收' }[k]}「${foreshadowName(f)}」`))
+  const basis: (WriteBasisItem | false | '' | 0 | null | undefined)[] = [
+    p.work.architecture?.writingRules.trim() && { basis: 'core', text: `按全局写作要求写${terms.length ? `，避开「${terms.join('、')}」${n.terms ? `（删去 ${n.terms} 处）` : ''}` : ''}` },
+    p.work.characters.length && {
+      basis: 'character',
+      text: [`只用人物设定里登记的人物，主角${cast.hero.zh}有戏`, quiet.size && `${[...quiet].join('、')}寡言，台词压在 ${TACITURN_MAX} 字内${n.quiet ? `（压短 ${n.quiet} 句）` : ''}`].filter(Boolean).join('；'),
+    },
+    before.latestEp && {
+      basis: 'state',
+      text: `对照${before.latestEp > 1 ? `第 1–${before.latestEp} 集` : '第 1 集'}定稿的人物状态与道具${gone.length ? `；${gone.map((c) => `${c.name}已「${c.state}」`).join('、')}，不再出场说话` : ''}`,
+    },
+    event && { basis: 'outline', text: `集纲：${event.text}` },
+    (carry || blueprint) && { basis: 'blueprint', text: [carry && `开场承接「${clip(carry.text, 24)}」`, blueprint?.cast.trim() && `出场 ${blueprint.cast.trim()}`, hook && '结尾按蓝图钩子收'].filter(Boolean).join('；') },
+    planned.length && { basis: 'foreshadow', text: planned.join('、') },
+    { basis: 'format', text: `约 ${estimateChars(p.spec.episodeSeconds)} 字、${sceneCount} 场，每场有场景标题${hook ? '，集末留钩子' : ''}` },
+    { basis: 'style', text: `不用 AI 味词，台词不超过 30 字${n.fillers || n.split ? `（去掉 AI 味 ${n.fillers} 处、拆短 ${n.split} 句）` : ''}` },
+  ]
+  return { title: blueprint?.title.trim() || outline?.title || '', lines, states, basis: basis.filter((x): x is WriteBasisItem => !!x) }
 }
 
 type PlanLine = { kind: 'action'; zh: string } | { kind: 'dialogue'; speech: Speech }
@@ -904,8 +1001,11 @@ function missingPlans(p: Project, d: DraftLike) {
   return (['plant', 'payoff'] as const).flatMap((kind) => plans[kind].filter((f) => foreshadowKey(f) && !flat.includes(foreshadowKey(f))).map((f) => ({ f, kind })))
 }
 
-/** 人物状态里出现这些词，说明这个人已经不能正常出场了 */
-const GONE = /死|身亡|去世|遇害|入狱|被捕|收监|失踪|昏迷|出国|离开了/
+/** 正文里第一处符合条件的行：审稿意见引用它 */
+function lineAt(lines: ScriptLine[], test: (l: ScriptLine) => boolean): Pick<ReviewItem, 'lineId' | 'quote'> {
+  const l = lines.find(test)
+  return l ? { lineId: l.id, quote: clip(l.kind === 'dialogue' && l.speaker ? `${l.speaker}：${l.zh}` : l.zh, 48) } : {}
+}
 
 /**
  * 连贯性：对照本集之前已定稿的剧情——人物状态、关键道具的归属、已回收的伏笔，
@@ -922,67 +1022,174 @@ function continuityItems(p: Project, d: DraftLike): ReviewItem[] {
 
   const states = before.characters.filter((c) => c.state && c.stateEp)
   for (const c of states) {
-    if (who.includes(c.name) && GONE.test(c.state)) items.push({ level: 'block', code: 'state', text: `人物状态冲突：${c.name}在第 ${c.stateEp} 集已是「${c.state}」，本集却有台词` })
+    if (who.includes(c.name) && GONE.test(c.state))
+      items.push({
+        level: 'block',
+        code: 'state',
+        key: `state:${c.name}`,
+        text: `人物状态冲突：${c.name}在第 ${c.stateEp} 集已是「${c.state}」，本集却有台词`,
+        ref: `第 ${c.stateEp} 集定稿：${c.name}「${c.state}」`,
+        ...lineAt(d.lines, (l) => l.kind === 'dialogue' && l.speaker === c.name),
+      })
   }
   const props = before.foreshadows.filter((f) => f.item.type === '关键道具' && f.plantedIn !== null)
   for (const f of before.foreshadows) {
     const key = foreshadowKey(f.item)
     if (!key || !flat.includes(key) || planned.has(f.item.id)) continue
-    if (f.paidIn !== null) items.push({ level: 'warn', code: 'paid', text: `「${foreshadowName(f.item)}」已在第 ${f.paidIn} 集回收，本集又出现：确认${f.item.type === '关键道具' ? '道具归属' : '真相'}与前文一致` })
-    else if (f.item.type === '关键道具') items.push({ level: 'info', text: `道具「${foreshadowName(f.item)}」本集出现，归属沿用第 ${f.lastEp ?? f.plantedIn} 集` })
+    const quote = lineAt(d.lines, (l) => l.zh.replace(/\s/g, '').includes(key))
+    if (f.paidIn !== null)
+      items.push({
+        level: 'warn',
+        code: 'paid',
+        key: `paid:${f.item.id}`,
+        text: `「${foreshadowName(f.item)}」已在第 ${f.paidIn} 集回收，本集又出现：确认${f.item.type === '关键道具' ? '道具归属' : '真相'}与前文一致`,
+        ref: `第 ${f.paidIn} 集定稿回收「${foreshadowName(f.item)}」`,
+        ...quote,
+      })
+    else if (f.item.type === '关键道具') items.push({ level: 'info', basis: 'state', text: `道具「${foreshadowName(f.item)}」本集出现，归属沿用第 ${f.lastEp ?? f.plantedIn} 集`, ...quote })
   }
   const range = before.latestEp > 1 ? `第 1–${before.latestEp} 集` : '第 1 集'
   if (!items.some((i) => i.level === 'block' || i.level === 'warn')) {
-    items.push({ level: 'info', text: `连贯：已对照${range}定稿的 ${states.length} 个人物状态、${props.length} 件关键道具与已发生的剧情线，未发现矛盾` })
+    items.push({ level: 'info', basis: 'state', text: `连贯：已对照${range}定稿的 ${states.length} 个人物状态、${props.length} 件关键道具与已发生的剧情线，未发现矛盾` })
   }
   return items
 }
 
-/** AI 审稿：结构、字数、钩子、伏笔、人物、前文连贯与 AI 味 */
-export function reviewDraft(p: Project, d: DraftLike): Pick<DraftReview, 'score' | 'items'> {
+/** 按依据逐项查出的问题：每条带依据、依据原文、正文原句与跨轮标识 */
+function findIssues(p: Project, d: DraftLike): ReviewItem[] {
   const items: ReviewItem[] = []
   const target = estimateChars(p.spec.episodeSeconds)
   const words = wordCount(d)
   const cast = castOf(p)
   const text = d.lines.map((l) => l.zh).join('\n')
+  const flat = flatText(d.lines)
+  const blueprint = blueprintOf(p.work, d.ep)
+  const outline = p.work.outline.find((o) => o.ep === d.ep)
 
+  // 格式与篇幅
   const goal = `单集 ${p.spec.episodeSeconds} 秒约 ${target} 字`
-  if (words < target * 0.7) items.push({ level: 'block', code: 'short', text: `字数 ${words}，低于${goal}的 70%` })
-  else if (words > target * 1.3) items.push({ level: 'warn', code: 'long', text: `字数 ${words}，超出${goal} 30% 以上，注意单集时长` })
-  if (!d.lines.some((l) => l.kind === 'scene')) items.push({ level: 'block', code: 'scene', text: '缺少场景标题，无法对接制作线' })
-  if (!d.lines.some((l) => l.kind === 'hook')) items.push({ level: 'block', code: 'hook', text: '结尾没有钩子，观众没有理由点下一集' })
+  if (words < target * 0.7) items.push({ level: 'block', code: 'short', text: `字数 ${words}，低于${goal}的 70%`, ref: goal })
+  else if (words > target * 1.3) items.push({ level: 'warn', code: 'long', text: `字数 ${words}，超出${goal} 30% 以上，注意单集时长`, ref: goal })
+  if (!d.lines.some((l) => l.kind === 'scene')) items.push({ level: 'block', code: 'scene', text: '缺少场景标题，无法对接制作线', ref: '剧本格式：每场戏以场景标题开头（地点 日/夜 内/外）' })
+  if (!d.lines.some((l) => l.kind === 'hook'))
+    items.push({ level: 'block', code: 'hook', text: '结尾没有钩子，观众没有理由点下一集', ref: blueprint?.hook.trim() ? `蓝图末尾钩子：${blueprint.hook.trim()}` : outline?.hookLine ? `集纲钩子：${outline.hookLine}` : '每集结尾留钩子' })
 
-  // 承接：蓝图里写了查蓝图的，没写时查上集正文结尾的钩子
-  const own = blueprintOf(p.work, d.ep)?.carry?.trim()
-  const prevBody = scriptOf(p.work, d.ep - 1) ?? latestDraft(p.work, d.ep - 1)
-  const prevHook = own || (prevBody && hookOf(prevBody))
-  if (prevHook && !text.includes(prevHook.slice(0, 8))) items.push({ level: 'warn', code: 'carry', text: own ? '开场没有接住蓝图里的「承接」' : '开场没有承接上集结尾的钩子' })
-
-  for (const { f, kind } of missingPlans(p, d)) {
-    items.push({ level: 'block', code: 'plan', text: `计划本集${kind === 'plant' ? '埋设' : '回收'}「${foreshadowName(f)}」，正文里没找到` })
+  // 核心设定：全局写作要求里不许出现的词
+  for (const { term, rule } of ruleTermsOf(p)) {
+    if (text.includes(term)) items.push({ level: 'block', code: 'rule', key: `rule:${term}`, text: `正文出现了全局写作要求不许出现的「${term}」`, ref: `全局写作要求：${rule}`, ...lineAt(d.lines, (l) => l.zh.includes(term)) })
   }
 
+  // 集纲：本集该发生的事
+  const event = eventOf(p, d.ep)
+  if (event && !flat.includes(event.key)) items.push({ level: 'warn', code: 'event', text: '集纲里的本集事件没写进正文', ref: `第 ${d.ep} 集集纲：${event.text}` })
+
+  // 蓝图：承接（蓝图里写了查蓝图的，没写时查上集正文结尾的钩子）、出场人物
+  const own = blueprint?.carry?.trim()
+  const prevBody = scriptOf(p.work, d.ep - 1) ?? latestDraft(p.work, d.ep - 1)
+  const prevHook = own || (prevBody && hookOf(prevBody))
+  if (prevHook && !text.includes(prevHook.slice(0, 8)))
+    items.push({ level: 'warn', code: 'carry', text: own ? '开场没有接住蓝图里的「承接」' : '开场没有承接上集结尾的钩子', ref: `${own ? '蓝图承接' : `第 ${d.ep - 1} 集结尾`}：${clip(prevHook, 40)}`, ...lineAt(d.lines, (l) => l.kind !== 'scene') })
+  const planned = (blueprint?.cast ?? '').split(/[、,，\s]+/).filter(Boolean)
+  const absent = planned.filter((n) => !text.includes(n))
+  if (absent.length) items.push({ level: 'warn', code: 'absent', text: `蓝图里的出场人物 ${absent.join('、')} 没有出场`, ref: `蓝图出场关键人：${blueprint!.cast}` })
+
+  // 伏笔计划
+  for (const { f, kind } of missingPlans(p, d)) {
+    items.push({ level: 'block', code: 'plan', key: `plan:${f.id}:${kind}`, text: `计划本集${kind === 'plant' ? '埋设' : '回收'}「${foreshadowName(f)}」，正文里没找到`, ref: `伏笔计划：第 ${f.plantEp} 集埋设 → 第 ${f.payoffEp} 集回收，${clauseOf(f)}` })
+  }
+
+  // 人物设定
   const who = speakers(d.lines)
-  if (p.work.characters.length && !who.includes(cast.hero.zh)) items.push({ level: 'warn', code: 'hero', text: `主角${cast.hero.zh}本集没有台词` })
+  if (p.work.characters.length && !who.includes(cast.hero.zh)) items.push({ level: 'warn', code: 'hero', text: `主角${cast.hero.zh}本集没有台词`, ref: `人物设定：主角 ${cast.hero.zh}` })
   const known = new Set(p.work.characters.map((c) => c.name))
   const unknown = known.size ? who.filter((n) => !known.has(n)) : []
-  if (unknown.length) items.push({ level: 'warn', code: 'unknown', text: `${unknown.join('、')} 未在人物设定中登记` })
-  const planned = (blueprintOf(p.work, d.ep)?.cast ?? '').split(/[、,，\s]+/).filter(Boolean)
-  const absent = planned.filter((n) => !text.includes(n))
-  if (absent.length) items.push({ level: 'warn', code: 'absent', text: `蓝图里的出场人物 ${absent.join('、')} 没有出场` })
+  if (unknown.length)
+    items.push({ level: 'warn', code: 'unknown', text: `${unknown.join('、')} 未在人物设定中登记`, ref: `人物设定已登记：${clip([...known].join('、'), 40)}`, ...lineAt(d.lines, (l) => l.kind === 'dialogue' && unknown.includes(l.speaker ?? '')) })
+  for (const c of taciturnOf(p)) {
+    const long = d.lines.filter((l) => l.kind === 'dialogue' && l.speaker === c.name && l.zh.length > TACITURN_MAX)
+    if (!long.length) continue
+    const worst = long.reduce((a, b) => (b.zh.length > a.zh.length ? b : a))
+    items.push({ level: 'warn', code: 'voice', key: `voice:${c.name}`, text: `${c.name}性格寡言，本集有 ${long.length} 句台词超过 ${TACITURN_MAX} 字`, ref: `人物小传：${c.name}「${c.personality}」`, ...lineAt(d.lines, (l) => l.id === worst.id) })
+  }
 
+  // 状态库：与前文定稿是否一致
   items.push(...continuityItems(p, d))
 
+  // 文风
   const fillers = AI_FILLERS.filter((w) => text.includes(w))
-  if (fillers.length) items.push({ level: 'warn', code: 'filler', text: `AI 味词汇 ${fillers.length} 种：${fillers.slice(0, 5).join('、')}` })
-  const long = d.lines.filter((l) => l.kind === 'dialogue' && l.zh.length > 30).length
-  if (long) items.push({ level: 'info', code: 'longLine', text: `${long} 句台词超过 30 字，竖屏短剧建议拆短` })
+  if (fillers.length)
+    items.push({ level: 'warn', code: 'filler', text: `AI 味词汇 ${fillers.length} 种：${fillers.slice(0, 5).join('、')}`, ref: ruleLine(p, /AI 味|仿佛|不禁/) ? `全局写作要求：${ruleLine(p, /AI 味|仿佛|不禁/)}` : '文风：不用 AI 味词', ...lineAt(d.lines, (l) => fillers.some((w) => l.zh.includes(w))) })
+  const long = d.lines.filter((l) => l.kind === 'dialogue' && l.zh.length > 30)
+  if (long.length) items.push({ level: 'info', code: 'longLine', text: `${long.length} 句台词超过 30 字，竖屏短剧建议拆短`, ref: '文风：竖屏短剧台词 30 字以内', ...lineAt(d.lines, (l) => l.id === long[0].id) })
   if (d.notes?.length) items.push({ level: 'info', code: 'notes', text: `${d.notes.length} 条标注待处理，AI 修稿时会一并改写` })
+
+  // 每条意见都要有依据：按类别补上；说不出依据的只算建议，不拦定稿
+  return items.map((i) => {
+    const basis = i.basis ?? (i.code && BASIS_OF[i.code])
+    const level = !basis && i.level === 'block' ? 'warn' : i.level
+    return { ...i, level, ...(basis && { basis }), ...(i.code && { key: i.key ?? i.code }) }
+  })
+}
+
+/** 复审对照的上一轮：修稿依据的那份审稿、来源草稿的正文、更早几轮的审稿 */
+export interface ReviewBase {
+  review: DraftReview
+  lines: ScriptLine[]
+  history: DraftReview[]
+}
+
+const LEVEL_RANK = { block: 0, warn: 1, info: 2, ok: 3 }
+
+/**
+ * 修稿后的复审：上一轮的意见逐条看改没改掉——没改掉的第一次记「修稿后仍在」，再没改掉记「AI 改不动」；
+ * 改掉后又出现的记「改好又出现」，这两种都不再交给 AI 修稿。新问题只认改过的段落和结构性的（缺钩子、缺伏笔这类）；
+ * 全量重审时新问题全列，但仍按上一轮跟踪。
+ */
+function trackIssues(found: ReviewItem[], base: ReviewBase, kind: 'full' | 'recheck', d: DraftLike, kept: Set<string>): ReviewItem[] {
+  const prev = base.review.items.filter((i) => i.level !== 'ok' && (i.key || i.code) && !kept.has(itemKey(i)))
+  const now = new Map(found.map((i) => [itemKey(i), i]))
+  const before = new Set(prev.map(itemKey))
+  const everFixed = new Set([base.review, ...base.history].flatMap((r) => r.items.filter((i) => i.status === 'fixed').map(itemKey)))
+  const old = new Set(base.lines.map((l) => l.zh))
+  // 没指到某一行的算结构性问题
+  const touched = (i: ReviewItem) => {
+    const l = i.lineId && d.lines.find((x) => x.id === i.lineId)
+    return !l || !old.has(l.zh)
+  }
+  const out: ReviewItem[] = []
+  for (const p of prev) {
+    const cur = now.get(itemKey(p))
+    if (!cur) {
+      out.push({ level: 'ok', text: p.text, ...(p.code && { code: p.code }), ...(p.basis && { basis: p.basis }), key: itemKey(p), status: 'fixed' })
+      continue
+    }
+    const status = p.status === 'back' ? 'back' : p.status === 'still' || p.status === 'stuck' || (cur.code && MANUAL_CODES.includes(cur.code)) ? 'stuck' : 'still'
+    out.push({ ...cur, status })
+  }
+  for (const cur of found) {
+    const k = itemKey(cur)
+    if (before.has(k)) continue
+    if (cur.key && everFixed.has(k)) out.push({ ...cur, status: 'back' })
+    else if (kind === 'full') out.push({ ...cur, ...(cur.key && { status: 'new' as const }) })
+    else if (cur.key && touched(cur)) out.push({ ...cur, status: 'new' })
+  }
+  return out.sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level])
+}
+
+/**
+ * AI 审稿：按核心设定、人物设定、状态库、集纲、蓝图、伏笔计划、格式与篇幅、文风逐项查。
+ * 编剧保留不改的意见不再提；传入 base 时是修稿后的复审（kind 默认 recheck，只查上一轮意见与改过的段落）。
+ */
+export function reviewDraft(p: Project, d: DraftLike, opts: { base?: ReviewBase; kind?: 'full' | 'recheck' } = {}): Pick<DraftReview, 'score' | 'items' | 'kind' | 'baseId'> {
+  const kept = new Set(keptOf(p.work.keeps, d.ep).keys())
+  const found = findIssues(p, d).filter((i) => !kept.has(itemKey(i)))
+  const kind = opts.base ? (opts.kind ?? 'recheck') : 'full'
+  const items = opts.base ? trackIssues(found, opts.base, kind, d, kept) : found
 
   const blocks = items.filter((i) => i.level === 'block').length
   const warns = items.filter((i) => i.level === 'warn').length
-  if (!blocks && !warns) items.push({ level: 'ok', text: '结构完整、伏笔到位，可以定稿' })
-  return { score: Math.max(1, Math.min(5, Math.round((5 - blocks - warns * 0.5) * 10) / 10)), items }
+  if (!blocks && !warns) items.push({ level: 'ok', text: kind === 'recheck' ? '上一轮的意见都已改掉，改过的段落没有新问题，可以定稿' : '结构完整、伏笔到位，可以定稿' })
+  return { score: Math.max(1, Math.min(5, Math.round((5 - blocks - warns * 0.5) * 10) / 10)), items, kind, ...(opts.base && { baseId: opts.base.review.id }) }
 }
 
 /** 去掉 AI 味词与重复标点 */
@@ -1035,6 +1242,7 @@ function splitLong(zh: string): [string, string] | null {
 /**
  * AI 修稿：生成新版本，标注过的行一律按标注改写。
  * - 审过稿：逐条按审稿意见改——能直接改的改掉；人物登记、已回收伏笔的真相这类剧情判断不擅自改，列给编剧
+ * - 复审里两轮没改掉、改好又出现的意见不再改，交给编剧；编剧保留不改的意见不动
  * - 没审稿（或旧报告没有意见类别）：自检去 AI 味、补伏笔与钩子、字数不足时扩写
  */
 export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pick<DraftReview, 'items'>): RevisedDraft {
@@ -1042,14 +1250,20 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
   const ctx = ctxOf(p, kit)
   const cast = castOf(p)
   const r = rng(hash(`${p.id}-rev${d.ep}`) + seed)
+  const kept = keptOf(p.work.keeps, d.ep)
   const coded = (review?.items ?? []).flatMap((i) => {
-    const code = i.level === 'ok' ? undefined : codeOf(i)
+    const code = i.level === 'ok' || kept.has(itemKey(i)) ? undefined : codeOf(i)
     return code ? [{ ...i, code }] : []
   })
-  const todo = new Set<ReviewCode>(coded.length ? coded.map((i) => i.code) : ['filler', 'plan', 'hook', 'short'])
+  // AI 改不动的意见交给编剧，这一轮不再改
+  const stuck = coded.filter((i) => isStuck(i.status))
+  const live = coded.filter((i) => !isStuck(i.status))
+  const skip = new Set(stuck.map(itemKey))
+  const liveKeys = new Set(live.map(itemKey))
+  const todo = new Set<ReviewCode>(coded.length ? live.map((i) => i.code) : ['filler', 'plan', 'hook', 'short'])
   const noted = new Set((d.notes ?? []).map((n) => n.lineId))
   const changes: string[] = []
-  const manual: string[] = []
+  const manual: string[] = stuck.map((i) => `${i.text}（${i.status === 'back' ? '改好后又出现' : '两轮没改掉'}，AI 不再改，请人工处理或保留不改）`)
   const size = (ls: Omit<ScriptLine, 'id'>[]) => ls.reduce((n, l) => n + l.zh.replace(/\s/g, '').length, 0)
 
   let polished = 0
@@ -1068,13 +1282,35 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
   if (noted.size) changes.push(`按 ${noted.size} 条标注改写`)
   if (polished) changes.push(`去掉 AI 味 ${polished} 处`)
 
+  // 核心设定里不许出现的词：删掉
+  if (todo.has('rule')) {
+    for (const { term } of ruleTermsOf(p).filter((t) => liveKeys.has(`rule:${t.term}`))) {
+      const n = lines.filter((l) => l.zh.includes(term)).length
+      lines = lines.map((l) => (l.zh.includes(term) ? { ...l, zh: dropTerms(l.zh, [term]), en: undefined } : l))
+      if (n) changes.push(`按全局写作要求删去「${term}」${n} 处`)
+    }
+  }
+
   // 已经不能出场的人物：台词改成闪回
   if (todo.has('state')) {
-    const gone = buildState(p, d.ep).characters.filter((c) => c.state && c.stateEp && GONE.test(c.state))
+    const gone = goneBefore(p, d.ep).filter((c) => !skip.has(`state:${c.name}`))
     for (const c of gone) {
       const n = lines.filter((l) => l.kind === 'dialogue' && l.speaker === c.name).length
       lines = lines.map((l): Omit<ScriptLine, 'id'> => (l.kind === 'dialogue' && l.speaker === c.name ? { kind: 'action', zh: `△（闪回）${c.name}：${l.zh}` } : l))
       if (n) changes.push(`${c.name}第 ${c.stateEp} 集已「${c.state}」，${n} 句台词改成闪回`)
+    }
+  }
+
+  // 寡言的人物：长台词压短
+  if (todo.has('voice')) {
+    for (const c of taciturnOf(p).filter((x) => liveKeys.has(`voice:${x.name}`))) {
+      let n = 0
+      lines = lines.map((l) => {
+        if (l.kind !== 'dialogue' || l.speaker !== c.name || l.zh.length <= TACITURN_MAX) return l
+        n++
+        return { ...l, zh: shortVoice(l.zh), en: undefined }
+      })
+      if (n) changes.push(`${c.name}性格寡言：压短 ${n} 句台词`)
     }
   }
 
@@ -1096,6 +1332,15 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
     changes.push(carry.auto ? '开场接上上集结尾的钩子' : '开场接住蓝图里的「承接」')
   }
 
+  const event = eventOf(p, d.ep)
+  if (todo.has('event') && event && !flatText(lines as ScriptLine[]).includes(event.key)) {
+    // 放在开场：场景标题与承接之后
+    let at = lines.findIndex((l) => l.kind === 'scene') + 1
+    while (at > 0 && at < lines.length && /^△（(接上集|承接)）/.test(lines[at].zh)) at++
+    lines.splice(at, 0, { kind: 'action', zh: `△ ${event.text}。` })
+    changes.push(`补上集纲里的本集事件「${clip(event.text, 16)}」`)
+  }
+
   if (todo.has('scene') && !lines.some((l) => l.kind === 'scene')) {
     const place = kit.places[d.ep % kit.places.length]
     lines.unshift({ kind: 'scene', zh: `${place.zh} 日 内`, en: `INT. ${place.en} – DAY` })
@@ -1108,7 +1353,7 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
     lines.splice(at < 0 ? lines.length : at, 0, ...extra)
   }
 
-  const missing = todo.has('plan') ? missingPlans(p, { ...d, lines: lines as ScriptLine[] }) : []
+  const missing = todo.has('plan') ? missingPlans(p, { ...d, lines: lines as ScriptLine[] }).filter(({ f, kind }) => !skip.has(`plan:${f.id}:${kind}`)) : []
   if (missing.length) {
     beforeHook(
       missing.flatMap(({ f, kind }) =>
@@ -1167,12 +1412,341 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
     if (n) changes.push(`精简 ${n} 处动作描写，压到约 ${total} 字`)
   }
 
-  for (const i of coded) {
+  for (const i of live) {
     if (i.code === 'unknown') manual.push(`${i.text}：去人物设定登记，或改成已登记的名字`)
     if (i.code === 'paid') manual.push(i.text)
   }
   if (!changes.length) changes.push(coded.length ? '审稿意见里没有需要 AI 改写的问题' : '通读润色，未发现需要改动的问题')
   return { lines: lines.map((l) => ({ ...l, id: newId() })), changes, manual }
+}
+
+/* ---------------------------------- 质检修稿 ---------------------------------- */
+
+/** 按一条质检问题改定稿：新正文、改了什么、留给编剧的、对照过哪些设定 */
+export interface QaFix {
+  lines: ScriptLine[]
+  changes: string[]
+  manual: string[]
+  checked: string[]
+  /** 补译过台词 */
+  translated?: boolean
+}
+
+/** 「姓 + 称谓」的叫法：陆总、林小姐 */
+const TITLE_RE = /^(\S)(总|董|哥|姐|爷|少|先生|小姐|太太|夫人|叔|姨|医生|老师|警官)$/
+/** 外景地点 */
+const OUTDOOR_RE = /街|路|门口|天台|广场|院子|花园|停车场|码头|桥|山|海边|江边|郊外|外景/
+/** 付费钩子卡在答案揭晓之前：只加悬停，不新增剧情 */
+const CLIFF_TAILS = ['……可这，真的就是全部吗？', '——而这，只是开始。', '……下一秒，所有人都愣住了——']
+
+/** 没登记的称呼对应到已登记人物：名字互相包含，或「姓 + 称谓」只对得上一个人 */
+function registeredAs(p: Project, name: string) {
+  const chars = p.work.characters.filter((c) => c.name.trim())
+  const hit = chars.filter((c) => c.name.includes(name) || name.includes(c.name))
+  if (hit.length === 1) return hit[0]
+  const surname = name.match(TITLE_RE)?.[1]
+  const same = surname ? chars.filter((c) => c.name.startsWith(surname)) : []
+  return same.length === 1 ? same[0] : undefined
+}
+
+/** 场景标题补齐「地点 日/夜 内/外」 */
+function normalizeScene(zh: string) {
+  const parts = zh.trim().replace(/[（(]([日夜晨内外、/\s]|黄昏)+[)）]/g, ' ').split(/\s+/).filter(Boolean)
+  const tags = parts.filter((t) => /^(日|夜|晨|黄昏|内|外|白天|晚上)$/.test(t))
+  const place = parts.filter((t) => !tags.includes(t)).join(' ') || placeOf(zh)
+  const time = tags.find((t) => /^(日|夜|晨|黄昏)$/.test(t)) ?? (tags.includes('晚上') || /夜|晚/.test(place) ? '夜' : '日')
+  const io = tags.find((t) => t === '内' || t === '外') ?? (OUTDOOR_RE.test(place) ? '外' : '内')
+  return `${place} ${time} ${io}`
+}
+
+/** 缺名的台词：同一场两人对戏时，轮到另一个人说 */
+function speakerFor(lines: ScriptLine[], at: number) {
+  let from = at
+  while (from > 0 && lines[from].kind !== 'scene') from--
+  let to = at
+  while (to < lines.length - 1 && lines[to + 1].kind !== 'scene') to++
+  const names = speakers(lines.slice(from, to + 1).map((l) => ({ ...l, speaker: l.speaker?.trim() })))
+  const prev = lines.slice(from, at).reverse().find((l) => l.kind === 'dialogue' && l.speaker?.trim())?.speaker?.trim()
+  const others = names.filter((n) => n !== prev)
+  return names.length === 2 && others.length === 1 ? others[0] : undefined
+}
+
+/**
+ * 守住原有设定：新写或改过的行逐条对照人物设定、状态库、伏笔计划与对标剧人名，
+ * 不合设定的改动撤回，留给编剧。
+ */
+function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLine[]) {
+  const known = new Map(p.work.characters.filter((c) => c.name.trim()).map((c) => [c.name, c]))
+  const state = buildState(p, ep)
+  const gone = new Map(state.characters.filter((c) => c.state && GONE.test(c.state)).map((c) => [c.name, c]))
+  const bench = (p.work.breakdown?.characters ?? []).map((c) => c.name).filter((n) => n.length >= 2 && !known.has(n))
+  const later = p.work.foreshadows.filter((f) => f.plantEp > ep && foreshadowKey(f))
+  const old = new Map(before.map((l) => [l.id, l]))
+  const dropped: string[] = []
+
+  // 只查这次新写进来的：新开口的人、新出现的人名与伏笔
+  const problem = (l: ScriptLine, o?: ScriptLine) => {
+    const who = l.kind === 'dialogue' && (!o || o.speaker !== l.speaker) ? l.speaker?.trim() : undefined
+    if (who && known.size && !known.has(who)) return `「${who}」不在人物设定里`
+    const g = who ? gone.get(who) : undefined
+    if (g) return `${g.name}在第 ${g.stateEp} 集已是「${g.state}」，不能开口`
+    const fresh = (frag: string) => !o?.zh.replace(/\s/g, '').includes(frag)
+    const b = bench.find((n) => l.zh.includes(n) && fresh(n))
+    if (b) return `会带入对标剧人名「${b}」`
+    const f = later.find((x) => l.zh.replace(/\s/g, '').includes(foreshadowKey(x)) && fresh(foreshadowKey(x)))
+    if (f) return `会提前写出第 ${f.plantEp} 集才埋设的伏笔`
+  }
+
+  const lines = after.flatMap((l): ScriptLine[] => {
+    const o = old.get(l.id)
+    if (o && o.zh === l.zh && o.speaker === l.speaker) return [l]
+    const why = problem(l, o)
+    if (!why) return [l]
+    dropped.push(`「${clip(l.zh, 16)}」${why}，这处没有改`)
+    return o ? [o] : []
+  })
+
+  const checked = [
+    known.size ? `人物设定：新写的台词只给已登记的 ${known.size} 个人物` : '人物设定：还没登记人物，没有新增角色',
+    state.latestEp ? `状态库：对照${rangeLabel([1, state.latestEp])}定稿的人物状态${gone.size ? `，${[...gone.keys()].join('、')} 不开口` : ''}` : '状态库：本集之前还没有定稿',
+    `伏笔计划：只写本集计划内的推进${later.length ? `，后面才埋设的 ${later.length} 条不提前写出` : ''}`,
+    ...(bench.length ? [`对标剧：不带入 ${bench.length} 个对标剧人名`] : []),
+  ]
+  return { lines, dropped, checked }
+}
+
+/**
+ * 质检里的「AI 修稿」：按一条问题改定稿，只动问题涉及的行，其余行（连同 id、标注、英文）原样保留。
+ * 补写的内容只取自已有设定——本集蓝图、集纲、伏笔计划、状态库与已登记人物；
+ * 设定里找不到依据的（钩子没写、称呼对不上人、换场景这类剧情判断）不擅自编，列给编剧。
+ */
+export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: number): QaFix {
+  const { ep } = s
+  const kit = kitOf(p)
+  const ctx = ctxOf(p, kit)
+  const cast = castOf(p)
+  const r = rng(hash(`${p.id}-qa${issue.id}`) + seed)
+  const bp = blueprintOf(p.work, ep)
+  const o = p.work.outline.find((x) => x.ep === ep)
+  const at = issue.lineId ? s.lines.findIndex((l) => l.id === issue.lineId) : -1
+  const line = at >= 0 ? s.lines[at] : undefined
+  const changes: string[] = []
+  const manual: string[] = []
+  let translated = false
+  let lines: ScriptLine[] = [...s.lines]
+  const add = (l: Omit<ScriptLine, 'id'>): ScriptLine => ({ ...l, id: newId() })
+  const edit = (id: string, patch: Partial<ScriptLine>) => (lines = lines.map((l) => (l.id === id ? { ...l, en: undefined, ...patch } : l)))
+  const beforeHook = (extra: ScriptLine[]) => {
+    const i = lines.findIndex((l) => l.kind === 'hook')
+    lines.splice(i < 0 ? lines.length : i, 0, ...extra)
+  }
+  const size = () => lines.reduce((n, l) => n + l.zh.replace(/\s/g, '').length, 0)
+  const target = estimateChars(p.spec.episodeSeconds)
+  const stateOf = (name: string) => buildState(p, ep).characters.find((c) => c.name === name)
+  const say = (who: Person, zh: string) => add({ kind: 'dialogue', speaker: who.zh, speakerEn: who.en, zh })
+
+  switch (issue.title) {
+    case '开场缺少场景标题': {
+      const prev = [...(scriptOf(p.work, ep - 1)?.lines ?? [])].reverse().find((l) => l.kind === 'scene')
+      const own = lines.find((l) => l.kind === 'scene')
+      const heading = prev ? normalizeScene(prev.zh) : own ? normalizeScene(own.zh) : `${kit.places[ep % kit.places.length].zh} 日 内`
+      lines.unshift(add({ kind: 'scene', zh: heading }))
+      changes.push(`开头补上场景标题「${heading}」（${prev ? '接着上集结尾的场景' : own ? '沿用本集的场景' : '取题材常用场景'}）`)
+      break
+    }
+    case '场景标题格式不规范':
+      if (line) {
+        const zh = normalizeScene(line.zh)
+        edit(line.id, { zh })
+        changes.push(`场景标题「${line.zh.trim()}」改成「${zh}」`)
+      }
+      break
+    case '结尾没有钩子':
+    case '付费卡点没有钩子': {
+      const hook = bp?.hook.trim() || o?.hookLine.trim()
+      if (hook) {
+        lines.push(add({ kind: 'hook', zh: hook }))
+        changes.push(`结尾补上钩子，取自${bp?.hook.trim() ? '本集蓝图' : '集纲'}：「${clip(hook, 24)}」`)
+      } else manual.push('本集蓝图和集纲都没写末尾钩子：先在蓝图里定下钩子，AI 不擅自编悬念')
+      break
+    }
+    case '付费钩子不够力':
+      if (line) {
+        const own = bp?.hook.trim()
+        const zh = own && own !== line.zh.trim() && /[？?！!…—]/.test(own) ? own : `${line.zh.trim().replace(/[。.！!]+$/, '')}${pick(r, CLIFF_TAILS)}`
+        edit(line.id, { zh })
+        changes.push(own && zh === own ? '钩子换成本集蓝图里的末尾钩子' : '钩子收在答案揭晓之前，不新增剧情')
+      }
+      break
+    case '台词缺少角色名':
+      if (line) {
+        const who = speakerFor(lines, at)
+        const c = who ? p.work.characters.find((x) => x.name === who) : undefined
+        if (who && c) {
+          edit(line.id, { speaker: who, speakerEn: c.nameEn || who, en: line.en })
+          changes.push(`「${clip(line.zh, 12)}」补上说话人${who}（同场两人对戏，轮到${who}）`)
+        } else manual.push(`「${clip(line.zh, 12)}」从上下文判断不出是谁说的，请补上说话人`)
+      }
+      break
+    case 'AI 味词汇':
+      if (line) {
+        const zh = stripFillers(line.zh).trim()
+        if (zh) edit(line.id, { zh })
+        else lines = lines.filter((l) => l.id !== line.id)
+        changes.push(zh ? `删掉「${issue.quote}」等模型腔` : `删掉只有模型腔的一行「${clip(line.zh, 12)}」`)
+      }
+      break
+    case '台词过长':
+      if (line) {
+        const parts = splitLong(line.zh)
+        if (parts) {
+          lines.splice(lines.indexOf(line), 1, { ...line, zh: parts[0], en: undefined }, add({ ...line, zh: parts[1], en: undefined }))
+          changes.push(`${line.speaker ?? ''}这句拆成两句：「${clip(parts[0], 12)}」/「${clip(parts[1], 12)}」`)
+        } else manual.push('这句中间没有能断开的标点，请手动精简')
+      }
+      break
+    case '台词未翻译': {
+      const out = translateLines(p, lines)
+      const n = out.lines.filter((l, i) => l.en && !lines[i].en).length
+      lines = out.lines
+      translated = n > 0
+      if (n) changes.push(`补译 ${n} 句台词`)
+      if (out.missing) manual.push(`${out.missing} 句改写过的台词本地无法翻译，接入模型后再译`)
+      break
+    }
+    case '篇幅不足': {
+      let total = size()
+      let n = 0
+      lines = lines.flatMap((l) => {
+        if (total >= target * 0.85 || l.kind !== 'action' || /^△（/.test(l.zh)) return [l]
+        const zh = `△ ${fill(pick(r, EXPAND_ACTION), ctx)}`
+        total += zh.length
+        n++
+        return [l, add({ kind: 'action', zh })]
+      })
+      changes.push(n ? `扩写 ${n} 处动作与镜头描写，不加新情节` : '没有可扩写的动作描写')
+      break
+    }
+    case '篇幅超出单集时长': {
+      const keys = p.work.foreshadows.map(foreshadowKey).filter(Boolean)
+      const keep = (l: ScriptLine) => l.kind !== 'action' || /^△（/.test(l.zh) || keys.some((k) => l.zh.replace(/\s/g, '').includes(k))
+      let n = 0
+      for (let i = lines.length - 1; i >= 0 && size() > target * 1.15; i--) {
+        if (keep(lines[i])) continue
+        lines.splice(i, 1)
+        n++
+      }
+      if (n) changes.push(`删掉 ${n} 处普通动作描写，伏笔、承接与闪回保留，压到约 ${size()} 字`)
+      if (size() > target * 1.15) manual.push('只删动作描写压不到时长内：考虑把一场戏挪到下一集')
+      break
+    }
+    case '人物未登记 / 称谓不统一': {
+      const name = issue.quote ?? line?.speaker ?? ''
+      const c = registeredAs(p, name)
+      if (c) {
+        const n = lines.filter((l) => l.speaker === name).length
+        lines = lines.map((l) => (l.speaker === name ? { ...l, speaker: c.name, speakerEn: c.nameEn || c.name } : l))
+        changes.push(`「${name}」统一成人物设定里的${c.name}（${n} 句台词）`)
+      } else manual.push(`「${name}」对不上已登记的人物：去人物设定登记，或改成已登记的称谓（AI 不擅自新增人物）`)
+      break
+    }
+    case '仍出现对标剧人名': {
+      const name = issue.quote ?? ''
+      const c = p.work.characters.find((x) => x.benchmark.trim() === name)
+      if (c) {
+        lines = lines.map((l) => {
+          const zh = l.zh.split(name).join(c.name)
+          const speaker = l.speaker === name ? c.name : l.speaker
+          return zh === l.zh && speaker === l.speaker ? l : { ...l, zh, speaker, speakerEn: speaker === c.name ? c.nameEn || c.name : l.speakerEn, en: zh === l.zh ? l.en : undefined }
+        })
+        changes.push(`对标剧的「${name}」换成本剧对应的${c.name}`)
+      } else manual.push(`人物设定里没有哪个角色对应对标剧的「${name}」：先在人物设定里填好对应关系`)
+      break
+    }
+    case '主角本集没有台词': {
+      const hero = p.work.characters.find((c) => c.role === '主角')
+      const st = hero && stateOf(hero.name)
+      if (!hero) manual.push('还没有登记主角')
+      else if (st?.state && GONE.test(st.state)) manual.push(`${hero.name}在第 ${st.stateEp} 集已是「${st.state}」，本集是否开口需要编剧判断`)
+      else {
+        beforeHook([say(cast.hero, pick(r, HERO_LINES))])
+        changes.push(`结尾钩子前给主角${hero.name}补一句台词`)
+      }
+      break
+    }
+    case '久未出场': {
+      const name = issue.quote ?? ''
+      const st = stateOf(name)
+      if (line && st?.state && !GONE.test(st.state)) {
+        lines.splice(lines.indexOf(line), 0, add({ kind: 'action', zh: `△ 久未露面的${name}再次出现——${clip(st.state, 24)}。` }))
+        changes.push(`${name}出场前加一句交代，取自状态库第 ${st.stateEp} 集的「${clip(st.state, 16)}」`)
+      } else if (st?.state) manual.push(`${name}在第 ${st.stateEp} 集已是「${st.state}」，怎么回来需要编剧交代`)
+      else manual.push(`状态库里没有${name}的去向记录：请补一句交代，AI 不擅自编`)
+      break
+    }
+    case '状态突变没有交代': {
+      const text = lines.map((l) => l.zh).join('')
+      const silent = Object.entries(s.states).filter(([name, v]) => v.trim() && !lines.some((l) => l.speaker === name) && !text.includes(name))
+      if (silent.length) {
+        beforeHook(silent.map(([name, v]) => add({ kind: 'action', zh: `△ ${name}的近况传来：${v.trim().replace(/[。]$/, '')}。` })))
+        changes.push(`补一句交代 ${silent.map(([n]) => n).join('、')} 的状态变化（按本集记下的人物状态）`)
+      }
+      break
+    }
+    case '伏笔未埋设':
+    case '伏笔未回收': {
+      const kind = issue.title === '伏笔未埋设' ? 'plant' : 'payoff'
+      const flat = flatText(lines)
+      const list = p.work.foreshadows.filter((f) => (kind === 'plant' ? f.plantEp : f.payoffEp) === ep && foreshadowKey(f) && !flat.includes(foreshadowKey(f)))
+      beforeHook(
+        list.flatMap((f) =>
+          planLines(f, kind).map((l) => (l.kind === 'action' ? add({ kind: 'action', zh: l.zh }) : say(cast[l.speech.who], fill(l.speech.zh, ctx)))),
+        ),
+      )
+      if (list.length) changes.push(`按伏笔计划${kind === 'plant' ? '埋设' : '回收'}${list.map((f) => `「${foreshadowName(f)}」`).join('')}`)
+      break
+    }
+    case '没承接上一集的钩子': {
+      const prev = scriptOf(p.work, ep - 1)
+      const hook = prev && hookOf(prev)
+      if (hook) {
+        lines.splice(lines.findIndex((l) => l.kind === 'scene') + 1, 0, add({ kind: 'action', zh: `△（接上集）${hook}` }))
+        changes.push(`开场接住第 ${ep - 1} 集的结尾钩子`)
+      }
+      break
+    }
+    case '情绪低于目标曲线':
+    case '卡点没落在情绪波峰': {
+      const beat = bp?.conflict.trim() || o?.event.trim()
+      if (beat) {
+        beforeHook([add({ kind: 'action', zh: `△ 正面对峙：${clip(beat, 40)}` }), say(cast.hero, '今天当众把话说清楚——谁也别想再糊弄过去！')])
+        changes.push(`结尾前加一场正面对峙，冲突取自${bp?.conflict.trim() ? '本集蓝图的「冲突与转折」' : '集纲'}`)
+      } else manual.push('本集蓝图和集纲都没写冲突：先补蓝图，再决定加哪场戏')
+      break
+    }
+    case '大反转不够明显': {
+      const payoff = p.work.foreshadows.find((f) => f.payoffEp === ep && foreshadowKey(f))
+      const turn = bp?.conflict.split(/转折[:：]?|，却|，但|没想到/).slice(1).join('，').trim()
+      if (payoff) {
+        beforeHook([add({ kind: 'action', zh: `△ 真相揭晓——${clauseOf(payoff)}。` })])
+        changes.push(`把伏笔「${foreshadowName(payoff)}」的真相当面揭开（伏笔计划本集回收）`)
+      } else if (turn) {
+        beforeHook([add({ kind: 'action', zh: `△ 原来，${turn.replace(/[。]$/, '')}。` })])
+        changes.push('按本集蓝图的转折写一场明确的揭秘')
+      } else manual.push('伏笔计划和本集蓝图里都没有本集的反转：先定下反转内容')
+      break
+    }
+    case '场景单调':
+      manual.push('换场景会牵动走位与人物调度，AI 不擅自改：可在本集蓝图里换场景后重写')
+      break
+    default:
+      manual.push('这类问题需要编剧判断，AI 没有改动正文')
+  }
+
+  const guarded = guardFix(p, ep, s.lines, lines)
+  // 改动全被设定挡回时，不再报「改了什么」
+  const same = guarded.lines.length === s.lines.length && guarded.lines.every((l, i) => l === s.lines[i])
+  return { lines: guarded.lines, changes: same && !translated ? [] : changes, manual: [...manual, ...guarded.dropped], checked: guarded.checked, ...(translated ? { translated } : {}) }
 }
 
 /** 定稿后提炼本集要点，回填到分集蓝图 */

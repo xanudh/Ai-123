@@ -4,11 +4,14 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
-import { AiButton, CheckList, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
+import { WriteButton } from '../../../components/project/ModelBits'
+import { AiButton, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Card, EmptyState, buttonClass, dotBefore } from '../../../components/ui'
 import { DRAFT_STATUS_META } from '../../../domain/constants'
+import { modelLabel } from '../../../domain/models'
+import { REVIEW_BASIS, basisLabel } from '../../../domain/review'
 import { preWriteCheck } from '../../../domain/state'
-import type { DraftReview, DraftRevision, EpisodeDraft, Project } from '../../../domain/types'
+import type { DraftReview, DraftRevision, EpisodeDraft, ModelId, Project } from '../../../domain/types'
 import { blueprintOf, carryOf, draftLabel, draftsOf, plainText, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
@@ -24,7 +27,8 @@ import { useCurrentProject } from '../ProjectLayout'
 import { NotesTab } from './NotesTab'
 import { ScriptEditor } from './ScriptEditor'
 import type { LinePick, Updater } from './ScriptEditor'
-import { MAX_REVISE_ROUNDS, REVIEW_SCOPE, addDraft, draftPath, finalPath, finalizeDraft, linesSig, patchDraft, reviewCounts, reviseRounds, scriptStagePath } from './ops'
+import { MAX_REVISE_ROUNDS, addDraft, draftPath, finalPath, finalizeDraft, linesSig, openBlocks, patchDraft, reviewBase, reviewCounts, reviseRounds, scriptStagePath } from './ops'
+import { FinalGate, KeptList, ReviewItems } from './ReviewItems'
 
 /** 定稿按钮：绿色主按钮 */
 const finalButton =
@@ -87,7 +91,10 @@ export default function DraftPage() {
   const patchWork = useProjects((s) => s.patchWork)
   const { running, run } = useAiTask()
   const [confirmFinal, setConfirmFinal] = useState(false)
+  const [gate, setGate] = useState(false)
   const [notice, setNotice] = useState<DraftReview | null>(null)
+  // 点审稿意见里的原句：正文滚到那一行并高亮
+  const [focusLine, setFocusLine] = useState<string | null>(null)
   // 正文里选中的段落：状态库侧栏「标注」给它加标注
   const [pick, setPick] = useState<LinePick | null>(null)
   const v2 = useV2()
@@ -149,8 +156,12 @@ export default function DraftPage() {
   const reviseCapped = rounds >= MAX_REVISE_ROUNDS
   const lastReview = draft.reviews.at(-1)
   const reviewed = !!lastReview?.sig && lastReview.sig === linesSig(draft)
-  const nextLabel = `草稿_v${(newest?.version ?? draft.version) + 1}`
   const source = draft.from ? w.drafts.find((d) => d.id === draft.from) : undefined
+  // AI 修稿出来的版本：审稿是复审，对照修稿依据的那份审稿
+  const base = reviewBase(w, draft)
+  const baseNo = base && source ? `${draftLabel(source)} 的审稿 #${source.reviews.indexOf(base.review) + 1}` : ''
+  const blocks = openBlocks(w, draft)
+  const nextLabel = `草稿_v${(newest?.version ?? draft.version) + 1}`
   // 重新生成和写新一集走同一套写作前检查
   const writeBlock = preWriteCheck(project, draft.ep).find((c) => c.level === 'block')
   // 版本二：按审稿状态推荐下一步，只有推荐的按钮是主按钮
@@ -167,8 +178,8 @@ export default function DraftPage() {
   const setNotes: Updater<EpisodeDraft['notes'][number]> = (update) => patch((d) => ({ notes: update(d.notes) }))
 
   /** 只对本集重新写一版正文：生成下一个版本号的草稿，当前版本保留在草稿箱 */
-  const regenerate = async () => {
-    const created = await writeDraft(project.id, draft.ep, run)
+  const regenerate = async (model?: ModelId) => {
+    const created = await writeDraft(project.id, draft.ep, run, model)
     if (created) navigate(draftPath(project, created.id))
   }
 
@@ -184,7 +195,7 @@ export default function DraftPage() {
     const latest = latestProject(project.id)
     if (!latest) return
     const revision: DraftRevision = { ...(basis && { reviewId: basis.id, reviewNo: d.reviews.indexOf(basis) + 1 }), changes: result.changes, manual: result.manual }
-    const { draft: created, drafts } = addDraft(latest.work, d.ep, { title: d.title, lines: result.lines, states: d.states }, d.id, revision)
+    const { draft: created, drafts } = addDraft(latest.work, d.ep, { title: d.title, lines: result.lines, states: d.states, model: result.model }, d.id, revision)
     patchWork(project.id, { drafts }, `AI 修稿：第 ${d.ep} 集 ${draftLabel(created)}${basis ? `（按审稿 #${revision.reviewNo}）` : ''}`)
     toast(`已生成 ${draftLabel(created)}${basis ? `（按审稿 #${revision.reviewNo}）` : ''}${result.manual.length ? `，${result.manual.length} 条意见需人工处理` : ''}`)
     navigate(draftPath(project, created.id))
@@ -192,16 +203,26 @@ export default function DraftPage() {
     openPanel('reviews')
   }
 
-  const audit = async () => {
+  /** AI 审稿：修稿出来的版本默认复审（只查上一轮意见与改过的段落），full 全量重审 */
+  const audit = async (kind?: 'full') => {
     const cur = latestProject(project.id)
     const d = cur?.work.drafts.find((x) => x.id === draft.id)
     if (!cur || !d) return
-    const result = await run('review', (signal) => reviewDraft(cur, d, signal))
+    const result = await run('review', (signal) => reviewDraft(cur, d, { base: reviewBase(cur.work, d), kind }, signal))
     if (!result) return
     const r: DraftReview = { id: newId(), at: new Date().toISOString(), ...result, sig: linesSig(d) }
     patch((x) => ({ reviews: [...x.reviews, r] }), `AI 审稿：第 ${d.ep} 集 ${draftLabel(d)}`)
     setNotice(r)
     setParams({ review: r.id })
+  }
+
+  /** 定稿：最近一份审稿里还有没解决的严重问题时先过关口——改掉，或写明理由保留不改 */
+  const tryFinalize = () => {
+    const cur = latestProject(project.id)
+    const d = cur?.work.drafts.find((x) => x.id === draft.id)
+    if (cur && d && openBlocks(cur.work, d).length) return setGate(true)
+    if (final) setConfirmFinal(true)
+    else finalize()
   }
 
   const finalize = () => {
@@ -221,8 +242,8 @@ export default function DraftPage() {
         分集蓝图
       </Link>
 
-      {/* 顶栏：标题 · 字数 · 状态 · 修稿 / 审稿 / 定稿 */}
-      <Card className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3">
+      {/* 顶栏：标题 · 字数 · 状态 · 修稿 / 审稿 / 定稿；叠在正文格式栏之上，下拉菜单与说明浮层不被遮住 */}
+      <Card className="relative z-40 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="shrink-0 text-[15px] font-semibold text-ink-900 tabular-nums">第 {draft.ep} 集</span>
@@ -236,6 +257,9 @@ export default function DraftPage() {
             {/* 版本名里已经有「草稿」，状态只在已修稿 / 已定稿时单独标出 */}
             {draft.status !== 'draft' && <Badge tone={meta.tone}>{meta.label}</Badge>}
             <span>{draftLabel(draft)}</span>
+            <span data-draft-model className={clsx(dotBefore, !draft.model && 'text-ink-400')} title={draft.model ? `这一版由 ${modelLabel(draft.model)} ${draft.revision ? '修稿生成' : '写出'}` : '这一版写于加入模型选择之前，没有记下模型'}>
+              {draft.model ? `${modelLabel(draft.model)} ${draft.revision ? '修稿' : '生成'}` : '模型未记录'}
+            </span>
             <span className={clsx(dotBefore, 'tabular-nums')}>{wordCount(draft).toLocaleString()} 字</span>
             <button type="button" data-open-notes onClick={() => openPanel('notes')} className={clsx(dotBefore, draft.notes.length ? 'text-amber-700 hover:text-amber-800' : 'hover:text-brand-600')}>
               {draft.notes.length ? `${draft.notes.length} 条标注` : '加标注'}
@@ -248,15 +272,16 @@ export default function DraftPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <AiButton
+          <WriteButton
+            project={project}
             variant="secondary"
             loading={running === 'write'}
             disabled={!!running || !!writeBlock}
             title={writeBlock ? writeBlock.text : `只对第 ${draft.ep} 集按蓝图重新写一版正文，生成 ${nextLabel}；当前版本保留在草稿箱`}
-            onClick={regenerate}
+            onWrite={regenerate}
           >
             重新生成
-          </AiButton>
+          </WriteButton>
           <AiButton
             variant={suggested('revise')}
             loading={running === 'revise'}
@@ -264,14 +289,20 @@ export default function DraftPage() {
             title={
               reviseCapped
                 ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮：请按审稿意见人工修改，或直接定稿`
-                : `${lastReview ? `按审稿 #${draft.reviews.length} 的意见逐条修改` : '还没审稿：按标注与自检修改（先 AI 审稿，可按审稿意见逐条改）'}${draft.notes.length ? `，${draft.notes.length} 条标注一并改写` : ''}，生成 ${nextLabel}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
+                : `${lastReview ? `按审稿 #${draft.reviews.length} 的意见逐条修改（AI 改不动、保留不改的不动）` : '还没审稿：按标注与自检修改（先 AI 审稿，可按审稿意见逐条改）'}${draft.notes.length ? `，${draft.notes.length} 条标注一并改写` : ''}，生成 ${nextLabel}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
             }
             onClick={() => revise()}
           >
             AI 修稿
           </AiButton>
           <span className="flex items-center gap-1">
-            <AiButton variant={suggested('review')} loading={running === 'review'} disabled={!!running || reviewed} title={reviewed ? '正文自上次审稿后没有改动，无需重复审稿' : undefined} onClick={audit}>
+            <AiButton
+              variant={suggested('review')}
+              loading={running === 'review'}
+              disabled={!!running || reviewed}
+              title={reviewed ? '正文自上次审稿后没有改动，无需重复审稿' : base ? `复审：只查${baseNo}的意见改没改掉、改过的段落有没有新问题；要从头查用审核报告里的「全量重审」` : undefined}
+              onClick={() => audit()}
+            >
               AI 审稿
             </AiButton>
             <span className="group relative">
@@ -283,21 +314,24 @@ export default function DraftPage() {
                 className="invisible absolute top-full right-0 z-30 mt-1.5 w-80 rounded-lg border border-line bg-white p-3 text-left opacity-0 shadow-pop transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
               >
                 <div className="mb-1.5 text-[13px] font-medium text-ink-900">AI 审稿检查什么</div>
+                <p className="mb-1.5 text-xs leading-5 text-ink-500">每条意见都写明依据和正文原句；说不出依据的只算建议。AI 写作也按这几项写。</p>
                 <ul className="space-y-1 text-xs leading-5 text-ink-700">
-                  {REVIEW_SCOPE.map((x) => (
-                    <li key={x} className="flex gap-1.5">
+                  {REVIEW_BASIS.map((x) => (
+                    <li key={x.key} className="flex gap-1.5">
                       <span className="mt-2 size-1 shrink-0 rounded-full bg-ink-300" />
-                      {x}
+                      <span>
+                        <span className="font-medium text-ink-900">{x.label}</span>：{x.covers}
+                      </span>
                     </li>
                   ))}
                 </ul>
                 <p className="mt-2 border-t border-line pt-2 text-xs leading-5 text-ink-500">
-                  兜底：正文没改动时不重复审稿；同一集最多 AI 修稿 {MAX_REVISE_ROUNDS} 轮，之后请人工修改或直接定稿，避免审稿与修稿无限循环。
+                  不会无限循环：修稿后的复审只查上一轮意见改没改掉、改过的段落；两轮没改掉或改好又出现的标为「AI 改不动」，交给你处理；你保留不改的不再提。只有严重问题拦定稿，同一集最多 AI 修稿 {MAX_REVISE_ROUNDS} 轮。
                 </p>
               </div>
             </span>
           </span>
-          <button type="button" className={advice && advice.action !== 'final' ? finalOutline : finalButton} disabled={draft.status === 'final' || !!running} onClick={() => (final ? setConfirmFinal(true) : finalize())}>
+          <button type="button" className={advice && advice.action !== 'final' ? finalOutline : finalButton} disabled={draft.status === 'final' || !!running} onClick={tryFinalize}>
             <ClipboardCheck size={14} />
             {draft.status === 'final' ? '已定稿' : '定稿'}
           </button>
@@ -321,7 +355,8 @@ export default function DraftPage() {
       {reviseCapped && draft.status === 'draft' && (
         <p className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900">
           <Info size={14} className="shrink-0 text-amber-600" />
-          本集已 AI 修稿 {MAX_REVISE_ROUNDS} 轮，自动修稿已停止：请按审稿意见人工修改这一版，或直接定稿。
+          本集已 AI 修稿 {MAX_REVISE_ROUNDS} 轮，自动修稿已停止：请按审稿意见人工修改这一版
+          {blocks.length ? `；剩下的 ${blocks.length} 个严重问题改掉或写明理由保留不改后即可定稿` : '，或直接定稿'}。
         </p>
       )}
       {draft.status === 'revised' && (
@@ -355,6 +390,7 @@ export default function DraftPage() {
         notes={draft.notes}
         onNotes={setNotes}
         onPick={setPick}
+        focusLineId={focusLine}
         tips={['要标注某段：点选后在状态库的「标注」里写下问题，AI 修稿时一并改写']}
       />
 
@@ -395,6 +431,20 @@ export default function DraftPage() {
               ) : (
                 <p className="text-xs text-ink-400">本集还没有蓝图</p>
               )}
+              {draft.basis && (
+                <div data-write-basis className="mt-4 border-t border-line pt-3">
+                  <div className="mb-1.5 text-[13px] font-medium text-ink-900">写作依据</div>
+                  <p className="mb-2 text-xs text-ink-400">AI 写这一版时对照的设定，和审稿是同一份清单</p>
+                  <ul className="space-y-1.5 text-[12.5px] leading-5">
+                    {draft.basis.map((b) => (
+                      <li key={b.basis} className="flex gap-2">
+                        <span className="w-16 shrink-0 text-ink-400">{basisLabel(b.basis)}</span>
+                        <span className="min-w-0 text-ink-900">{b.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : sideTab === 'reviews' ? (
             <div className="space-y-2">
@@ -402,8 +452,9 @@ export default function DraftPage() {
               {reviews.length ? (
                 <ul className="px-1.5">
                   {reviews.map((r) => {
-                    const { block, warn } = reviewCounts(r)
+                    const { block, warn } = reviewCounts(r, w, draft.ep)
                     const shown = review?.id === r.id
+                    const recheck = r.kind === 'recheck'
                     return (
                       <li key={r.id}>
                         <button
@@ -413,7 +464,10 @@ export default function DraftPage() {
                           className={clsx('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px]', shown ? 'bg-brand-50' : 'hover:bg-canvas')}
                         >
                           <span className="font-medium text-ink-900">#{reviewNo(r)}</span>
-                          <span className="flex-1 text-xs text-ink-400">{formatDateTime(r.at)}</span>
+                          <span className="flex-1 text-xs text-ink-400">
+                            {r.kind === 'recheck' ? '复审 · ' : r.baseId ? '全量 · ' : ''}
+                            {formatDateTime(r.at)}
+                          </span>
                           <span className="text-xs tabular-nums">
                             <span className={block ? 'text-red-600' : 'text-ink-400'}>{block} 严重</span>
                             <span className="text-ink-300"> · </span>
@@ -424,8 +478,31 @@ export default function DraftPage() {
                           <div data-review-detail className="space-y-2.5 px-2.5 pt-1 pb-3">
                             <div className="text-xs text-ink-500">
                               评分 <span className={clsx('text-[13px] font-semibold tabular-nums', r.score >= 4 ? 'text-emerald-700' : r.score >= 3 ? 'text-amber-700' : 'text-red-600')}>{r.score} / 5</span>
+                              {r.model && <span data-review-model> · {modelLabel(r.model)} 审稿</span>}
                             </div>
-                            <CheckList items={r.items} />
+                            {r.baseId && (
+                              <div data-review-kind className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-canvas px-2.5 py-1.5 text-xs leading-5 text-ink-500">
+                                <span>
+                                  {recheck ? '复审：只查' : '全量重审，并跟踪'}
+                                  {baseNo || '上一轮审稿'}的意见{recheck ? '改没改掉、改过的段落有没有新问题' : ''}
+                                </span>
+                                {recheck && r.id === lastReview?.id && editable && (
+                                  <button type="button" data-full-review disabled={!!running} onClick={() => audit('full')} className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">
+                                    全量重审
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <ReviewItems
+                              project={project}
+                              ep={draft.ep}
+                              items={r.items}
+                              canKeep={draft.status !== 'final'}
+                              onLocate={(id) => {
+                                setFocusLine(null)
+                                requestAnimationFrame(() => setFocusLine(id))
+                              }}
+                            />
                             {block + warn > 0 && (
                               <div className="flex flex-wrap items-center gap-2 pt-1">
                                 <AiButton size="sm" variant="secondary" loading={running === 'revise'} disabled={!!running || reviseCapped} title={reviseCapped ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮` : undefined} onClick={() => revise(r.id)}>
@@ -443,6 +520,7 @@ export default function DraftPage() {
               ) : (
                 <p className="px-4 text-xs text-ink-400">{draft.revision ? '这一版还没审过：再点「AI 审稿」确认意见都改到了' : '点击页面上方「AI 审稿」生成审核报告'}</p>
               )}
+              <KeptList project={project} ep={draft.ep} />
             </div>
           ) : sideTab === 'notes' ? (
             <NotesTab lines={draft.lines} notes={draft.notes} pick={pick} onNotes={setNotes} footer="AI 修稿时一并改写" />
@@ -456,17 +534,26 @@ export default function DraftPage() {
           {(() => {
             const { block, warn } = reviewCounts(notice)
             const passed = !block && !warn
+            const tally = (s: string) => notice.items.filter((i) => i.status === s).length
+            const stuck = tally('stuck') + tally('back')
             return (
               <div className="flex gap-3">
                 {block ? <AlertTriangle size={20} className="mt-0.5 shrink-0 text-red-500" /> : passed ? <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-emerald-500" /> : <Info size={20} className="mt-0.5 shrink-0 text-amber-500" />}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-[14px] font-semibold text-ink-900">审稿完成</span>
+                    <span className="text-[14px] font-semibold text-ink-900">{notice.kind === 'recheck' ? '复审完成' : '审稿完成'}</span>
                     <span className={clsx('text-[13px] font-semibold tabular-nums', notice.score >= 4 ? 'text-emerald-700' : notice.score >= 3 ? 'text-amber-700' : 'text-red-600')}>{notice.score} / 5</span>
                     <span className="text-xs text-ink-500 tabular-nums">
                       {block} 严重 · {warn} 建议
                     </span>
                   </div>
+                  {notice.baseId && (
+                    <p data-recheck-tally className="mt-1 text-xs text-ink-500">
+                      上一轮意见：已改掉 {tally('fixed')} · 仍在 {tally('still')}
+                      {stuck ? ` · AI 改不动 ${stuck}（交给你处理）` : ''}
+                      {tally('new') ? ` · 新发现 ${tally('new')}` : ''}
+                    </p>
+                  )}
                   <p className="mt-1 text-[13px] leading-5 text-ink-700">{passed ? '审稿通过，可以定稿' : reviewGist(notice)}</p>
                   <div className="mt-3 flex justify-end gap-2">
                     <button type="button" onClick={() => setNotice(null)} className={buttonClass('ghost', 'sm')}>
@@ -492,6 +579,25 @@ export default function DraftPage() {
             )
           })()}
         </div>
+      )}
+
+      {gate && (
+        <FinalGate
+          project={project}
+          draft={draft}
+          items={blocks}
+          stale={!reviewed}
+          onClose={() => setGate(false)}
+          onReview={() => {
+            setGate(false)
+            audit()
+          }}
+          onPass={() => {
+            setGate(false)
+            if (final) setConfirmFinal(true)
+            else finalize()
+          }}
+        />
       )}
 
       <ConfirmDialog

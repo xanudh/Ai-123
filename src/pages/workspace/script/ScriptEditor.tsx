@@ -376,7 +376,7 @@ export function ScriptEditor({
 
   const current = lines.find((l) => l.id === active)
   const ribbon = !readOnly && (
-    <div role="toolbar" aria-label="格式" className="sticky top-0 z-30 flex flex-wrap items-center gap-0.5 rounded-t-xl border-b border-line bg-white/95 px-3 py-1.5 backdrop-blur">
+    <div role="toolbar" aria-label="格式" className="sticky top-stick-0 z-30 flex flex-wrap items-center gap-0.5 rounded-t-xl border-b border-line bg-white/95 px-3 py-1.5 backdrop-blur">
       <FormatButton label="加粗（⌘B）" disabled={!current} onClick={() => current && wrap(current, '**')}>
         <Bold size={14} strokeWidth={2.5} />
       </FormatButton>

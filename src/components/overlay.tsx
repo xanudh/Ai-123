@@ -149,10 +149,16 @@ export function Menu({
   trigger,
   items,
   align = 'right',
+  header,
+  note,
 }: {
   trigger: (props: { onClick: (e: React.MouseEvent) => void; 'aria-expanded': boolean }) => ReactNode
   items: { label: string; icon?: ReactNode; danger?: boolean; onSelect: () => void }[]
   align?: 'left' | 'right'
+  /** 菜单顶部的小标题 */
+  header?: string
+  /** 标题下的提示：选之前先看到 */
+  note?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -177,6 +183,8 @@ export function Menu({
             align === 'right' ? 'right-0' : 'left-0',
           )}
         >
+          {header && <div className="px-2.5 pt-1 pb-1.5 text-xs whitespace-nowrap text-ink-400">{header}</div>}
+          {note && <div className="mb-1 w-60 px-1">{note}</div>}
           {items.map((item) => (
             <button
               key={item.label}

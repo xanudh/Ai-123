@@ -1,8 +1,9 @@
 import clsx from 'clsx'
 import { ChevronLeft, CloudCheck, Copy, Download, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useMatch, useNavigate, useOutletContext, useParams } from 'react-router'
 import { ConfirmDialog, Menu } from '../../components/overlay'
+import { ProjectModels } from '../../components/project/ModelBits'
 import { ModeBadge, ProjectCover, StatusBadge } from '../../components/project/ProjectBits'
 import { StatePanel } from '../../components/project/StatePanel'
 import { Badge, EmptyState, buttonClass } from '../../components/ui'
@@ -81,6 +82,23 @@ export default function ProjectLayout() {
   const navCollapsed = useNavFold((s) => s.collapsed)
   // 概览是项目首页，页头完整展示；进了具体环节只留一行，把高度让给正文
   const isOverview = !!useMatch('/projects/:id')
+  // 环节页的页头吸顶（随时能换模型）；量出高度写进 --stick，页面里其他吸顶块据此让位
+  const rootRef = useRef<HTMLDivElement>(null)
+  const headRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const root = rootRef.current
+    const head = headRef.current
+    if (!root) return
+    if (!head) {
+      root.style.removeProperty('--stick')
+      return
+    }
+    const sync = () => root.style.setProperty('--stick', `${head.offsetHeight}px`)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(head)
+    return () => ro.disconnect()
+  }, [isOverview, !!project])
 
   if (!project) {
     return (
@@ -118,6 +136,8 @@ export default function ProjectLayout() {
           已自动保存 · {formatDateTime(project.updatedAt)}
         </span>
       )}
+      {/* 模型是整个项目的选择，各环节都在页头看得到、随时可换 */}
+      <ProjectModels project={project} size={isOverview ? 'md' : 'sm'} />
       <Link to="settings" className={buttonClass('secondary', isOverview ? 'md' : 'sm')}>
         <Settings size={isOverview ? 15 : 14} />
         项目设置
@@ -148,14 +168,15 @@ export default function ProjectLayout() {
   )
 
   return (
-    <div className={clsx('px-6 py-6 xl:px-8', docked && 'xl:pr-[404px]')}>
+    <div ref={rootRef} className={clsx('px-6 py-6 xl:px-8', docked && 'xl:pr-[404px]')}>
       {isOverview ? (
         <>
           <Link to="/projects" className="mb-4 inline-flex items-center gap-0.5 text-[13px] text-ink-500 hover:text-ink-900">
             <ChevronLeft size={15} />
             我的剧本
           </Link>
-          <header className="mb-6 flex flex-wrap items-center gap-4">
+          {/* 叠在页面内容之上：模型菜单不被下面的卡片盖住 */}
+          <header className="relative z-[45] mb-6 flex flex-wrap items-center gap-4">
             <CoverPicker project={project} />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -168,7 +189,14 @@ export default function ProjectLayout() {
           </header>
         </>
       ) : (
-        <header className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <header
+          ref={headRef}
+          data-project-head
+          className={clsx(
+            'sticky top-0 z-[45] -mx-6 -mt-3 mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 bg-canvas/90 px-6 py-3 backdrop-blur xl:-mx-8 xl:px-8',
+            docked && 'xl:mr-0 xl:pr-0',
+          )}
+        >
           <Link to="/projects" className="inline-flex shrink-0 items-center gap-0.5 text-[13px] text-ink-500 hover:text-ink-900">
             <ChevronLeft size={15} />
             我的剧本
@@ -188,7 +216,7 @@ export default function ProjectLayout() {
         {v2 ? (
           <StageNav project={project} />
         ) : (
-          <nav className="scrollbar-thin lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <nav data-stage-nav className="scrollbar-thin lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto">
             <div className="mb-2 px-2.5 text-[11px] font-medium tracking-wider text-ink-400">创作流程</div>
             <ol className="space-y-0.5">
               {stages.map((key, i) => {

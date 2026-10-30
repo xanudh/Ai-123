@@ -180,7 +180,7 @@ export interface CheckItem {
   text: string
 }
 
-const CHECK_ICON = {
+export const CHECK_ICON = {
   block: <OctagonX size={14} className="mt-[3px] shrink-0 text-red-500" />,
   warn: <AlertTriangle size={14} className="mt-[3px] shrink-0 text-amber-500" />,
   info: <Info size={14} className="mt-[3px] shrink-0 text-ink-400" />,

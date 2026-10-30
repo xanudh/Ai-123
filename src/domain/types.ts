@@ -4,6 +4,10 @@ export type ProjectMode = 'original' | 'adaptation' | 'video'
 export type Audience = 'female' | 'male' | 'all'
 
 export type ScriptLanguage = 'en_zh' | 'en' | 'zh'
+/** AI 模型分两类：video 只管视频转剧本的逐集解析，text 管其余所有文本环节 */
+export type ModelGroup = 'video' | 'text'
+/** 可选的大模型（按厂商，具体版本接入真实接口时再定） */
+export type ModelId = 'deepseek' | 'qwen' | 'doubao' | 'kimi' | 'gpt' | 'gemini'
 
 export type AspectRatio = '9:16' | '16:9' | '1:1'
 
@@ -290,12 +294,46 @@ export interface ScriptLine {
 export type DraftStatus = 'draft' | 'revised' | 'final'
 
 /** 审稿意见的类别：AI 修稿按它逐条处理；旧报告没有，修稿时按自检处理 */
-export type ReviewCode = 'short' | 'long' | 'scene' | 'hook' | 'carry' | 'plan' | 'hero' | 'unknown' | 'absent' | 'state' | 'paid' | 'filler' | 'longLine' | 'notes'
+export type ReviewCode =
+  | 'short'
+  | 'long'
+  | 'scene'
+  | 'hook'
+  | 'carry'
+  | 'plan'
+  | 'hero'
+  | 'unknown'
+  | 'absent'
+  | 'state'
+  | 'paid'
+  | 'filler'
+  | 'longLine'
+  | 'notes'
+  | 'rule'
+  | 'voice'
+  | 'event'
+
+/** 审稿意见对照的依据：核心设定 / 人物设定 / 状态库 / 集纲 / 蓝图 / 伏笔计划 / 格式与篇幅 / 文风；写作也按这几项写 */
+export type ReviewBasis = 'core' | 'character' | 'state' | 'outline' | 'blueprint' | 'foreshadow' | 'format' | 'style'
+
+/** 意见在修稿后的走向：new 新发现 / still 修稿后仍在 / stuck 两轮没改掉 / back 改好又出现 / fixed 已改掉；stuck 与 back 不再交给 AI 修稿 */
+export type ReviewItemStatus = 'new' | 'still' | 'stuck' | 'back' | 'fixed'
 
 export interface ReviewItem {
   level: 'block' | 'warn' | 'info' | 'ok'
   text: string
   code?: ReviewCode
+  /** 依据哪一项设定；没有依据的意见只算建议 */
+  basis?: ReviewBasis
+  /** 依据原文：设定里的那句话 */
+  ref?: string
+  /** 正文里出问题的那一行 */
+  lineId?: string
+  quote?: string
+  /** 同一个问题在各轮审稿里的标识：跟踪改没改掉、有没有反复 */
+  key?: string
+  /** 修稿后的复审里才有 */
+  status?: ReviewItemStatus
 }
 
 /** AI 审稿报告 */
@@ -306,6 +344,28 @@ export interface DraftReview {
   items: ReviewItem[]
   /** 审稿时正文的指纹：正文没改动就不重复审稿 */
   sig?: string
+  /** 审稿用的模型 */
+  model?: ModelId
+  /** recheck：修稿后的复审，只查上一轮意见改没改掉、改过的段落有没有新问题；full（或不写）：全量审稿 */
+  kind?: 'full' | 'recheck'
+  /** 对照的上一轮审稿（来源草稿上、修稿依据的那一份） */
+  baseId?: string
+}
+
+/** 编剧决定保留不改的审稿意见：之后的审稿不再提，严重问题要写理由 */
+export interface ReviewKeep {
+  ep: number
+  key: string
+  text: string
+  level: ReviewItem['level']
+  reason?: string
+  at: string
+}
+
+/** 写作时用到的依据：和审稿同一份清单 */
+export interface WriteBasisItem {
+  basis: ReviewBasis
+  text: string
 }
 
 /** AI 修稿记录 */
@@ -344,6 +404,10 @@ export interface EpisodeDraft {
   from?: string
   /** AI 修稿的依据与结果：按哪份审稿改的、改了什么、哪些要人工处理 */
   revision?: DraftRevision
+  /** 写出（或修出）这一版的模型 */
+  model?: ModelId
+  /** AI 写这一版时对照的依据（旧草稿没有） */
+  basis?: WriteBasisItem[]
   createdAt: string
   updatedAt: string
 }
@@ -404,6 +468,8 @@ export interface VideoEpisode {
   shots: Shot[]
   error?: string
   doneAt?: string
+  /** 解析这一集的视频模型 */
+  model?: ModelId
 }
 
 /** 合并后的完整剧本 */
@@ -461,6 +527,10 @@ export interface QaReport {
   issues: QaIssue[]
   /** 编剧标记为已处理 / 忽略的问题 */
   resolved: string[]
+  /** 用 AI 修稿处理掉的问题（同时记在 resolved 里）；重新质检时还在的会重新列出 */
+  fixed?: string[]
+  /** 质检用的模型 */
+  model?: ModelId
 }
 
 /** 项目在各创作环节的产出 */
@@ -478,6 +548,8 @@ export interface ProjectWork {
   drafts: EpisodeDraft[]
   scripts: EpisodeScript[]
   qa: QaReport | null
+  /** 编剧保留不改的审稿意见（旧数据没有） */
+  keeps?: ReviewKeep[]
 }
 
 export interface Project {
@@ -499,6 +571,8 @@ export interface Project {
   spec: ScriptSpec
   rhythm: RhythmFrame
   benchmark: Benchmark | null
+  /** 视频解析 / 文本两类模型，编剧在项目页头选；没选过的用默认 */
+  models?: Partial<Record<ModelGroup, ModelId>>
   status: ProjectStatus
   /** 封面配色序号 */
   palette: number
@@ -510,4 +584,4 @@ export interface Project {
 }
 
 /** 立项页收集的表单数据（不含系统字段与环节产出） */
-export type ProjectDraft = Omit<Project, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'activity' | 'sample' | 'work'>
+export type ProjectDraft = Omit<Project, 'id' | 'status' | 'models' | 'createdAt' | 'updatedAt' | 'activity' | 'sample' | 'work'>

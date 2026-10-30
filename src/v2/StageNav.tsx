@@ -45,7 +45,7 @@ export function StageNav({ project }: { project: Project }) {
   return (
     <nav
       data-collapsed={collapsed || undefined}
-      className="scrollbar-thin rounded-xl border border-line bg-white p-2 shadow-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
+      className="scrollbar-thin rounded-xl border border-line bg-white p-2 shadow-card lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto"
       aria-label="创作流程"
       // 草稿箱 / 正文章节树在白底上改用浅灰悬停、浅蓝选中
       style={{ '--tree-hover': 'var(--color-canvas)', '--tree-active': 'var(--color-brand-50)' } as CSSProperties}

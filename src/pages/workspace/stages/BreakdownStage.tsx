@@ -508,7 +508,7 @@ function ReviewBar({ project, bd }: { project: Project; bd: Breakdown }) {
   }
 
   return (
-    <div className={clsx('flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white px-5 py-3.5 shadow-card', v2 && 'sticky top-2 z-20')}>
+    <div className={clsx('flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white px-5 py-3.5 shadow-card', v2 && 'sticky top-stick-sm z-20')}>
       <div className="flex flex-wrap items-center gap-3 text-[13px]">
         <span className="font-medium">
           审核进度 <span className="tabular-nums">{done}/4</span>

@@ -13,7 +13,7 @@ import { STATE_TAB, activeTab, useStatePanel } from '../../store/statePanel'
 import { CheckList } from '../stage/StageKit'
 import { EventForm } from './EventForm'
 import { LateFix } from './LateFix'
-import { Badge, Segmented, Select } from '../ui'
+import { Badge, NumberInput, Segmented, Select } from '../ui'
 
 type Tab = 'ep' | 'phase' | 'all'
 
@@ -143,22 +143,37 @@ function ForeshadowList({ list, empty, project, ep }: { list: ForeshadowAt[]; em
 }
 
 /** 下拉直接跳到任意一集 / 一段，两侧箭头逐个翻 */
-function Stepper({ label, value, options, onChange }: { label: string; value: number; options: { value: number; label: string }[]; onChange: (value: number) => void }) {
+/** 上一个 / 下一个 + 中间的选择：给了 options 是下拉；给了 max 是可直接输入的数字（从 1 起，前后缀如「第 / 集」） */
+function Stepper({
+  label,
+  value,
+  onChange,
+  ...pick
+}: { label: string; value: number; onChange: (value: number) => void } & ({ options: { value: number; label: string }[] } | { max: number; unit: [string, string] })) {
   const btn = 'rounded-md p-1 text-ink-500 hover:bg-canvas hover:text-ink-900 disabled:opacity-30 disabled:hover:bg-transparent'
-  const i = options.findIndex((o) => o.value === value)
+  const values = 'options' in pick ? pick.options.map((o) => o.value) : Array.from({ length: pick.max }, (_, k) => k + 1)
+  const i = values.indexOf(value)
   return (
     <div className="flex items-center gap-1">
-      <button type="button" className={btn} aria-label="上一个" disabled={i <= 0} onClick={() => onChange(options[i - 1].value)}>
+      <button type="button" className={btn} aria-label="上一个" disabled={i <= 0} onClick={() => onChange(values[i - 1])}>
         <ChevronLeft size={15} />
       </button>
-      <Select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 w-auto max-w-40 px-2 text-[13px] font-semibold tabular-nums">
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </Select>
-      <button type="button" className={btn} aria-label="下一个" disabled={i < 0 || i >= options.length - 1} onClick={() => onChange(options[i + 1].value)}>
+      {'options' in pick ? (
+        <Select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 w-auto max-w-40 px-2 text-[13px] font-semibold tabular-nums">
+          {pick.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      ) : (
+        <span className="flex items-center gap-1 text-[13px] font-semibold text-ink-900">
+          {pick.unit[0]}
+          <NumberInput aria-label={label} title={`输入 1–${pick.max}，回车跳转`} value={value} min={1} max={pick.max} onCommit={onChange} className="h-7 w-12 px-1 text-[13px] font-semibold" />
+          {pick.unit[1]}
+        </span>
+      )}
+      <button type="button" className={btn} aria-label="下一个" disabled={i < 0 || i >= values.length - 1} onClick={() => onChange(values[i + 1])}>
         <ChevronRight size={15} />
       </button>
     </div>
@@ -535,7 +550,7 @@ export function StatePanel({ project }: { project: Project }) {
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
             <Segmented<Tab> value={tab} onChange={setTab} options={tabsOf(focus).map((t) => ({ value: t, label: TAB_LABEL[t] }))} />
             {tab === 'ep' && ep !== null && (
-              <Stepper label="选择集" value={ep} options={Array.from({ length: total }, (_, k) => ({ value: k + 1, label: `第 ${k + 1} 集` }))} onChange={toEp} />
+              <Stepper label="选择集" value={ep} max={total} unit={['第', '集']} onChange={toEp} />
             )}
             {tab === 'phase' && <Stepper label="选择阶段" value={phase} options={ranges.map((_, k) => ({ value: k, label: `第 ${k + 1} 段 · ${names[k]}` }))} onChange={toPhase} />}
           </div>
