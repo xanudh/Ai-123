@@ -13,6 +13,9 @@ export interface PanelTab {
 /** 状态库本身那一页的 key */
 export const STATE_TAB = 'state'
 
+/** 页面检查（大纲检查、写作前检查）那一页的 key */
+export const CHECK_TAB = 'checks'
+
 interface StatePanelState {
   /** 侧栏展开 / 收起；记住上次的选择 */
   open: boolean
@@ -69,3 +72,10 @@ export function usePanelTabs(tabs: PanelTab[] | null) {
 
 /** 当前实际显示的标签页：记住的那页不在本页的标签里时退回第一页 */
 export const activeTab = (tabs: PanelTab[] | null, tab: string) => (!tabs ? STATE_TAB : tabs.some((t) => t.key === tab) ? tab : tabs[0].key)
+
+/** 展开状态库侧栏并切到某个标签页 */
+export function openPanelTab(tab: string) {
+  const panel = useStatePanel.getState()
+  panel.setTab(tab)
+  panel.setOpen(true)
+}

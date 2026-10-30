@@ -16,6 +16,7 @@ import type {
   Plot,
   PlotBeat,
   Project,
+  ProofItem,
   QaIssue,
   QaReport,
   ScriptLine,
@@ -31,6 +32,7 @@ import { modelOf } from '../domain/models'
 import { eventCandidates, foreshadowName, plainText } from '../domain/work'
 import type { EventCandidate } from '../domain/work'
 import { analyzeSource } from './mock/breakdown'
+import * as proof from './mock/proofread'
 import * as qa from './mock/qa'
 import * as video from './mock/video'
 import * as writer from './mock/writer'
@@ -38,7 +40,8 @@ import type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, E
 
 export { parseSource } from './mock/breakdown'
 export { SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME } from './mock/sampleScript'
-export { DEMO_SHOW, episodesFromFiles, linkError, platformOf } from './mock/video'
+export { DEMO_SHOW, episodesFromFiles, isOffTemplate, linkError, platformOf } from './mock/video'
+export { applyProofread } from './mock/proofread'
 export { architectureIssues, positionOf, viewpointRule } from './mock/writer'
 export { innovationLanding } from './mock/qa'
 export type { InnovationLanding } from './mock/qa'
@@ -389,10 +392,24 @@ export async function transcribeEpisode(
       if (i < ticks) await sleep(total / ticks, signal)
     }
   }
-  return video.transcribe(ep.ep)
+  return video.transcribe(ep.ep, video.offTemplateOf(job, ep))
 }
 
 export const MERGE_STEPS = ['按集数排序拼接', '接回被镜头切开的台词', '统一标点与场景格式', '去掉时间码，输出标准剧本'] as const
+
+export const PROOF_STEPS = ['逐集核对是否按模板输出', '统一人物名字的写法', '查同音错别字'] as const
+
+/**
+ * AI 校对合并好的剧本（项目的文本模型）：查出没按模板输出的集、人名写法不一、同音错别字，
+ * 只列出改法，编剧勾选确认后才用 applyProofread 写进剧本。
+ */
+export async function proofreadScript(project: Project, text: string, onStep: (index: number) => void, signal?: AbortSignal): Promise<{ items: ProofItem[]; model: ModelId }> {
+  for (let i = 0; i < PROOF_STEPS.length; i++) {
+    onStep(i)
+    await sleep(400 + Math.random() * 300, signal)
+  }
+  return { items: proof.proofread(text), model: modelOf(project, 'text') }
+}
 
 /** 合并全集转写稿，并自动修正格式 */
 export async function mergeTranscripts(episodes: VideoEpisode[], onStep: (index: number) => void, signal?: AbortSignal): Promise<MergedScript> {

@@ -1,12 +1,14 @@
 import clsx from 'clsx'
-import { ArrowRight, Eye, Layers, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, CheckCheck, Eye, Layers, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
+import { CheckLink, CheckTab, useCheckTab } from '../../../components/project/CheckTab'
 import { WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, AutoTextarea, CheckList, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, CardHeader, EmptyState, Field, Input, NumberInput, Select } from '../../../components/ui'
-import { DRAFT_STATUS_META, EPISODE_POSITIONS, SCRIPT_BATCH } from '../../../domain/constants'
+import { Badge, Button, Card, EmptyState, Field, Input, NumberInput, Select, dotBefore } from '../../../components/ui'
+import { DRAFT_STATUS_META, EPISODE_POSITIONS, EPISODE_RANGE, SCRIPT_BATCH } from '../../../domain/constants'
+import { rhythmOnResize } from '../../../domain/rhythm'
 import { buildState, preWriteCheck } from '../../../domain/state'
 import type { EpisodeBlueprint, Foreshadow, ModelId, Project } from '../../../domain/types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowName, plainText, prevHookOf, scriptOf } from '../../../domain/work'
@@ -17,6 +19,7 @@ import { useStateFocus } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
 import { EpisodeDots, EpisodeSteps } from '../../../v2/EpisodeSteps'
+import { FinalizeAll, finalizeRows } from '../script/FinalizeAll'
 import { addDraft, draftPath, finalPath, nextUnwritten } from '../script/ops'
 import { writeDraft } from '../script/write'
 
@@ -73,6 +76,8 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const writeEp = current?.ep ?? Math.min(next, total)
   const checks = preWriteCheck(project, writeEp)
   useStateFocus({ kind: 'ep', ep: writeEp })
+  // 写作前检查放在状态库侧栏的「检查」标签页
+  useCheckTab(checks)
   const writeBlock = checks.find((c) => c.level === 'block')
   const versions = draftsOf(w, writeEp)
   const final = scriptOf(w, writeEp)
@@ -81,6 +86,11 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const batchTo = Math.max(batchFrom, Math.min(range?.to ?? batchFrom + SCRIPT_BATCH - 1, total))
   let firstMissing = 1
   while (firstMissing <= total && blueprints.some((b) => b.ep === firstMissing)) firstMissing++
+  // 全部集都有蓝图时「+」加在最后：总集数加一，不能超过立项上限
+  const canGrow = firstMissing > total && total < EPISODE_RANGE.max
+  // 一键定稿：每集最新一版还是草稿的
+  const [finalizing, setFinalizing] = useState(false)
+  const toFinalize = finalizeRows(project)
 
   const setBlueprints = (list: EpisodeBlueprint[], note?: string) => patchWork(project.id, { blueprints: [...list].sort((a, b) => a.ep - b.ep) }, note)
 
@@ -131,9 +141,33 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
 
   const add = () => {
     const cur = latestProject(project.id)
-    if (!cur || firstMissing > total) return
-    setBlueprints([...cur.work.blueprints, blankBlueprint(cur, firstMissing)], `新增第 ${firstMissing} 集蓝图`)
-    setSelected(firstMissing)
+    if (!cur) return
+    if (firstMissing <= total) {
+      setBlueprints([...cur.work.blueprints, blankBlueprint(cur, firstMissing)], `新增第 ${firstMissing} 集蓝图`)
+      setSelected(firstMissing)
+      return
+    }
+    if (!canGrow) return
+    const n = total + 1
+    setPending({
+      title: `加第 ${n} 集？`,
+      desc: `全部 ${total} 集都已有蓝图。新增第 ${n} 集会把总集数从 ${total} 改为 ${n}，节奏框架与阶段分段随之调整（故事架构里也能改总集数）；第 ${n} 集还没有集纲，蓝图先空着由你填写，或到情节大纲生成本集集纲后再点「重新生成本集蓝图」。`,
+      confirmText: `加到 ${n} 集`,
+      action: grow,
+    })
+  }
+
+  /** 总集数加一，并给新的最后一集建一份空蓝图（越界时留下的旧蓝图直接沿用） */
+  const grow = () => {
+    const cur = latestProject(project.id)
+    if (!cur) return
+    const n = cur.spec.totalEpisodes + 1
+    if (n > EPISODE_RANGE.max) return
+    updateProject(project.id, { spec: { ...cur.spec, totalEpisodes: n }, rhythm: rhythmOnResize(cur, n) }, `总集数改为 ${n} 集`)
+    const latest = latestProject(project.id)
+    if (latest && !blueprintOf(latest.work, n)) setBlueprints([...latest.work.blueprints, blankBlueprint(latest, n)], `新增第 ${n} 集蓝图`)
+    setSelected(n)
+    toast(`已加到 ${n} 集，第 ${n} 集蓝图待填写`)
   }
 
   const markWriting = () => {
@@ -220,33 +254,30 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
       action: () => setBlueprints([], '清空全部分集蓝图'),
     })
 
-  const checkCard = (
-    <Card>
-      <CardHeader title={`写作前检查 · 第 ${writeEp} 集`} desc="对照剧本状态库：集纲与蓝图、上一集定稿、伏笔到期、钩子承接、人物最新状态" />
-      <div className="space-y-3 px-5 py-4">
-        <CheckList items={checks} empty="一切就绪，可以开始写作" />
-        {(versions.length > 0 || final) && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3 text-[13px]">
-            <span className="text-ink-500">本集进度</span>
-            {versions.slice(0, 3).map((d) => (
-              <Link key={d.id} to={draftPath(project, d.id)} className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-ink-900 hover:bg-canvas">
-                {draftLabel(d)}
-                <Badge tone={DRAFT_STATUS_META[d.status].tone}>{DRAFT_STATUS_META[d.status].label}</Badge>
-              </Link>
-            ))}
-            {final && (
-              <Link to={finalPath(project, writeEp)} className="flex items-center gap-1 font-medium text-brand-600 hover:text-brand-700">
-                正文第 {writeEp} 集
-                <ArrowRight size={13} />
-              </Link>
-            )}
-          </div>
-        )}
-        <p className="text-xs text-ink-400">
-          {versions.length ? `再次写作会生成 草稿_v${versions[0].version + 1}，原有版本保留在草稿箱` : '写好的草稿放入草稿箱；审稿 / 修稿后定稿，归入正文章节'}
-        </p>
-      </div>
-    </Card>
+  const checkTab = (
+    <CheckTab title={`写作前检查 · 第 ${writeEp} 集`} desc="对照剧本状态库：集纲与蓝图、上一集定稿、伏笔到期、钩子承接、人物最新状态">
+      <CheckList items={checks} empty="一切就绪，可以开始写作" />
+      {(versions.length > 0 || final) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3 text-[13px]">
+          <span className="text-ink-500">本集进度</span>
+          {versions.slice(0, 3).map((d) => (
+            <Link key={d.id} to={draftPath(project, d.id)} className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-ink-900 hover:bg-canvas">
+              {draftLabel(d)}
+              <Badge tone={DRAFT_STATUS_META[d.status].tone}>{DRAFT_STATUS_META[d.status].label}</Badge>
+            </Link>
+          ))}
+          {final && (
+            <Link to={finalPath(project, writeEp)} className="flex items-center gap-1 font-medium text-brand-600 hover:text-brand-700">
+              正文第 {writeEp} 集
+              <ArrowRight size={13} />
+            </Link>
+          )}
+        </div>
+      )}
+      <p className="text-xs text-ink-400">
+        {versions.length ? `再次写作会生成 草稿_v${versions[0].version + 1}，原有版本保留在草稿箱` : '写好的草稿放入草稿箱；审稿 / 修稿后定稿，归入正文章节'}
+      </p>
+    </CheckTab>
   )
 
   const positions = current ? [...new Set<string>([...EPISODE_POSITIONS, current.position].filter(Boolean))] : []
@@ -316,10 +347,37 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                 )}
               </>
             )}
+            {w.drafts.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={blocked || !toFinalize.length || !!running}
+                title={toFinalize.length ? `${toFinalize.length} 集的最新一版还是草稿：勾选后按集号依次定稿` : '没有待定稿的草稿：每集最新一版都已定稿'}
+                onClick={() => setFinalizing(true)}
+              >
+                <CheckCheck size={14} />
+                一键定稿
+                {toFinalize.length > 0 && <span className="text-ink-400 tabular-nums">{toFinalize.length}</span>}
+              </Button>
+            )}
             <AiButton variant="secondary" loading={running === 'blueprints'} disabled={blocked || !!running} onClick={askGenerate}>
               AI 生成蓝图
             </AiButton>
-            <Button variant="secondary" size="sm" className="px-2" aria-label="新增一集蓝图" title={firstMissing > total ? '全部集都已有蓝图' : `新增第 ${firstMissing} 集蓝图`} disabled={firstMissing > total} onClick={add}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="px-2"
+              aria-label="新增一集蓝图"
+              title={
+                firstMissing <= total
+                  ? `新增第 ${firstMissing} 集蓝图`
+                  : canGrow
+                    ? `全部 ${total} 集都已有蓝图：点击加第 ${total + 1} 集（总集数改为 ${total + 1}）`
+                    : `全部 ${total} 集都已有蓝图，总集数已到上限 ${EPISODE_RANGE.max} 集`
+              }
+              disabled={(firstMissing > total && !canGrow) || !!running}
+              onClick={add}
+            >
               <Plus size={14} />
             </Button>
             <button
@@ -349,7 +407,6 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
               }
             />
           </Card>
-          {!blocked && checkCard}
         </>
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[232px_minmax(0,1fr)]">
@@ -420,7 +477,10 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                       <Trash2 size={14} />
                     </button>
                   </div>
-                  <span className="text-xs text-ink-400">修改自动保存</span>
+                  <span className="flex items-center text-xs text-ink-400">
+                    修改自动保存
+                    <CheckLink items={checks} className={clsx(dotBefore, 'ml-2')} />
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <AiButton
@@ -552,10 +612,12 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
               </div>
             </Card>
 
-            {checkCard}
           </div>
         </div>
       )}
+
+      {checkTab}
+      {finalizing && <FinalizeAll project={project} onClose={() => setFinalizing(false)} />}
 
       <ConfirmDialog
         open={!!pending}

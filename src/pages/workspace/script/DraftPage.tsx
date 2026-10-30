@@ -17,7 +17,7 @@ import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
 import { nextSeed, reviewDraft, reviseDraft } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
-import { STATE_TAB, activeTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
+import { STATE_TAB, activeTab, openPanelTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
 import { writeDraft } from './write'
@@ -38,11 +38,7 @@ const finalButton =
 type SideTab = 'blueprint' | 'reviews' | 'notes'
 
 /** 展开状态库侧栏并切到某个标签页 */
-const openPanel = (tab: SideTab) => {
-  const panel = useStatePanel.getState()
-  panel.setTab(tab)
-  panel.setOpen(true)
-}
+const openPanel = (tab: SideTab) => openPanelTab(tab)
 
 /** 审稿结果的一句话概括：先说严重问题，其次建议，都没有时给通过语 */
 const reviewGist = (r: DraftReview) => (r.items.find((i) => i.level === 'block') ?? r.items.find((i) => i.level === 'warn') ?? r.items.find((i) => i.level === 'ok'))?.text ?? '没有发现问题'

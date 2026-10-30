@@ -187,7 +187,28 @@ export const CHECK_ICON = {
   ok: <CircleCheck size={14} className="mt-[3px] shrink-0 text-emerald-500" />,
 }
 
-export function CheckList({ items, empty = '检查通过' }: { items: CheckItem[]; empty?: string }) {
+/** 文案里「第 N 集」「第 3、5 集」「第 3–4 集」的集号做成可点的跳转 */
+function EpLinks({ text, onEp }: { text: string; onEp: (ep: number) => void }) {
+  return text.split(/(第 [\d、–]+ 集)/).map((part, i) =>
+    i % 2 ? (
+      <span key={i}>
+        {part.split(/(\d+)/).map((s, k) =>
+          k % 2 ? (
+            <button key={k} type="button" data-ep-link={s} onClick={() => onEp(Number(s))} className="font-medium text-brand-600 underline decoration-brand-200 underline-offset-2 hover:text-brand-700">
+              {s}
+            </button>
+          ) : (
+            s
+          ),
+        )}
+      </span>
+    ) : (
+      part
+    ),
+  )
+}
+
+export function CheckList({ items, empty = '检查通过', onEp }: { items: CheckItem[]; empty?: string; onEp?: (ep: number) => void }) {
   if (!items.length) {
     return (
       <p className="flex items-center gap-2 text-[13px] text-emerald-700">
@@ -201,7 +222,7 @@ export function CheckList({ items, empty = '检查通过' }: { items: CheckItem[
       {items.map((c, i) => (
         <li key={i} className={clsx('flex gap-2 text-[13px] leading-5', c.level === 'block' ? 'text-red-700' : c.level === 'warn' ? 'text-amber-900' : 'text-ink-700')}>
           {CHECK_ICON[c.level]}
-          <span className="min-w-0">{c.text}</span>
+          <span className="min-w-0">{onEp ? <EpLinks text={c.text} onEp={onEp} /> : c.text}</span>
         </li>
       ))}
     </ul>

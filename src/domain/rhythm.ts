@@ -1,5 +1,6 @@
 import { EPISODE_SECONDS, SCRIPT_CPM, SPEECH_WPM } from './constants'
-import type { RhythmFrame } from './types'
+import type { Project, RhythmFrame } from './types'
+import { phaseRanges } from './work'
 
 /** 需求文档以 70 集为基准给出的节点位置 */
 const BASE_EPISODES = 70
@@ -135,4 +136,14 @@ export function targetCurve(rhythm: RhythmFrame, total: number): number[] {
     values.push(Math.max(1, Math.min(5, base + opening + wave + bump + climax)))
   }
   return values
+}
+
+/** 总集数改了以后的节奏框架：原本就是按主线分段生成的，按新分段重新生成；否则只把越界的节点收回 */
+export function rhythmOnResize(p: Project, total: number): RhythmFrame {
+  const before = p.spec.totalEpisodes
+  if (before === total) return p.rhythm
+  const ends = p.work.architecture?.phaseEnds
+  const n = p.work.architecture?.mainLine.length
+  const fromPhases = sameRhythm(p.rhythm, rhythmFromPhases(phaseRanges(before, ends, n), before))
+  return fromPhases ? rhythmFromPhases(phaseRanges(total, ends, n), total) : rhythmForTotal(p.rhythm, before, total)
 }

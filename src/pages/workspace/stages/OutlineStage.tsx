@@ -3,9 +3,10 @@ import { BookOpen, ChevronRight, FileText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
+import { CheckLink, CheckTab, useCheckTab } from '../../../components/project/CheckTab'
 import { AiButton, AutoTextarea, CheckList, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import type { CheckItem } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, CardHeader, Select } from '../../../components/ui'
+import { Badge, Button, Card, Select } from '../../../components/ui'
 import { HOOK_TYPES } from '../../../domain/constants'
 import { nodeKind } from '../../../domain/rhythm'
 import type { HookType, OutlineEpisode, Plot, Project } from '../../../domain/types'
@@ -24,6 +25,7 @@ function outlineChecks(project: Project): CheckItem[] {
   const list = project.work.outline.filter((o) => o.ep <= total).sort((a, b) => a.ep - b.ep)
   const items: CheckItem[] = []
   if (!project.work.plot?.overview.trim()) items.push({ level: 'info', text: '还没有全剧总览：先总览整部剧，再按阶段写粗纲，集纲会更连贯' })
+  if (!list.length) items.push({ level: 'info', text: '还没有集纲：每段先生成粗纲，再生成本段集纲' })
 
   // 钩子轮换：相邻两集同类钩子（付费卡点除外）
   for (let i = 1; i < list.length; i++) {
@@ -57,6 +59,7 @@ function EpisodeBlock({
   project,
   ep,
   o,
+  flash,
   onChange,
   onFocus,
   generate,
@@ -64,13 +67,19 @@ function EpisodeBlock({
   project: Project
   ep: number
   o: OutlineEpisode | undefined
+  /** 刚跳到这一集：短暂描边，落在屏幕下方时也一眼找到 */
+  flash: boolean
   onChange: (patch: Partial<OutlineEpisode>) => void
   onFocus: () => void
   generate: { loading: boolean; disabled: boolean; hint?: string; onClick: () => void }
 }) {
   const paywall = project.rhythm.paywalls.includes(ep)
   return (
-    <div id={`outline-ep-${ep}`} onFocus={onFocus} className={clsx('scroll-mt-4 rounded-lg px-3 py-3', paywall ? 'bg-orange-50/60' : 'hover:bg-canvas/60')}>
+    <div
+      id={`outline-ep-${ep}`}
+      onFocus={onFocus}
+      className={clsx('scroll-mt-4 rounded-lg px-3 py-3 ring-2 transition-shadow duration-500', paywall ? 'bg-orange-50/60' : 'hover:bg-canvas/60', flash ? 'ring-brand-300' : 'ring-transparent')}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[14px] font-semibold text-ink-900 tabular-nums">第{ep}集：</span>
         {o ? (
@@ -139,14 +148,21 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const [phase, setPhase] = useState(startPhase)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([startPhase]))
   const [full, setFull] = useState(false)
-  // 待确认的覆盖操作：总纲 / 某一段的粗纲 / 某一段的集纲 / 某一集的集纲
-  const [confirm, setConfirm] = useState<'overview' | { rough: number } | { phase: number } | { ep: number } | null>(null)
+  // 待确认的覆盖操作：全部 / 总纲 / 某一段的粗纲 / 某一段的集纲 / 某一集的集纲
+  const [confirm, setConfirm] = useState<'all' | 'overview' | { rough: number } | { phase: number } | { ep: number } | null>(null)
   // 状态库侧栏跟着选中的层级：总览 → 全剧，阶段 → 粗纲，某一集 → 集纲
   const [level, setLevel] = useState<StateFocus | null>(epParam ? { kind: 'ep', ep: epParam } : null)
   useStateFocus(level ?? { kind: 'phase', index: phase })
   useEffect(() => {
     if (epParam) scrollTo(`outline-ep-${epParam}`)
   }, [epParam])
+  // 跳到某一集后短暂描边
+  const [flash, setFlash] = useState(0)
+  useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(0), 1600)
+    return () => clearTimeout(t)
+  }, [flash])
 
   const words =
     (plot ? plot.overview.length + plot.phases.join('').length : 0) + [...byEp.values()].reduce((n, o) => n + o.title.length + o.event.length + o.hookLine.length, 0)
@@ -156,6 +172,9 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     .sort((a, b) => a - b)
   // 点「付费卡点待审核」依次跳到当前位置之后的下一个待审核集
   const nextPending = pending.find((ep) => ep > (level?.kind === 'ep' ? level.ep : 0)) ?? pending[0]
+  // 大纲检查放在状态库侧栏的「检查」标签页
+  const checks = outlineChecks(project)
+  useCheckTab(checks)
 
   /** 只生成总纲（全剧总览），各段粗纲不动 */
   const generateOverview = async () => {
@@ -250,6 +269,25 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     toast(paywalls ? `总览、粗纲与全部集纲已生成，${paywalls} 个付费卡点集待审核` : '总览、粗纲与全部集纲已生成')
   }
 
+  /** 重新全部生成：按最新的故事架构重写总纲、各段粗纲，再逐段重写全部集纲 */
+  const regenerateAll = async () => {
+    const done = await run('all', async (signal) => {
+      let cur = latestProject(project.id)
+      if (!cur) return false
+      patchWork(project.id, { plot: await draftPlot(cur, signal) }, '重新生成情节大纲：总纲与各段粗纲')
+      for (const [a, b] of projectPhases(cur)) {
+        cur = latestProject(project.id)
+        if (!cur) return false
+        mergeOutline(a, b, await draftOutline(cur, a, b, nextSeed(), signal))
+      }
+      return true
+    })
+    if (!done) return
+    const cur = latestProject(project.id)
+    const paywalls = cur ? pendingPaywalls(cur).length : 0
+    toast(paywalls ? `已重新生成总纲、粗纲与全部集纲，${paywalls} 个付费卡点集待审核` : '已重新生成总纲、粗纲与全部集纲')
+  }
+
   const setPlot = (patch: Partial<Plot>) => {
     const cur = latestProject(project.id)
     if (!cur) return
@@ -266,6 +304,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     setLevel(ep ? { kind: 'ep', ep } : { kind: 'phase', index: p })
     setPhase(p)
     setExpanded((s) => new Set(s).add(p))
+    setFlash(ep ?? 0)
     scrollTo(ep ? `outline-ep-${ep}` : `outline-phase-${p}`)
   }
 
@@ -302,15 +341,17 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                 </Badge>
               </button>
             )}
+            {covered > 0 && <CheckLink items={checks} className="ml-1" />}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <AiButton
+              variant={allDone ? 'secondary' : 'primary'}
               loading={running === 'all'}
-              disabled={blocked || allDone || !!running}
-              title={allDone ? '总览、粗纲与集纲都已生成；单段可在段落右上角重新生成' : '补齐总览、各段粗纲与还没生成的集纲；已有内容不覆盖'}
-              onClick={generateAll}
+              disabled={blocked || !!running}
+              title={allDone ? '总纲、各段粗纲与全部集纲重新生成（会先确认）；只改一段可用段落右上角的按钮' : '依次生成总纲、各段粗纲与还没生成的集纲；已有内容不覆盖'}
+              onClick={() => (allDone ? setConfirm('all') : generateAll())}
             >
-              {allDone ? '已全部生成' : 'AI 一键生成全部'}
+              {allDone ? '重新全部生成' : 'AI 一键生成全部'}
             </AiButton>
             <Button variant={full ? 'primary' : 'secondary'} size="sm" aria-pressed={full} onClick={() => setFull((v) => !v)}>
               <FileText size={14} />
@@ -415,6 +456,15 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                     <span className="text-[13px] text-ink-500 tabular-nums">{rangeLabel([a, b])}</span>
                     <AiButton
                       className="ml-auto"
+                      variant={rough || !hasOverview ? 'secondary' : 'primary'}
+                      loading={running === `rough-${i}`}
+                      disabled={blocked || !!running || !hasOverview}
+                      title={hasOverview ? `按总纲只生成「${names[i]}」的粗纲，其他段不动` : '先生成总纲，再生成粗纲'}
+                      onClick={() => (rough ? setConfirm({ rough: i }) : generateRough(i))}
+                    >
+                      {rough ? '重新生成粗纲' : '生成粗纲'}
+                    </AiButton>
+                    <AiButton
                       variant={has || !rough ? 'secondary' : 'primary'}
                       loading={running === `phase-${i}`}
                       disabled={blocked || !!running || !rough}
@@ -425,18 +475,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                     </AiButton>
                   </div>
                   <div className="mt-2">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="text-xs font-medium text-ink-500">阶段粗纲</span>
-                      <AiButton
-                        variant={rough || !hasOverview ? 'ghost' : 'primary'}
-                        loading={running === `rough-${i}`}
-                        disabled={blocked || !!running || !hasOverview}
-                        title={hasOverview ? `按总纲只生成「${names[i]}」的粗纲，其他段不动` : '先生成总纲，再生成粗纲'}
-                        onClick={() => (rough ? setConfirm({ rough: i }) : generateRough(i))}
-                      >
-                        {rough ? '重新生成粗纲' : '生成粗纲'}
-                      </AiButton>
-                    </div>
+                    <div className="mb-1 text-xs font-medium text-ink-500">阶段粗纲</div>
                     <AutoTextarea
                       inline
                       aria-label={`${names[i]}粗纲`}
@@ -456,6 +495,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                       project={project}
                       ep={ep}
                       o={byEp.get(ep)}
+                      flash={flash === ep}
                       onChange={(patch) => update(ep, patch)}
                       onFocus={() => setLevel({ kind: 'ep', ep })}
                       generate={{
@@ -482,16 +522,22 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
             )
           })}
 
-          {byEp.size > 0 && (
-            <Card>
-              <CardHeader title="大纲检查" desc="总览、钩子轮换、付费卡点与大反转位置" />
-              <div className="px-5 py-4">
-                <CheckList items={outlineChecks(project)} empty="钩子轮换正常，付费卡点已全部审核" />
-              </div>
-            </Card>
-          )}
         </div>
       </div>
+
+      <CheckTab title="大纲检查" desc="总览、钩子轮换、付费卡点与大反转位置；点集号跳到那一集">
+        <CheckList items={checks} empty="钩子轮换正常，付费卡点已全部审核" onEp={(ep) => pick(phaseOf(ep, ranges), ep)} />
+      </CheckTab>
+
+      <ConfirmDialog
+        open={confirm === 'all'}
+        onClose={() => setConfirm(null)}
+        onConfirm={regenerateAll}
+        title="重新全部生成情节大纲？"
+        desc={`总纲、${ranges.length} 段粗纲与全部 ${total} 集集纲（含付费卡点审核状态）都会按最新的故事架构重写；分集蓝图与已写的剧本不受影响。`}
+        confirmText="重新全部生成"
+        danger
+      />
 
       <ConfirmDialog
         open={confirm === 'overview'}

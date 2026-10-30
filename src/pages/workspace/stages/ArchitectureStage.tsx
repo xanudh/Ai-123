@@ -7,7 +7,7 @@ import { RhythmEditor } from '../../../components/project/RhythmEditor'
 import { AiButton, AutoTextarea, EpisodeInput, InlineInput, ReviewBadge, Table, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, Field, Input, MultiSelect, Select } from '../../../components/ui'
 import { AUDIENCES, CATEGORIES, EPISODE_RANGE, EPISODE_SECONDS, GENRES, LANGUAGES, MAX_GENRES, STORY_STRUCTURES, VIEWPOINTS } from '../../../domain/constants'
-import { rhythmForTotal, rhythmFromPhases, sameRhythm, secondsHint, validateRhythm } from '../../../domain/rhythm'
+import { rhythmFromPhases, rhythmOnResize, sameRhythm, secondsHint, validateRhythm } from '../../../domain/rhythm'
 import type { Architecture, Audience, PlotBeat, Project, ScriptLanguage, StoryStructure } from '../../../domain/types'
 import { PHASE_LIMIT, SILENCE_DEFAULT, defaultPhaseName, emptyArchitecture, phaseRanges, rangeLabel } from '../../../domain/work'
 import { newId } from '../../../lib/id'
@@ -458,13 +458,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     const cur = latestProject(project.id)
     if (!cur) return
     const spec = { ...cur.spec, ...patch }
-    const ends = cur.work.architecture?.phaseEnds
-    const n = cur.work.architecture?.mainLine.length
-    const before = cur.spec.totalEpisodes
-    // 节奏原本就是按主线生成的，总集数变了就按新分段重新生成；否则只把越界的节点收回
-    const fromPhases = sameRhythm(cur.rhythm, rhythmFromPhases(phaseRanges(before, ends, n), before))
-    const rhythm = before === spec.totalEpisodes ? cur.rhythm : fromPhases ? rhythmFromPhases(phaseRanges(spec.totalEpisodes, ends, n), spec.totalEpisodes) : rhythmForTotal(cur.rhythm, before, spec.totalEpisodes)
-    updateProject(cur.id, { spec, rhythm }, note)
+    updateProject(cur.id, { spec, rhythm: rhythmOnResize(cur, spec.totalEpisodes) }, note)
   }
 
   const evaluate = async () => {

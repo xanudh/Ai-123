@@ -139,6 +139,15 @@ export function retryFailed(projectId: string, ep?: number) {
   startQueue(projectId)
 }
 
+/** 重新转写某一集（如没按模板输出）：这一集回到排队，合并好的剧本作废，转写完成后重新合并 */
+export function retranscribe(projectId: string, ep: number, reason: string) {
+  const job = jobOf(projectId)
+  if (!job) return
+  const episodes = job.episodes.map((e): VideoEpisode => (e.ep === ep ? { ...e, status: 'queued', shots: [], error: undefined, doneAt: undefined } : e))
+  useProjects.getState().patchWork(projectId, { video: { ...job, episodes, merged: null } }, `重新转写第 ${ep} 集：${reason}`)
+  startQueue(projectId)
+}
+
 /** 刷新页面后：队列没在跑，但存档里还有转写中的集，放回排队 */
 export function recoverStale(projectId: string) {
   if (controllers.has(projectId)) return

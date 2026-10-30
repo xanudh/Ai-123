@@ -7,13 +7,14 @@ import { ModelPicker } from '../../../components/project/ModelBits'
 import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, Input, Segmented } from '../../../components/ui'
 import { modelLabel, modelOf } from '../../../domain/models'
-import type { Project, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
+import type { ModelId, Project, ProofItem, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
 import { downloadText } from '../../../lib/download'
 import { formatDateTime } from '../../../lib/format'
-import { DEMO_SHOW, MERGE_STEPS, RESOLVE_STEPS, episodesFromFiles, linkError, mergeTranscripts, parseSource, platformOf, resolveVideoLink } from '../../../services/ai'
+import { DEMO_SHOW, MERGE_STEPS, PROOF_STEPS, RESOLVE_STEPS, applyProofread, episodesFromFiles, isOffTemplate, linkError, mergeTranscripts, parseSource, platformOf, proofreadScript, resolveVideoLink } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
-import { CONCURRENCY, isTranscribing, progressKey, recoverStale, retryFailed, startQueue, stopQueue, useVideoQueue } from '../../../store/videoQueue'
+import { CONCURRENCY, isTranscribing, progressKey, recoverStale, retranscribe, retryFailed, startQueue, stopQueue, useVideoQueue } from '../../../store/videoQueue'
+import { ProofRecordBox, ProofreadDialog } from './VideoProofread'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -365,7 +366,17 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
                 <StatusCell job={job} episode={e} percent={progress[progressKey(project.id, e.ep)]} />
               </td>
               <td className="px-4 py-2.5 tabular-nums">{e.status === 'done' ? e.shots.length : '—'}</td>
-              <td className="px-4 py-2.5 tabular-nums">{e.status === 'done' ? dialogueWords(e.shots) : '—'}</td>
+              <td className="px-4 py-2.5 tabular-nums">
+                {e.status !== 'done' ? (
+                  '—'
+                ) : isOffTemplate(e.shots) ? (
+                  <span data-off-template className="text-amber-600" title="这一集没按模板输出：台词写进了画面描述。合并后用 AI 校对按模板重整，或重新转写">
+                    0 · 没按模板
+                  </span>
+                ) : (
+                  dialogueWords(e.shots)
+                )}
+              </td>
               <td className="px-4 py-1.5 text-right">
                 {e.status === 'done' && (
                   <Button variant="ghost" size="sm" onClick={() => onView(e.ep)}>
@@ -506,6 +517,9 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
   const { running, run } = useAiTask()
   const [step, setStep] = useState<number | null>(null)
   const [confirmReplace, setConfirmReplace] = useState(false)
+  const [proofStep, setProofStep] = useState<number | null>(null)
+  const [proof, setProof] = useState<{ items: ProofItem[]; model: ModelId; base: string } | null>(null)
+  const [redo, setRedo] = useState<number | null>(null)
   const merged = job.merged
   const left = job.episodes.filter((e) => e.status !== 'done').length
   const source = project.work.source
@@ -525,6 +539,37 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
     toast('已合并成完整剧本')
   }
 
+  // AI 校对：查出的问题先列出来，勾选确认后才改剧本；没查出问题直接记一笔
+  const proofread = async () => {
+    const text = latestProject(project.id)?.work.video?.merged?.text
+    if (!text) return
+    const result = await run('proofread', (signal) => proofreadScript(project, text, setProofStep, signal))
+    setProofStep(null)
+    const cur = latestProject(project.id)?.work.video
+    if (!result || !cur?.merged) return
+    if (result.items.length) {
+      setProof({ ...result, base: text })
+      return
+    }
+    patchWork(project.id, { video: { ...cur, merged: { ...cur.merged, proofread: { at: new Date().toISOString(), model: result.model, found: 0, applied: [] } } } }, 'AI 校对合并剧本：没发现问题')
+    toast('AI 校对没发现问题')
+  }
+
+  const applyProof = (picked: ProofItem[]) => {
+    const cur = latestProject(project.id)?.work.video
+    if (!proof || !cur?.merged) return
+    setProof(null)
+    if (cur.merged.text !== proof.base) {
+      toast('剧本在校对期间有改动，请重新 AI 校对', 'error')
+      return
+    }
+    const wasSent = !!cur.merged.importedAt && latestProject(project.id)?.work.source?.importedAt === cur.merged.importedAt
+    const record = { at: new Date().toISOString(), model: proof.model, found: proof.items.length, applied: picked.map((i) => ({ kind: i.kind, text: i.kind === 'template' ? `第 ${i.ep} 集按模板重整` : i.text, count: i.count })) }
+    // 剧本改了：已送入拆解的是校对前的，要重新送入
+    patchWork(project.id, { video: { ...cur, merged: { ...cur.merged, text: applyProofread(cur.merged.text, picked), proofread: record, importedAt: null } } }, `AI 校对合并剧本：应用 ${picked.length} 项`)
+    toast(`已应用 ${picked.length} 项校对${wasSent ? '；拆解里还是校对前的剧本，重新送入后生效' : ''}`)
+  }
+
   const send = () => {
     const cur = latestProject(project.id)?.work.video
     if (!cur?.merged) return
@@ -538,6 +583,9 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
 
   const action = merged ? (
     <div className="flex gap-2">
+      <AiButton variant="secondary" loading={running === 'proofread'} disabled={!!running} onClick={proofread} title="用文本模型查没按模板输出的集、人名写法不一、同音错字；先列出改法，确认后才改">
+        {merged.proofread ? '重新校对' : 'AI 校对'}
+      </AiButton>
       <Menu
         trigger={(props) => (
           <Button variant="secondary" size="sm" {...props}>
@@ -557,7 +605,7 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
           <ArrowRight size={14} />
         </Link>
       ) : (
-        <Button size="sm" onClick={() => (source ? setConfirmReplace(true) : send())}>
+        <Button size="sm" onClick={() => (source ? setConfirmReplace(true) : send())} title={merged.proofread ? undefined : '还没 AI 校对：人名写法、同音错字和没按模板输出的集会原样带进拆解'}>
           送入对标剧拆解
           <ArrowRight size={14} />
         </Button>
@@ -584,6 +632,11 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
           <StepList steps={MERGE_STEPS} step={step} label="合并进度" />
         </div>
       )}
+      {proofStep !== null && (
+        <div className="border-b border-line px-5 py-4">
+          <StepList steps={PROOF_STEPS} step={proofStep} label={`AI 校对 · ${modelLabel(modelOf(project, 'text'))}`} />
+        </div>
+      )}
       {merged && (
         <div className="grid gap-5 p-5 lg:grid-cols-[240px_minmax(0,1fr)]">
           <div className="space-y-3">
@@ -600,6 +653,7 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
                 ))}
               </ul>
             </div>
+            <ProofRecordBox merged={merged} />
           </div>
           <pre className="scrollbar-thin max-h-96 overflow-y-auto rounded-lg bg-canvas px-4 py-3 font-mono text-xs leading-6 whitespace-pre-wrap text-ink-700">{merged.text}</pre>
         </div>
@@ -612,6 +666,26 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
         title="替换对标剧剧本？"
         desc={`「对标剧拆解」里已有剧本《${source?.name ?? ''}》${project.work.breakdown ? '和拆解结果，送入后会一并替换，需要重新拆解' : '，送入后会被替换'}。`}
         confirmText="替换并送入"
+      />
+      {proof && (
+        <ProofreadDialog
+          items={proof.items}
+          model={proof.model}
+          onClose={() => setProof(null)}
+          onApply={applyProof}
+          onRetranscribe={(ep) => {
+            setProof(null)
+            setRedo(ep)
+          }}
+        />
+      )}
+      <ConfirmDialog
+        open={redo !== null}
+        onClose={() => setRedo(null)}
+        onConfirm={() => redo !== null && retranscribe(project.id, redo, '没按模板输出')}
+        title={`重新转写第 ${redo ?? ''} 集？`}
+        desc={`用视频解析模型（${modelLabel(modelOf(project, 'video'))}）重新转写这一集。合并好的剧本会作废（包括已应用的校对），转写完成后重新合并、再 AI 校对${sent ? '；已送入拆解的剧本不受影响' : ''}。`}
+        confirmText="重新转写"
       />
     </Card>
   )

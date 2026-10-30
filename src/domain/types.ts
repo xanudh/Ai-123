@@ -480,6 +480,42 @@ export interface MergedScript {
   mergedAt: string
   /** 送入对标剧拆解的时间 */
   importedAt: string | null
+  /** 最近一次 AI 校对 */
+  proofread?: ProofRecord
+}
+
+/** AI 校对的三类问题：某一集没按模板输出、同一人物名字写法不一、同音错别字 */
+export type ProofKind = 'template' | 'name' | 'typo'
+
+export interface ProofItem {
+  id: string
+  kind: ProofKind
+  /** 一句话说明 */
+  text: string
+  /** template：哪一集 */
+  ep?: number
+  /** name / typo：把 from 改成 to */
+  from?: string
+  to?: string
+  /** 改动处数 */
+  count: number
+  /** 出现在哪几集 */
+  eps: number[]
+  /** template：偏离模板的地方 */
+  problems?: { label: string; count: number }[]
+  /** 改前改后的例句（最多几条） */
+  samples: { before: string; after: string }[]
+  /** template：被概括掉的台词，重整补不回来，要重新转写这一集 */
+  lost?: { count: number; sample: string }
+}
+
+export interface ProofRecord {
+  at: string
+  model?: ModelId
+  /** 查出几项 */
+  found: number
+  /** 应用了哪些 */
+  applied: { kind: ProofKind; text: string; count: number }[]
 }
 
 /** 视频转剧本任务：一部对标剧的全集视频 */
