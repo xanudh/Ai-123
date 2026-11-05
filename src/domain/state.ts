@@ -5,7 +5,7 @@
 import { PLAN_EVENT_META } from './constants'
 import { placeOf } from './scriptFormat'
 import type { CharacterRole, EpisodeScript, Foreshadow, Project, Relation } from './types'
-import { SILENCE_DEFAULT, blueprintOf, carryOf, foreshadowAlert, foreshadowName, latestDraft, lateStep, scriptOf, silenceOf, traceForeshadow } from './work'
+import { SILENCE_DEFAULT, blueprintOf, foreshadowPlans, carryOf, foreshadowAlert, foreshadowName, latestDraft, lateStep, scriptOf, silenceOf, traceForeshadow } from './work'
 import type { ForeshadowTrace, LateStep } from './work'
 
 export interface CharacterEntry {
@@ -58,9 +58,8 @@ export interface StateLibrary {
 
 const speakersOf = (s: EpisodeScript) => [...new Set(s.lines.flatMap((l) => (l.kind === 'dialogue' && l.speaker ? [l.speaker] : [])))]
 
-const short = (text: string) => (text.length > 16 ? `${text.slice(0, 16)}…` : text)
-
-export const silenceThreshold = (p: Project) => p.work.architecture?.silenceThreshold ?? SILENCE_DEFAULT
+/** 沉寂提醒阈值 11/4 从故事架构删掉，一律按默认（0：不做沉寂提醒，只提醒逾期） */
+export const silenceThreshold = (_p: Project) => SILENCE_DEFAULT
 
 /** 用 ep 之前（不含）的正文章节汇总状态库；不传 ep 时汇总全部 */
 export function buildState(p: Project, beforeEp = Infinity): StateLibrary {
@@ -84,7 +83,7 @@ export function buildState(p: Project, beforeEp = Infinity): StateLibrary {
   const scenes = new Map<string, number[]>()
   const together = new Map<string, number>()
   // 只看 beforeEp 之前确认过的事件
-  const foreshadows: ForeshadowEntry[] = p.work.foreshadows.map((f) => {
+  const foreshadows: ForeshadowEntry[] = foreshadowPlans(p.work).map((f) => {
     const item = { ...f, events: f.events.filter((e) => e.ep < beforeEp) }
     const trace = traceForeshadow(item)
     return { item: f, ...trace, silence: silenceOf(trace, latestEp), overdue: foreshadowAlert(item, trace, latestEp, threshold), late: lateStep(item, trace, latestEp) }
@@ -116,7 +115,7 @@ export function buildState(p: Project, beforeEp = Infinity): StateLibrary {
     const changes: string[] = []
     if (fresh.length) changes.push(`新出场：${fresh.join('、')}`)
     for (const [name, state] of Object.entries(s.states)) changes.push(`${name} → ${state}`)
-    for (const f of p.work.foreshadows) {
+    for (const f of foreshadowPlans(p.work)) {
       for (const e of f.events) if (e.ep === s.ep) changes.push(`${PLAN_EVENT_META[e.kind].label}「${foreshadowName(f)}」`)
     }
     log.push({ ep: s.ep, title: s.title, changes })
@@ -159,7 +158,6 @@ export function preWriteCheck(p: Project, ep: number): PreCheck[] {
   }
   if (scriptOf(w, ep)) checks.push({ level: 'info', text: '本集已有正文章节，新草稿定稿后会替换正文' })
   if (outline && p.rhythm.paywalls.includes(ep) && !outline.approved) checks.push({ level: 'warn', text: '本集是付费卡点，集纲还没单独审核' })
-  if (blueprint?.guidance.trim()) checks.push({ level: 'info', text: `作者微操指导（最高优先级）：${short(blueprint.guidance.trim())}` })
 
   const lib = buildState(p, ep)
   for (const f of lib.foreshadows) {

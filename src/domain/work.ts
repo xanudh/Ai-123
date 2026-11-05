@@ -1,7 +1,7 @@
 import { newId } from '../lib/id'
-import { PLAN_EVENT_META, VIEWPOINTS } from './constants'
-import { MAIN_LINE, STAGES } from './pipeline'
-import type { Architecture, Character, EpisodeDraft, EpisodeScript, Foreshadow, PlanEvent, PlanEventKind, Project, ProjectWork, RhythmFrame, ScriptLine, StageKey } from './types'
+import { EPISODE_RANGE, EPISODE_SECONDS, PLAN_EVENT_META, VIEWPOINTS } from './constants'
+import { MAIN_LINE, SHOW_FORESHADOW, STAGES } from './pipeline'
+import type { Architecture, Character, EpisodeDraft, EpisodeScript, Foreshadow, PlanEvent, PlanEventKind, Project, ProjectWork, Relation, RhythmFrame, ScriptLine, StageKey } from './types'
 
 export const emptyWork = (): ProjectWork => ({
   video: null,
@@ -71,6 +71,9 @@ export const rangeLabel = ([from, to]: [number, number]) => (from === to ? `第 
 /** 伏笔 / 叙事线索连续多少集没推进就提醒；0 表示不提醒（默认） */
 export const SILENCE_DEFAULT = 0
 
+/** 伏笔计划：「伏笔与叙事线索」这一步拿掉时（SHOW_FORESHADOW 为 false）一律当没有，数据留着不动 */
+export const foreshadowPlans = (w: Pick<ProjectWork, 'foreshadows'>) => (SHOW_FORESHADOW ? w.foreshadows : [])
+
 export function emptyArchitecture(total: number): Architecture {
   const ranges = phaseRanges(total)
   return {
@@ -87,6 +90,7 @@ export function emptyArchitecture(total: number): Architecture {
     world: '',
     factions: '',
     background: '',
+    highlights: '',
     goldenFinger: '',
     heroSetup: '',
     writingRules: '',
@@ -117,6 +121,55 @@ export const newCharacter = (patch: Partial<Character> = {}): Character => ({
   benchmark: '',
   ...patch,
 })
+
+/** 人物小传里可以补的项；名字另算，对应对标剧角色由编剧自己选，不补 */
+const FILLABLE = ['nameEn', 'gender', 'age', 'profile', 'appearance', 'costume', 'lookRef', 'personality', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'notes'] as const
+
+interface Cast {
+  characters: Character[]
+  relations: Relation[]
+}
+
+/**
+ * 重新生成人物只补不换：已有人物先按名字、再按定位对上一个生成的人物，只补空着的项；
+ * 没对上的生成人物加在后面；关系只加两人之间还没有的。生成结果里的名字换成对上的已有人物名。
+ */
+export function mergeCast(cur: Cast, gen: Cast): Cast & { added: number; filled: number; linked: number } {
+  const taken = new Set<string>()
+  const pairs = gen.characters.map((g) => {
+    const free = cur.characters.filter((x) => !taken.has(x.id))
+    const e = free.find((x) => x.name.trim() === g.name) ?? free.find((x) => x.role === g.role)
+    if (e) taken.add(e.id)
+    return { g, e }
+  })
+  const rename = new Map(pairs.flatMap(({ g, e }) => (e?.name.trim() ? [[g.name, e.name.trim()] as const] : [])))
+  const swap = (text: string) => [...rename].reduce((t, [from, to]) => t.split(from).join(to), text)
+
+  let filled = 0
+  const characters = cur.characters.map((e) => {
+    const g = pairs.find((x) => x.e?.id === e.id)?.g
+    if (!g) return e
+    const next = { ...e, name: e.name.trim() ? e.name : g.name }
+    for (const k of FILLABLE) {
+      if (e[k].trim() || !g[k].trim()) continue
+      next[k] = swap(g[k])
+      filled++
+    }
+    return next
+  })
+  const added = pairs.filter((x) => !x.e).map(({ g }) => ({ ...g, ...Object.fromEntries(FILLABLE.map((k) => [k, swap(g[k])])) }))
+
+  const pair = (r: Relation) => [r.a, r.b].sort().join('|')
+  const have = new Set(cur.relations.map(pair))
+  const relations = [...cur.relations]
+  for (const r of gen.relations) {
+    const next = { ...r, a: rename.get(r.a) ?? r.a, b: rename.get(r.b) ?? r.b, label: swap(r.label) }
+    if (have.has(pair(next))) continue
+    have.add(pair(next))
+    relations.push(next)
+  }
+  return { characters: [...characters, ...added], relations, added: added.length, filled, linked: relations.length - cur.relations.length }
+}
 
 export const newForeshadow = (patch: Partial<Foreshadow> = {}): Foreshadow => ({
   id: newId(),
@@ -379,7 +432,7 @@ export function stageGate(p: Project, key: StageKey): StageGate | null {
   const archGate: StageGate | null = w.architecture?.status === 'approved' ? null : { reason: '先在故事架构中确认架构', to: 'architecture' }
   switch (key) {
     case 'architecture':
-      return p.mode !== 'original' && !w.breakdown?.referencedAt ? { reason: '先完成对标剧拆解：四个板块审核通过后一键引用', to: 'breakdown' } : null
+      return p.mode !== 'original' && !w.breakdown?.referencedAt ? { reason: '先完成对标剧拆解：拆完后一键引用', to: 'breakdown' } : null
     case 'characters':
       return archGate
     case 'outline':
@@ -398,3 +451,16 @@ export function stageGate(p: Project, key: StageKey): StageGate | null {
       return null
   }
 }
+
+const clampTo = (n: number, r: { min: number; max: number }) => Math.min(r.max, Math.max(r.min, Math.round(n)))
+
+/** 对标剧的集数与单集时长（勾了「完全按对标剧」时用）：集数取拆解 > 视频转写 > 立项登记；时长取转写出来的各集平均时长，按 10 秒取整 */
+export function benchmarkSpec(p: Project): { episodes: number | null; seconds: number | null } {
+  const eps = p.work.breakdown?.totalEpisodes || p.work.video?.episodes.length || p.benchmark?.episodes || 0
+  const timed = p.work.video?.episodes.filter((e) => e.duration > 0) ?? []
+  const avg = timed.length ? timed.reduce((n, e) => n + e.duration, 0) / timed.length : 0
+  return { episodes: eps ? clampTo(eps, EPISODE_RANGE) : null, seconds: avg ? clampTo(Math.round(avg / 10) * 10, EPISODE_SECONDS) : null }
+}
+
+/** 全剧总览开头的【故事简介】那一段（11/4 起总纲先讲故事）；旧总纲没有这一段就是空 */
+export const overviewStory = (overview: string | undefined) => /【故事简介】([^\n【]*)/.exec(overview ?? '')?.[1].trim() ?? ''

@@ -26,9 +26,19 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const
 }
 
+/** 对标剧的对比线：拆解出的每集情绪强度与付费卡点；仿写按分段对位放到本项目的集数轴上，没给位置时按集数等比 */
+export interface RhythmCompare {
+  emotion: number[]
+  paywalls: number[]
+  /** 对标剧第 k 集落在本项目第几集（可以是小数）；null 表示那一段没对上，不画 */
+  place?: (number | null)[]
+  /** 本项目第 ep 集对位到对标剧的哪几集 */
+  aligned?: number[][]
+}
+
 /**
  * 目标节奏曲线：单系列面积图 + 付费卡点（菱形）/ 大反转（圆点）标记 + 结局高潮灰带。
- * 支持十字准线悬停与表格视图；传入 onPick 时可点击集数编辑节点。
+ * 支持十字准线悬停与表格视图；传入 onPick 时可点击集数编辑节点；传入 compare 时叠一条对标剧虚线。
  */
 export function RhythmChart({
   rhythm,
@@ -36,12 +46,14 @@ export function RhythmChart({
   height = 220,
   onPick,
   showTableToggle = true,
+  compare,
 }: {
   rhythm: RhythmFrame
   total: number
   height?: number
   onPick?: (episode: number) => void
   showTableToggle?: boolean
+  compare?: RhythmCompare
 }) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -54,6 +66,22 @@ export function RhythmChart({
   const y = (v: number) => PAD.top + (1 - (v - 1) / 4) * innerH
 
   const linePath = curve.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i + 1).toFixed(1)},${y(v).toFixed(1)}`).join('')
+  // 对标剧第 k 集落在本项目的第几集（可以是小数）
+  const benchN = compare?.emotion.length ?? 0
+  const benchAt = (k: number) => (compare?.place ? compare.place[k - 1] : benchN <= 1 ? 1 : 1 + ((k - 1) / (benchN - 1)) * (total - 1))
+  // 落在没对上的段里的点断开，不连线
+  const benchPath =
+    compare?.emotion
+      .map((v, i) => {
+        const at = benchAt(i + 1)
+        if (at === null || at === undefined) return ''
+        const prev = i > 0 ? benchAt(i) : null
+        return `${prev === null || prev === undefined || i === 0 ? 'M' : 'L'}${x(at).toFixed(1)},${y(v).toFixed(1)}`
+      })
+      .join('') ?? ''
+  // 悬停在本项目第 ep 集时，对应对标剧的第几集
+  const benchOf = (ep: number) =>
+    compare?.aligned ? (compare.aligned[ep - 1]?.[0] ?? 0) : benchN ? Math.min(benchN, Math.max(1, Math.round(((ep - 1) / Math.max(total - 1, 1)) * (benchN - 1)) + 1)) : 0
   const areaPath = `${linePath}L${x(total).toFixed(1)},${y(1)}L${x(1).toFixed(1)},${y(1)}Z`
 
   const xTicks = useMemo(() => {
@@ -104,6 +132,14 @@ export function RhythmChart({
             <span className="h-2.5 w-3 rounded-sm bg-ink-900/[0.07]" />
             结局高潮区
           </span>
+          {compare && (
+            <span className="flex items-center gap-1.5" data-bench-legend title={`对标剧 ${benchN} 集按比例摊到本项目 ${total} 集上`}>
+              <span className="w-4 border-t-2 border-dashed border-ink-400" />
+              对标剧（拆解的情绪强度）
+              <span className="size-2 rotate-45 rounded-[2px] border border-ink-500 bg-white" />
+              对标剧付费卡点
+            </span>
+          )}
         </div>
         {showTableToggle && (
           <Segmented
@@ -172,6 +208,18 @@ export function RhythmChart({
                 </text>
               ))}
 
+              {compare && (
+                <g data-bench-line>
+                  <path d={benchPath} fill="none" className="stroke-ink-400" strokeWidth={1.5} strokeDasharray="4 3" strokeLinejoin="round" />
+                  {compare.paywalls
+                    .filter((k) => k >= 1 && k <= benchN && benchAt(k) != null)
+                    .map((k) => {
+                      const cx = x(benchAt(k)!)
+                      const cy = y(compare.emotion[k - 1])
+                      return <rect key={`bp${k}`} x={cx - 4} y={cy - 4} width={8} height={8} rx={1.5} transform={`rotate(45 ${cx} ${cy})`} className="fill-white stroke-ink-500" strokeWidth={1.5} />
+                    })}
+                </g>
+              )}
               <path d={areaPath} className="fill-curve/10" />
               <path d={linePath} fill="none" className="stroke-curve" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
@@ -240,6 +288,12 @@ export function RhythmChart({
                 <span>·</span>
                 <span>{hover === rhythm.paywalls[0] ? '首付费卡点' : KIND_LABEL[hoverKind!]}</span>
               </div>
+              {compare && benchOf(hover) > 0 && (
+                <div className="mt-0.5 text-ink-500 tabular-nums">
+                  对标剧第 {benchOf(hover)} 集 · 强度 {compare.emotion[benchOf(hover) - 1]}
+                  {compare.paywalls.includes(benchOf(hover)) && ' · 付费卡点'}
+                </div>
+              )}
               {onPick && <div className="mt-1 text-[11px] text-ink-400">点击切换该集节点</div>}
             </div>
           )}

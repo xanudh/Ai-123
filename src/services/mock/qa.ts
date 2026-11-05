@@ -2,11 +2,11 @@
  * 质检交付的本地模拟：对已定稿的正文章节做七项检查，输出能定位到行的问题清单与分项得分。
  * 接入大模型后，一致性与节奏判断交给模型，这里的规则检查仍可作为兜底。
  */
-import { QA_CHECKS } from '../../domain/pipeline'
+import { SHOW_FORESHADOW, hasInnovations, qaChecks } from '../../domain/pipeline'
 import { estimateChars, targetCurve } from '../../domain/rhythm'
 import type { EpisodeScript, Project, QaCheckKey, QaCheckResult, QaIssue, QaReport } from '../../domain/types'
 import { SCENE_RE, placeOf } from '../../domain/scriptFormat'
-import { foreshadowKey, foreshadowName, hookOf, phaseNames, phaseOf, projectPhases, wordCount } from '../../domain/work'
+import { foreshadowKey, foreshadowName, foreshadowPlans, hookOf, phaseNames, phaseOf, projectPhases, wordCount } from '../../domain/work'
 import { AI_FILLERS } from './kits'
 import { clip, hash } from './rng'
 
@@ -51,7 +51,7 @@ export function innovationLanding(p: Project): InnovationLanding[] {
     .filter((x) => x.ours.trim())
     .map((x) => {
       const key = innovationKey(x.ours)
-      return { id: x.id, theirs: x.theirs, ours: x.ours, key, eps: key ? texts.filter((t) => t.text.includes(key)).map((t) => t.ep).sort((a, b) => a - b) : [] }
+      return { id: x.id, theirs: p.mode === 'original' ? '' : x.theirs, ours: x.ours, key, eps: key ? texts.filter((t) => t.text.includes(key)).map((t) => t.ep).sort((a, b) => a - b) : [] }
     })
 }
 
@@ -143,7 +143,7 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
       const l = lines.find((x) => x.zh.includes(name) || x.speaker === name)
       if (l) add({ check: 'consistency', level: 'block', ep, lineId: l.id, quote: name, title: '仍出现对标剧人名', detail: `「${name}」是对标剧里的人物，仿写交付有侵权风险`, suggestion: '替换成本剧人物' })
     }
-    for (const f of p.work.foreshadows) {
+    for (const f of foreshadowPlans(p.work)) {
       const key = foreshadowKey(f)
       if (!key) continue
       for (const [kind, at] of [['埋设', f.plantEp], ['回收', f.payoffEp]] as const) {
@@ -262,8 +262,8 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
     add({ check: 'flow', level: i === phases.length - 1 ? 'block' : 'warn', ep: null, lineId: null, title: '阶段情绪回落', detail: `「${names[i]}」平均强度约 ${avg.toFixed(1)}，比上一段「${names[i - 1]}」（${prev.toFixed(1)}）明显回落`, suggestion: i === phases.length - 1 ? '高潮段要比前面更强：把最大的揭秘与对决集中到这里' : '这一段开头加一次升级或新危机，别让剧情掉下来' })
   })
 
-  /* 创新点落地：全剧层面 */
-  const innovations = innovationLanding(p)
+  /* 创新点落地：全剧层面；只有仿写有创新点（11/4 第五轮：原创不要） */
+  const innovations = hasInnovations(p) ? innovationLanding(p) : []
   const landed = innovations.filter((x) => x.eps.length).length
   for (const x of innovations) {
     if (!x.key) {
@@ -272,7 +272,7 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
       add({ check: 'innovation', level: 'warn', ep: null, lineId: null, quote: x.key, title: '创新点未落地', detail: `「${clip(x.ours, 30)}」在已定稿的 ${scripts.length} 集里没找到对应内容`, suggestion: '在后续集纲 / 蓝图里安排落地，或回到故事架构调整创新点' })
     }
   }
-  if (!innovations.length) {
+  if (hasInnovations(p) && !innovations.length) {
     add({ check: 'innovation', level: 'warn', ep: null, lineId: null, title: '没有创新点', detail: '故事架构里还没有创新点，无法核对与对标剧的差异', suggestion: '回到故事架构补充创新点' })
   }
 
@@ -286,14 +286,15 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
   })
 
   const n = Math.max(scripts.length, 5)
-  const checks: QaCheckResult[] = QA_CHECKS.map(({ key }) => {
+  const list = qaChecks(p)
+  const checks: QaCheckResult[] = list.map(({ key }) => {
     const list = issues.filter((i) => i.check === key)
     const count = (level: QaIssue['level']) => list.filter((i) => i.level === level).length
     const [block, warn, info] = [count('block'), count('warn'), count('info')]
     const penalty = key === 'innovation' ? block * 20 + warn * 12 + info * 3 : ((block * 15 + warn * 5 + info) * 8) / n
     const counts = [block && `${block} 个严重`, warn && `${warn} 个建议`, info && `${info} 个提示`].filter(Boolean).join('、')
     const extra: Record<QaCheckKey, string> = {
-      consistency: `对照 ${p.work.foreshadows.length} 条伏笔与时间线`,
+      consistency: SHOW_FORESHADOW ? `对照 ${p.work.foreshadows.length} 条伏笔与时间线` : '对照时间线与人物状态',
       character: `对照 ${p.work.characters.length} 个人物与 ${phases.length} 个阶段`,
       flow: `${scripts.length} 集的承接、场景与阶段递进`,
       rhythm: collapsed.length ? `塌陷段：${ranges(collapsed)}` : '与目标曲线基本一致',
@@ -303,7 +304,7 @@ export function runQa(p: Project): Omit<QaReport, 'at' | 'resolved'> {
     }
     return { key, score: Math.max(0, Math.round(100 - penalty)), summary: `${counts || '全部通过'} · ${extra[key]}` }
   })
-  const score = Math.round(checks.reduce((sum, c, i) => sum + c.score * QA_CHECKS[i].weight, 0))
+  const score = Math.round(checks.reduce((sum, c, i) => sum + c.score * list[i].weight, 0))
 
   return { versions: Object.fromEntries(scripts.map((s) => [s.ep, s.updatedAt])), score, checks, issues }
 }

@@ -1,21 +1,32 @@
 import clsx from 'clsx'
-import { ArrowRight, Check, ChevronRight, CircleCheck, Eraser, Info, Plus, RotateCcw, Save, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowRight, Check, ChevronRight, CircleCheck, Eraser, Eye, FlaskConical, Info, MessagesSquare, Pencil, Plus, RotateCcw, Save, Square, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
+import { Link } from 'react-router'
 import { ConfirmDialog, Modal, UnsavedChangesPrompt } from '../../../components/overlay'
+import { BasisInfo } from '../../../components/project/BasisInfo'
+import { GenerateButton, PolishButton } from '../../../components/project/PolishButton'
+import { RhythmChart } from '../../../components/project/RhythmChart'
+import type { RhythmCompare } from '../../../components/project/RhythmChart'
 import { RhythmEditor } from '../../../components/project/RhythmEditor'
-import { AiButton, AutoTextarea, EpisodeInput, InlineInput, ReviewBadge, Table, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, Field, Input, MultiSelect, Select } from '../../../components/ui'
-import { AUDIENCES, CATEGORIES, EPISODE_RANGE, EPISODE_SECONDS, GENRE_GROUPS, LANGUAGES, MAX_GENRES, STORY_STRUCTURES, VIEWPOINTS } from '../../../domain/constants'
+import { AiButton, AutoTextarea, EpisodeInput, InlineInput, ReviewBadge, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
+import { Badge, Button, Card, Field, Input, MultiSelect, Segmented, Select } from '../../../components/ui'
+import { alignEp, alignRhythm, benchRanges, benchSegment, placeBenchEp } from '../../../domain/align'
+import { ARCH_REQUIRED, PRINT_KEY, archBasis, archOrder, basisLine, printOf } from '../../../domain/basis'
+import type { BasisRow } from '../../../domain/basis'
+import { AUDIENCES, EPISODE_RANGE, EPISODE_SECONDS, GENRE_REGION_LABEL, LANGUAGES, MAX_GENRES, MAX_TONES, genreRegions, styleGroups, themeGroups } from '../../../domain/constants'
 import { rhythmFromPhases, rhythmOnResize, sameRhythm, secondsHint, validateRhythm } from '../../../domain/rhythm'
-import type { Architecture, Audience, PlotBeat, Project, ScriptLanguage, StoryStructure } from '../../../domain/types'
-import { PHASE_LIMIT, SILENCE_DEFAULT, defaultPhaseName, emptyArchitecture, phaseRanges, rangeLabel } from '../../../domain/work'
+import type { ArchItem, Architecture, PlotBeat, Project, RhythmFrame, ScriptLanguage } from '../../../domain/types'
+import { PHASE_LIMIT, benchmarkSpec, defaultPhaseName, emptyArchitecture, phaseRanges, rangeLabel } from '../../../domain/work'
+import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
-import { architectureIssues, draftArchitecture, draftMainLine, draftSection, evaluateIdea, nextSeed, proposeDirections, viewpointRule } from '../../../services/ai'
-import type { ArchitectureSection, Direction, IdeaReview } from '../../../services/ai'
+import { draftArchItem, generateLoglines, labReference, nextSeed, proposeDirections } from '../../../services/ai'
+import type { ArchDraft, Direction, LoglineCandidate } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
+import { useStageSlot } from '../../../v2/bottomSlot'
 
 /** 带说明图标的字段名，悬停显示说明 */
 function Tip({ label, tip }: { label: string; tip: string }) {
@@ -67,44 +78,15 @@ function NumberInput({
 }
 
 /** 可折叠的一段设定：标题行右侧放清除 / AI 生成 */
-function Section({
-  title,
-  filled,
-  open,
-  onToggle,
-  actions,
-  children,
-}: {
-  title: string
-  filled: boolean
-  open: boolean
-  onToggle: () => void
-  actions?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <section className="border-b border-line last:border-b-0">
-      <div className="flex items-center gap-3 px-5 py-3.5">
-        <button className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open} onClick={onToggle}>
-          <ChevronRight size={16} className={clsx('shrink-0 text-ink-400 transition-transform', open && 'rotate-90')} />
-          <span className="text-[14px] font-semibold text-ink-900">{title}</span>
-          {!filled && <span className="text-xs text-ink-400">未填写</span>}
-        </button>
-        {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
-      </div>
-      {open && <div className="animate-fade-in px-5 pb-5 pl-11">{children}</div>}
-    </section>
-  )
-}
 
 /** 节奏曲线下方的冲突主线分段：与曲线的集数轴对齐（左 30 / 右 12 与 RhythmChart 的内边距一致） */
-function MainLineStrip({ ranges, beats, total, aligned }: { ranges: [number, number][]; beats: PlotBeat[]; total: number; aligned: boolean }) {
+function MainLineStrip({ ranges, beats, total, aligned, bench }: { ranges: [number, number][]; beats: PlotBeat[]; total: number; aligned: boolean; bench?: boolean }) {
   const pos = (ep: number) => (total <= 1 ? 0 : Math.min(1, Math.max(0, (ep - 1) / (total - 1))))
   return (
     <div className="mt-3 border-t border-line pt-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
         <span className="font-medium text-ink-700">冲突主线设定</span>
-        <span className="text-ink-500">{aligned ? '付费卡点落在每段结尾，大反转在段中' : '节奏已手动调整，与主线分段不完全一致；点「恢复推荐」可重新对齐'}</span>
+        <span className="text-ink-500">{aligned ? (bench ? '节点按对标剧分段对位' : '付费卡点落在每段结尾，大反转在段中') : '节奏已手动调整，与主线分段不完全一致；点「恢复推荐」可重新对齐'}</span>
       </div>
       <div className="relative h-10" style={{ marginLeft: 30, marginRight: 12 }}>
         {ranges.map(([from, to], i) => {
@@ -124,30 +106,69 @@ function MainLineStrip({ ranges, beats, total, aligned }: { ranges: [number, num
           )
         })}
       </div>
-      <ol className="mt-3 grid gap-x-6 gap-y-1.5 text-xs leading-5 md:grid-cols-2">
-        {beats.map((b, i) => (
-          <li key={i} className="flex min-w-0 gap-2">
-            <span className="shrink-0 font-medium text-ink-700">{b.beat}</span>
-            <span className="shrink-0 text-ink-400 tabular-nums">{ranges[i] ? rangeLabel(ranges[i]) : ''}</span>
-            <span className={clsx('line-clamp-2 min-w-0', b.content.trim() ? 'text-ink-500' : 'text-ink-300')}>{b.content.trim() || '未填写'}</span>
-          </li>
-        ))}
-      </ol>
     </div>
   )
 }
 
-/** 节奏框架：跟冲突主线绑定，先定主线再生成；生成后可本地微调，保存后写回项目 */
-function RhythmBlock({ project, ranges, beats }: { project: Project; ranges: [number, number][]; beats: PlotBeat[] }) {
+/** 对标剧虚线：仿写按分段对位放到我们的集数轴上（对不上的段不画） */
+function benchCompare(project: Project): RhythmCompare | undefined {
+  const bd = project.work.breakdown?.episodes.length ? project.work.breakdown : null
+  if (!bd) return undefined
+  const total = project.spec.totalEpisodes
+  return {
+    emotion: bd.episodes.map((e) => e.emotion),
+    paywalls: bd.episodes.filter((e) => e.paywall).map((e) => e.ep),
+    place: bd.episodes.map((e) => placeBenchEp(project, e.ep, total)),
+    aligned: Array.from({ length: total }, (_, i) => alignEp(project, i + 1)),
+  }
+}
+
+/** 节奏框架一行摘要：收起时也能看到卡点落在哪几集 */
+function rhythmSummary(r: RhythmFrame, total: number) {
+  const eps = (list: number[]) => (list.length ? `第 ${list.join('、')} 集` : '无')
+  return [`首付费第 ${r.paywalls[0] ?? '—'} 集`, `付费卡点 ${eps(r.paywalls)}`, `大反转 ${eps(r.twists)}`, `结局高潮 ${rangeLabel([r.climaxFrom, total])}`]
+}
+
+/**
+ * 节奏框架：折在冲突主线里，默认收起（目标情绪打分还没有合适的依据，曲线只是示意，以分段和卡点为准）。
+ * 跟冲突主线绑定，先定主线再生成；仿写按对标剧的节奏分段换算；生成后可本地微调，保存后写回项目。
+ */
+function RhythmBlock({
+  project,
+  ranges,
+  beats,
+  locked,
+  row,
+  generated,
+  fresh,
+  onGenerated,
+}: {
+  project: Project
+  ranges: [number, number][]
+  beats: PlotBeat[]
+  locked: boolean
+  row: BasisRow | null
+  /** 按冲突主线生成过（没生成过就是立项时的默认节奏） */
+  generated: boolean
+  /** 逐项生成刚生成到这里 */
+  fresh: boolean
+  onGenerated: (rhythm: RhythmFrame) => void
+}) {
   const updateProject = useProjects((s) => s.updateProject)
   const total = project.spec.totalEpisodes
   const [rhythm, setRhythm] = useState(project.rhythm)
   const [manual, setManual] = useState(false)
-  const recommended = rhythmFromPhases(ranges, total)
+  const [open, setOpen] = useState(false)
+  const bench = project.mode !== 'original' && project.work.breakdown ? alignRhythm(project) : null
+  const recommended = bench?.paywalls.length ? bench : rhythmFromPhases(ranges, total)
   const ready = beats.every((b) => b.content.trim())
   const dirty = !sameRhythm(rhythm, project.rhythm)
   const invalid = validateRhythm(rhythm, total).some((i) => i.level === 'error')
-  const showEditor = ready || manual || dirty
+  const showEditor = ready || manual || dirty || locked
+  const compare = benchCompare(project)
+  const how = bench?.paywalls.length ? '按对标剧的节奏分段对位换算：对标剧每个节点先找它在哪一段，再落到我们对应那段的同一位置' : '按冲突主线分段生成：每段结尾设付费卡点，段中设大反转，最后一段为结局高潮区'
+
+  useEffect(() => setRhythm(project.rhythm), [project.rhythm])
 
   const save = () => {
     updateProject(project.id, { rhythm }, `调整节奏框架：首付费第 ${rhythm.paywalls[0]} 集`)
@@ -157,52 +178,80 @@ function RhythmBlock({ project, ranges, beats }: { project: Project; ranges: [nu
   const generate = () => {
     setRhythm(recommended)
     updateProject(project.id, { rhythm: recommended }, `按冲突主线生成节奏框架：首付费第 ${recommended.paywalls[0] ?? '—'} 集`)
-    toast('节奏框架已按冲突主线生成，可在折线图上微调')
+    onGenerated(recommended)
+    toast(`${bench?.paywalls.length ? '节奏框架已按对标剧分段换算' : '节奏框架已按冲突主线生成'}${open ? '，可在折线图上微调' : '；要微调就展开节奏框架'}`)
   }
+  const strip = <MainLineStrip ranges={ranges} beats={beats} total={total} aligned={sameRhythm(rhythm, recommended)} bench={!!bench?.paywalls.length} />
 
   return (
-    <div className="rounded-lg border border-line">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-ink-900">节奏框架</div>
-          <p className="mt-0.5 text-xs text-ink-500">按冲突主线分段生成：每段结尾设付费卡点，段中设大反转，最后一段为结局高潮区；情节大纲与写作都以这张表为准</p>
-        </div>
-        <div className="flex gap-2">
-          {dirty && (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => setRhythm(project.rhythm)}>
-                放弃修改
-              </Button>
-              <Button size="sm" onClick={save} disabled={invalid}>
-                <Save size={14} />
-                保存节奏
-              </Button>
-            </>
-          )}
-          <Button variant={ready && !dirty ? 'secondary' : 'ghost'} size="sm" disabled={!ready} title={ready ? undefined : '先填完冲突主线各段的剧情'} onClick={generate}>
-            <Wand2 size={14} />
-            生成节奏框架
-          </Button>
-        </div>
-      </div>
-      {showEditor ? (
-        <div className="p-4">
-          <RhythmEditor
-            rhythm={rhythm}
-            total={total}
-            onChange={setRhythm}
-            recommended={recommended}
-            chartFooter={<MainLineStrip ranges={ranges} beats={beats} total={total} aligned={sameRhythm(rhythm, recommended)} />}
-          />
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
-          <p className="text-[13px] text-ink-500">
-            先定冲突主线，再点「生成节奏框架」。目前沿用立项时的默认节奏（首付费第 {project.rhythm.paywalls[0] ?? '—'} 集）。
+    <div data-rhythm className={clsx('mt-4 rounded-lg border transition-shadow', fresh ? 'border-brand-300 ring-3 ring-brand-500/10' : 'border-line')}>
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1 text-[13px] font-semibold text-ink-900">
+            <button
+              type="button"
+              data-rhythm-toggle
+              aria-expanded={open}
+              onClick={() => setOpen(!open)}
+              className="-ml-1 inline-flex items-center gap-1 rounded px-1 hover:text-brand-700"
+              title={open ? '收起节奏框架' : '展开节奏框架：目标情绪曲线、付费卡点与大反转'}
+            >
+              <ChevronRight size={14} className={clsx('text-ink-400 transition-transform', open && 'rotate-90')} />
+              节奏框架
+            </button>
+            {row && <BasisInfo title="节奏框架" row={row} />}
+            {!open && <span className="ml-1 text-xs font-normal text-ink-400">已收起，点开看曲线、调卡点</span>}
+          </div>
+          <p data-rhythm-summary className="mt-1 pl-5 text-xs leading-5 text-ink-700 tabular-nums">
+            {rhythmSummary(rhythm, total).join(' · ')}
           </p>
-          <Button variant="ghost" size="sm" onClick={() => setManual(true)}>
-            直接编辑节奏
-          </Button>
+          <p className="pl-5 text-xs leading-5 text-ink-500">
+            {generated ? `${how}；情节大纲与写作都以这张表为准` : `先定冲突主线，再点「生成节奏框架」。目前沿用立项时的默认节奏（首付费第 ${project.rhythm.paywalls[0] ?? '—'} 集）`}
+          </p>
+        </div>
+        {!locked && (
+          <div className="flex shrink-0 gap-2">
+            {dirty && (
+              <>
+                <Button variant="ghost" size="sm" onClick={() => setRhythm(project.rhythm)}>
+                  放弃修改
+                </Button>
+                <Button size="sm" onClick={save} disabled={invalid}>
+                  <Save size={14} />
+                  保存节奏
+                </Button>
+              </>
+            )}
+            <Button variant={ready && !generated ? 'secondary' : 'ghost'} size="sm" disabled={!ready} title={ready ? (row ? `生成逻辑：${basisLine(row)}` : undefined) : '先填完冲突主线各段的剧情'} onClick={generate}>
+              <Wand2 size={14} />
+              生成节奏框架
+            </Button>
+          </div>
+        )}
+      </div>
+      {open && (
+        <div className="border-t border-line p-4">
+          <p className="mb-3 flex items-start gap-1.5 text-xs leading-5 text-ink-500">
+            <Info size={13} className="mt-[3px] shrink-0 text-ink-400" />
+            曲线上的目标情绪强度只是示意：现在还没有合适的打分依据，以冲突主线的分段和付费卡点、大反转、结局高潮这几个节点为准
+          </p>
+          {showEditor ? (
+            locked ? (
+              <>
+                <RhythmChart rhythm={project.rhythm} total={total} compare={compare} />
+                {strip}
+              </>
+            ) : (
+              <RhythmEditor rhythm={rhythm} total={total} onChange={setRhythm} recommended={recommended} chartFooter={strip} compare={compare} />
+            )
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[13px] text-ink-500">冲突主线各段的剧情还没填完，节奏框架暂时用立项时的默认节奏。</p>
+              <Button variant="ghost" size="sm" onClick={() => setManual(true)}>
+                直接编辑节奏
+              </Button>
+            </div>
+          )}
         </div>
       )}
       <UnsavedChangesPrompt dirty={dirty} desc="节奏框架有未保存的修改，离开后将丢失。" />
@@ -210,49 +259,6 @@ function RhythmBlock({ project, ranges, beats }: { project: Project; ranges: [nu
   )
 }
 
-function ReviewPanel({ review, adoptText, onAdopt, onClose }: { review: IdeaReview; adoptText: string; onAdopt: () => void; onClose: () => void }) {
-  return (
-    <div className="animate-fade-in rounded-lg border border-line bg-canvas/60 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-[13px] font-medium">可行性</span>
-          <span className="flex gap-1" aria-label={`可行性 ${review.score} 分`}>
-            {[1, 2, 3, 4, 5].map((i) => (
-              <span key={i} className={clsx('size-2.5 rounded-full', i <= review.score ? 'bg-brand-500' : 'bg-ink-900/10')} />
-            ))}
-          </span>
-          <span className="text-[13px] text-ink-700">{review.verdict}</span>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            收起
-          </Button>
-          <Button size="sm" onClick={onAdopt}>
-            {adoptText}
-          </Button>
-        </div>
-      </div>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        <ul className="space-y-1.5">
-          {review.pros.map((t) => (
-            <li key={t} className="flex gap-2 text-[13px] text-ink-700">
-              <CircleCheck size={14} className="mt-[3px] shrink-0 text-emerald-500" />
-              {t}
-            </li>
-          ))}
-        </ul>
-        <ul className="space-y-1.5">
-          {review.risks.map((t) => (
-            <li key={t} className="flex gap-2 text-[13px] text-amber-900">
-              <TriangleAlert size={14} className="mt-[3px] shrink-0 text-amber-500" />
-              {t}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  )
-}
 
 function PlanLines({ text }: { text: string }) {
   return (
@@ -275,7 +281,7 @@ function PlanLines({ text }: { text: string }) {
   )
 }
 
-/** AI 给出的 3 个方向：弹窗里并排对比，选一个确定后再录入 */
+/** AI 给出的 3 个方向：弹窗里并排对比，选一个确定后再录入；每个方向写全核心设定、世界观、金手指、故事背景（仿写另有改写想法），主角人设往后按顺序往下推 */
 function DirectionDialog({
   directions,
   planLabel,
@@ -286,7 +292,8 @@ function DirectionDialog({
   onClose,
 }: {
   directions: Direction[]
-  planLabel: string
+  /** 仿写另录改写想法；原创没有（整体框架 11/4 删掉） */
+  planLabel: string | null
   overwrite: boolean
   refreshing: boolean
   onRefresh: () => void
@@ -296,6 +303,7 @@ function DirectionDialog({
   const [picked, setPicked] = useState<string | null>(null)
   const chosen = directions.find((d) => d.id === picked)
   const h = 'mb-1 text-[11px] font-semibold tracking-wide text-ink-400'
+  const what = ['核心设定、世界观、金手指、故事背景', planLabel].filter(Boolean).join('、')
 
   return (
     <Modal
@@ -303,10 +311,10 @@ function DirectionDialog({
       onClose={onClose}
       width={1080}
       title="AI 给出的 3 个方向"
-      desc={`对比${planLabel}、核心设定、冲突主线与创新点，选一个方向后点「确定录入」`}
+      desc={`对比${what}，选一个方向后点「确定录入」；主角人设${planLabel ? '、创新点' : ''}、冲突主线在下面按顺序往下推`}
       footer={
         <>
-          <span className="mr-auto self-center text-xs text-ink-500">{overwrite ? `录入后会覆盖当前的${planLabel}、核心设定、爽点公式、冲突主线与创新点` : `录入后可继续逐项修改`}</span>
+          <span className="mr-auto self-center text-xs text-ink-500">{overwrite ? `录入后会覆盖当前的${what}` : `录入后可继续逐项修改`}</span>
           <AiButton variant="ghost" size="md" loading={refreshing} onClick={onRefresh}>
             换一批
           </AiButton>
@@ -341,44 +349,23 @@ function DirectionDialog({
                   <p className="mt-1.5 text-[13px] leading-5 text-ink-700">{d.pitch}</p>
                 </div>
               </div>
-              <section>
-                <div className={h}>{planLabel}</div>
-                <PlanLines text={d.plan} />
-              </section>
-              <section>
+              <section data-dir-part="logline">
                 <div className={h}>核心设定</div>
                 <p className="text-[13px] leading-6 font-medium text-ink-900">{d.logline}</p>
               </section>
-              <section>
-                <div className={h}>冲突主线</div>
-                <ol className="space-y-1.5">
-                  {d.mainLine.map((b, i) => (
-                    <li key={i}>
-                      <span className="font-medium text-ink-700">{b.beat}</span>
-                      <span className="ml-1.5 text-ink-400 tabular-nums">{b.range}</span>
-                      <div>{b.content}</div>
-                    </li>
-                  ))}
-                </ol>
-              </section>
-              <section>
-                <div className={h}>创新点</div>
-                <ul className="space-y-1.5">
-                  {d.innovations.map((x) => (
-                    <li key={x.id}>
-                      <span className="text-ink-400">{x.theirs}</span>
-                      <ArrowRight size={11} className="mx-1 inline text-brand-400" />
-                      <span className="text-ink-700">{x.ours}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-              {d.formula && (
-                <section>
-                  <div className={h}>爽点公式</div>
-                  <p>{d.formula}</p>
+              {(
+                [
+                  ['world', '世界观', d.world],
+                  ['goldenFinger', '金手指', d.goldenFinger],
+                  ['background', '故事背景', d.background],
+                  ...(planLabel ? [['plan', planLabel, d.plan] as const] : []),
+                ] as const
+              ).map(([key, label, text]) => (
+                <section key={key} data-dir-part={key}>
+                  <div className={h}>{label}</div>
+                  <PlanLines text={text} />
                 </section>
-              )}
+              ))}
             </label>
           )
         })}
@@ -387,24 +374,44 @@ function DirectionDialog({
   )
 }
 
-type TextKey = ArchitectureSection | 'references'
-type SectionKey = 'core' | TextKey
+/** 两个 Demo 页（新版故事架构、多轮改写对话）的入口：讨论故事架构期间先隐藏，页面本身仍可按地址打开 */
+const SHOW_LABS = false
 
-/** 纯文本设定段落；参考作品只能手填 */
-const TEXT_SECTIONS: { key: TextKey; title: string; placeholder: string }[] = [
-  { key: 'world', title: '世界观设定', placeholder: '故事发生在什么样的世界里：时代、地点、规则与核心秘密……' },
-  { key: 'factions', title: '主要势力', placeholder: '主角阵营：有谁、各自什么身份；敌对阵营：有谁、想要什么……' },
-  { key: 'background', title: '故事背景', placeholder: '开场前发生了什么、主角被逼到什么处境，故事从哪里开始……' },
-  { key: 'goldenFinger', title: '金手指 / 核心卖点', placeholder: '主角的依仗是什么，观众为什么追下去……' },
-  { key: 'heroSetup', title: '主角人设', placeholder: '一句话主角人设；完整小传在人物设定里展开' },
-  { key: 'writingRules', title: '全局写作要求', placeholder: '每集写作都会带上的要求：篇幅、钩子、台词风格、视角……' },
-  { key: 'references', title: '参考作品', placeholder: '参考哪些作品的风格或体系……' },
-]
+type TextItem = 'idea' | 'goldenFinger' | 'heroSetup' | 'world' | 'background' | 'highlights' | 'writingRules'
 
-const textPatch = (key: TextKey, text: string) => {
-  const patch: Partial<Architecture> = {}
-  patch[key] = text
-  return patch
+const ITEM_TITLE: Record<ArchItem, string> = {
+  idea: '你的改写想法',
+  logline: '核心设定',
+  plan: '整体框架',
+  innovations: '创新点',
+  goldenFinger: '金手指 / 核心卖点',
+  heroSetup: '主角人设',
+  world: '世界观设定',
+  background: '故事背景',
+  highlights: '核心亮点',
+  factions: '主要势力',
+  formula: '爽点公式',
+  mainLine: '冲突主线',
+  rhythm: '节奏框架',
+  writingRules: '全局写作要求',
+  references: '参考作品',
+}
+
+const PLACEHOLDER: Partial<Record<TextItem, string>> = {
+  goldenFinger: '金手指：名字\n首次出现：第几集（什么事）。\n核心能力：· 能力名：来历，能做到什么。这是其物理 / 社会层面的硬金手指。\n表现方式：· 首集展示 · 渐进释放：A → B → C · 权威认证\n与主线强相关：前期被隐藏导致被羞辱，后期逐步释放成为打脸武器',
+  heroSetup: '可以一句话，也可以按人物卡写全：\n主角：\n性别：\n年龄：\n外貌：\n性格：\n背景：\n能力：\n动机：\n弧光：\n备注：\n关系备注：',
+  world: '世界总览：整个故事设定的世界是什么样的、有什么规则\n阵营设定：· 阵营名（狼人 / 吸血鬼 / 异能者……）：设定、谁在里面\n主要地点：· 地名：是什么地方、谁的地盘、在这里发生什么（教会、领地、北境这类私设要写细）',
+  background: '一段话讲完整个故事：主角是谁、处境如何 → 谁为了什么、用什么手段步步紧逼 → 转机 → 反派变本加厉 → 高潮 → 结局，主角的身份怎么变',
+  highlights: '期待值：\n· 核心爽点：你以为……其实……\n· 观众等着看：哪几场（真相揭开、身份翻转、反派报应）\n· 情感期待：感情线上观众在等什么\n情绪：\n· 主打情绪：爽 / 虐 / 甜 / 紧张……\n· 情绪走向：先压到哪 → 第一次爽在哪 → 怎么反转 → 结局',
+  writingRules: '每集写作都会带上的要求：篇幅、钩子、台词风格、视角、禁止项……',
+}
+
+const HINT: Partial<Record<ArchItem, string>> = {
+  world: '总分写：先总说整个世界，再分写各阵营的设定（狼人、吸血鬼、克苏鲁规则怪谈、异能……），最后写细主要发生地点——教会、领地、北境这类专有名词都是私设',
+  goldenFinger: '最重要的是讲清能力是什么：可以命名，每项能力写来历、能做到什么、是哪个层面的硬金手指；然后是首次出现、表现方式、与主线强相关',
+  background: '写成故事简介：一段话从主角的处境讲到结局，谁为了什么、用什么手段逼主角，转机在哪，主角最后从什么变成什么',
+  highlights: '参考故事的期待值和情绪：期待值是观众为什么追下去（核心爽点、等着看哪几场、情感期待），情绪是主打什么情绪、一路怎么起伏',
+  heroSetup: '写成人物卡的，人物设定 AI 生成时按卡拆到人物小传',
 }
 
 interface Pending {
@@ -417,13 +424,21 @@ interface Pending {
 
 export default function ArchitectureStage({ project, blocked }: { project: Project; blocked: boolean }) {
   const { patchWork, updateProject } = useProjects()
-  const { running, run } = useAiTask()
-  const [review, setReview] = useState<IdeaReview | null>(null)
+  const { running, run, cancel } = useAiTask()
   const [directions, setDirections] = useState<Direction[] | null>(null)
+  const [loglines, setLoglines] = useState<LoglineCandidate[]>([])
+  // 换一批时仍以编剧自己写的核心设定为种子，不在候选上层层叠加
+  const loglineSeed = useRef('')
+  // AI 生成的结果先放这里，采用时连同标记、依据指纹一起存
+  const drafts = useRef<Partial<Record<ArchItem, ArchDraft>>>({})
   const [issues, setIssues] = useState<string[]>([])
   const [pending, setPending] = useState<Pending | null>(null)
-  const [open, setOpen] = useState<Set<SectionKey>>(() => new Set(['core']))
+  // 逐项生成：刚生成的那一项，停在这里等编剧看过再继续
+  const [justMade, setJustMade] = useState<ArchItem | null>(null)
   const v2 = useV2()
+  // 版本二：状态条放进页面底部的环节条
+  const slot = useStageSlot(v2)
+  const docked = !!slot
 
   const total = project.spec.totalEpisodes
   const arch = project.work.architecture ?? emptyArchitecture(total)
@@ -432,28 +447,43 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const bd = project.work.breakdown
   const adaptation = project.mode !== 'original'
   const approved = arch.status === 'approved'
-  const planLabel = adaptation ? '改写方案' : '整体框架'
+  // 3 个方向里的走向写到哪：仿写写改写想法；原创不录（整体框架 11/4 删掉，开局到结局写在故事背景里）
+  const planLabel = adaptation ? '改写想法' : null
+  const titleOf = (item: ArchItem) => ITEM_TITLE[item]
+  // 仿写冲突主线：先看对标剧拆解出来的，再到「修改冲突主线」里定我们的
+  const [lineTab, setLineTab] = useState<'ours' | 'bench'>('bench')
   // 仿写项目还没开始时，用立项灵感作为改写想法的起点
   const idea = project.work.architecture ? arch.idea : project.idea
-  // 原创项目以核心设定为起点：评估、提方向都围绕它
-  const seedText = adaptation ? idea : project.logline
-  const hasCore = !!arch.formula || arch.mainLine.some((b) => b.content) || arch.innovations.length > 0
-  const hasMainLine = arch.mainLine.some((b) => b.content.trim())
-  const structureHint = STORY_STRUCTURES.find((s) => s.value === arch.structure)?.hint
-
-  const toggle = (key: SectionKey) =>
-    setOpen((s) => {
-      const next = new Set(s)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+  const reference = labReference(project)
+  // 页面从上往下的顺序就是生成顺序：每一项只读排在它前面的项
+  const order = archOrder(project)
 
   const save = (patch: Partial<Architecture>, note?: string) => {
     const cur = latestProject(project.id)
     if (!cur) return
     const base = cur.work.architecture ?? { ...emptyArchitecture(cur.spec.totalEpisodes), idea }
     patchWork(cur.id, { architecture: { ...base, ...patch } }, note)
+  }
+
+  /** 采用 AI 生成的一项：内容、每行的来源标记、当时的依据指纹一起存 */
+  const applyDraft = (item: ArchItem, d: ArchDraft, note: string) => {
+    const cur = latestProject(project.id)
+    if (!cur) return
+    const base = cur.work.architecture ?? { ...emptyArchitecture(cur.spec.totalEpisodes), idea }
+    const row = archBasis(cur, item)
+    const patch: Partial<Architecture> =
+      item === 'innovations' ? { innovations: d.innovations ?? [] } : item === 'mainLine' ? { mainLine: d.mainLine ?? base.mainLine } : item === 'logline' || item === 'rhythm' ? {} : { [item]: d.text }
+    const prints = row ? { ...cur.work.prints, [PRINT_KEY.arch(item)]: printOf(cur, row.deps) } : cur.work.prints
+    patchWork(cur.id, { architecture: { ...base, ...patch, marks: { ...base.marks, [item]: d.marks } }, prints }, note)
+    if (item === 'logline') updateProject(cur.id, { logline: d.text })
+    if (item === 'rhythm' && d.rhythm) updateProject(cur.id, { rhythm: d.rhythm })
+  }
+
+  /** 记下某一项此刻的依据（忽略「依据已改」、手动生成节奏时用） */
+  const stamp = (item: ArchItem) => {
+    const cur = latestProject(project.id)
+    const row = cur && archBasis(cur, item)
+    if (cur && row) patchWork(cur.id, { prints: { ...cur.work.prints, [PRINT_KEY.arch(item)]: printOf(cur, row.deps) } })
   }
 
   const setSpec = (patch: Partial<Project['spec']>, note: string) => {
@@ -463,12 +493,17 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     updateProject(cur.id, { spec, rhythm: rhythmOnResize(cur, spec.totalEpisodes) }, note)
   }
 
-  const evaluate = async () => {
-    const cur = latestProject(project.id)
-    if (!cur) return
-    const result = await run('evaluate', (signal) => evaluateIdea(cur, seedText, signal))
-    if (result) setReview(result)
+  // 「完全按对标剧」：集数与单集时长跟着对标剧走，拆解 / 转写出结果后自动同步
+  const follow = adaptation && !!project.spec.followBenchmark
+  const bench = benchmarkSpec(project)
+  const benchPatch = {
+    ...(bench.episodes && bench.episodes !== total ? { totalEpisodes: bench.episodes } : {}),
+    ...(bench.seconds && bench.seconds !== project.spec.episodeSeconds ? { episodeSeconds: bench.seconds } : {}),
   }
+  const benchKey = JSON.stringify(benchPatch)
+  useEffect(() => {
+    if (follow && benchKey !== '{}') setSpec(JSON.parse(benchKey), '按对标剧同步集数与单集时长')
+  }, [follow, benchKey])
 
   const propose = async () => {
     const cur = latestProject(project.id)
@@ -477,62 +512,98 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     if (result) setDirections(result)
   }
 
+  /** 方向里的世界观、金手指、故事背景一起录入；依据指纹按录入后的样子记，之后核心设定再改会标「依据已改」 */
   const pickDirection = (d: Direction) => {
-    save({ plan: d.plan, idea: adaptation && !idea.trim() ? d.logline : idea, formula: d.formula, mainLine: d.mainLine, innovations: d.innovations }, `采用 AI 方向：${d.title}`)
+    save({ ...(adaptation && { idea: d.plan }), world: d.world, goldenFinger: d.goldenFinger, background: d.background }, `采用 AI 方向：${d.title}`)
     updateProject(project.id, { logline: d.logline })
+    for (const item of ['world', 'goldenFinger', 'background'] as const) stamp(item)
     setDirections(null)
-    setReview(null)
     setIssues([])
-    toast(`已录入「${d.title}」：${planLabel}、核心设定、冲突主线与创新点都已更新`)
+    toast(`已录入「${d.title}」：${['核心设定、世界观、金手指、故事背景', planLabel].filter(Boolean).join('、')}都已更新`)
   }
 
-  const generateCore = async () => {
+  /** 这一项有没有内容 */
+  const filledOf = (p: Project, item: ArchItem) => {
+    const a = p.work.architecture ?? emptyArchitecture(p.spec.totalEpisodes)
+    if (item === 'logline') return !!p.logline.trim()
+    if (item === 'innovations') return a.innovations.some((x) => x.ours.trim())
+    if (item === 'mainLine') return a.mainLine.every((b) => b.content.trim())
+    if (item === 'rhythm') return !!p.work.prints?.[PRINT_KEY.arch('rhythm')]
+    return !!(a[item] as string).trim()
+  }
+
+  /** 逐项生成会生成的项：改写想法由编剧写，原创的核心设定由编剧写；节奏框架折在冲突主线里，排在它后面 */
+  const autoItems = order.filter((i) => i !== 'idea' && !(i === 'logline' && !adaptation)).flatMap((i): ArchItem[] => (i === 'mainLine' ? ['mainLine', 'rhythm'] : [i]))
+  /** 下一个空着的项；节奏框架要等冲突主线填完 */
+  const nextOf = (p: Project) => autoItems.find((i) => !filledOf(p, i) && !(i === 'rhythm' && !filledOf(p, 'mainLine')))
+  const nextEmpty = nextOf(project)
+
+  /** 逐项生成到冲突主线时只补空着的段：编剧写了剧情的段不覆盖（比如后来新加了一段） */
+  const keepOwnBeats = (p: Project, d: ArchDraft): ArchDraft => {
+    const own = (p.work.architecture ?? emptyArchitecture(p.spec.totalEpisodes)).mainLine
+    if (!d.mainLine || !own.some((b) => b.content.trim())) return d
+    const kept = (i: number) => !!own[i]?.content.trim()
+    return { ...d, mainLine: d.mainLine.map((b, i) => (kept(i) ? { ...b, content: own[i].content } : b)), marks: d.marks.filter((_, i) => !kept(i)) }
+  }
+
+  /** 冲突主线生成后顺带按分段生成节奏框架；已经生成过的不动（可能手动调过），冲突主线变了会标「依据已改」 */
+  const followRhythm = async (signal: AbortSignal) => {
+    const p = latestProject(project.id)
+    if (!p || filledOf(p, 'rhythm') || !filledOf(p, 'mainLine')) return false
+    const d = await draftArchItem(p, 'rhythm', nextSeed(), signal)
+    applyDraft('rhythm', d, `按冲突主线生成节奏框架：首付费第 ${d.rhythm?.paywalls[0] ?? '—'} 集`)
+    return true
+  }
+
+  /** 逐项生成：每次只生成下一个空着的项，生成完停下来等编剧看；读编剧写的和排在它前面的项，已有内容不覆盖 */
+  const generateNext = async () => {
     const cur = latestProject(project.id)
     if (!cur) return
-    const draft = await run('core', (signal) => draftArchitecture(cur, nextSeed(), signal))
-    if (!draft) return
-    save({ formula: draft.formula, mainLine: draft.mainLine, innovations: draft.innovations }, 'AI 生成核心大纲')
-    if (!latestProject(project.id)?.logline.trim()) updateProject(project.id, { logline: draft.logline })
-    setIssues([])
-    setOpen((s) => new Set(s).add('core'))
-    toast('核心大纲已生成，请逐项修改后确认')
+    if (!adaptation && !cur.logline.trim()) return toast('先写核心设定（或点「填入立项灵感」），后面每一项都从它推出来', 'error')
+    const item = nextOf(cur)
+    if (!item) return
+    const r = await run('fill', async (signal) => {
+      const d = await draftArchItem(cur, item, nextSeed(), signal)
+      applyDraft(item, item === 'mainLine' ? keepOwnBeats(cur, d) : d, `AI 生成${titleOf(item)}`)
+      return { rhythm: item === 'mainLine' && (await followRhythm(signal)) }
+    })
+    if (!r) return
+    setJustMade(item)
+    const after = latestProject(project.id)
+    const next = after && nextOf(after)
+    toast(next ? `已生成「${titleOf(item)}」${r.rhythm ? '和节奏框架' : ''}；看过、改好再继续生成下一项「${titleOf(next)}」` : `已生成「${titleOf(item)}」，各项都有内容了；看过各项的「补充」再确认故事架构`)
+    requestAnimationFrame(() => document.querySelector(`[data-node=${item === 'rhythm' ? 'mainLine' : item}]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
 
-  const generateMainLine = async () => {
-    const cur = latestProject(project.id)
-    if (!cur) return
-    const mainLine = await run('mainline', (signal) => draftMainLine(cur, nextSeed(), signal))
-    if (!mainLine) return
-    save({ mainLine }, 'AI 生成冲突主线')
-    toast('冲突主线已生成：确认后点「生成节奏框架」')
-  }
-
-  const generateSection = async (key: ArchitectureSection, title: string) => {
-    const cur = latestProject(project.id)
-    if (!cur) return
-    const text = await run(key, (signal) => draftSection(cur, key, signal))
-    if (text === undefined) return
-    save(textPatch(key, text), `AI 生成${title}`)
-    setOpen((s) => new Set(s).add(key))
-  }
-
-  /** 已有内容时先确认再覆盖 */
-  const guard = (filled: boolean, next: Pending) => (filled ? setPending(next) : next.action())
-
-  const missing = () => [...(project.logline.trim() ? [] : ['核心设定未填写']), ...architectureIssues(arch)]
-  // 版本二：确认前就实时列出还差什么
-  const live = v2 && !approved && !blocked ? missing() : null
+  /** 确认前要补齐的：各项里只有核心设定必填（11/4 标注），其余都可以空着 */
+  const missing = (): string[] => [
+    ...(adaptation || project.genres.length ? [] : ['题材类型未选']),
+    ...(project.audience ? [] : ['目标受众未选']),
+    ...order.filter((item) => ARCH_REQUIRED.includes(item) && !filledOf(project, item)).map((item) => `${titleOf(item)}未填写`),
+  ]
 
   const confirm = () => {
     const found = missing()
     setIssues(found)
-    if (found.length) {
-      setOpen((s) => new Set(s).add('core'))
-      return toast('核心大纲还有未完成的项', 'error')
-    }
+    if (found.length) return toast('还有未完成的项', 'error')
     save({ status: 'approved', mainLine: arch.mainLine.map((b, i) => ({ ...b, range: rangeLabel(ranges[i]) })) }, '确认故事架构')
+    setJustMade(null)
     toast('故事架构已确认，可以开始人物设定')
   }
+
+  const reopen = () => {
+    save({ status: 'pending' }, '修改故事架构')
+    toast('可以改了；改完重新确认。下游已生成的内容会标「依据已改」，不会自动重写')
+  }
+
+  const proposeLoglines = async () => {
+    const cur = latestProject(project.id) ?? project
+    if (!loglines.some((c) => c.logline === cur.logline)) loglineSeed.current = cur.logline
+    const list = await run('loglines', (signal) => generateLoglines({ idea: loglineSeed.current, genres: cur.genres, audience: cur.audience, tones: cur.tones }, signal))
+    if (list) setLoglines(list)
+  }
+  // 版本二：确认前就实时列出还差什么
+  const live = v2 && !approved && !blocked ? missing() : null
 
   const setBeat = (i: number, patch: Partial<PlotBeat>) => save({ mainLine: arch.mainLine.map((b, j) => (j === i ? { ...b, ...patch } : b)) })
   const setInnovation = (id: string, patch: { theirs?: string; ours?: string }) => save({ innovations: arch.innovations.map((x) => (x.id === id ? { ...x, ...patch } : x)) })
@@ -562,14 +633,16 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     patchWork(cur.id, { architecture: { ...base, phaseEnds: ends, mainLine: mainLine.map((b, k) => ({ ...b, range: rangeLabel(next[k]) })) }, plot }, note)
   }
 
-  /** 在第 i 段后面插入一段：把第 i 段对半拆开 */
+  /** 在第 i 段后面插入一段：把第 i 段对半拆开；仿写新加的段默认不对位 */
   const addPhase = (i: number) => {
     const [from, to] = ranges[i]
     if (to <= from) return toast(`「${arch.mainLine[i].beat}」只有 1 集，拆不出新的一段`, 'error')
     const ends = ranges.map(([, e]) => e)
     ends.splice(i, 0, from + Math.floor((to - from - 1) / 2))
     const beat = defaultPhaseName(count)
-    const mainLine = [...arch.mainLine.slice(0, i + 1), { beat, range: '', content: '' }, ...arch.mainLine.slice(i + 1)]
+    // 已有的段先把对位写死，免得插入后默认对位整体错开
+    const fixed = arch.mainLine.map((b, k) => (adaptation && bd ? { ...b, bench: benchSegment(project, k) } : b))
+    const mainLine = [...fixed.slice(0, i + 1), { beat, range: '', content: '', ...(adaptation && bd ? { bench: -1 } : {}) }, ...fixed.slice(i + 1)]
     reshape(mainLine, ends, (ph) => [...ph.slice(0, i + 1), '', ...ph.slice(i + 1)], `冲突主线新增一段「${beat}」`)
   }
 
@@ -577,448 +650,712 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const removePhase = (i: number) => {
     const ends = ranges.map(([, e]) => e)
     ends.splice(Math.max(0, i - 1), 1)
-    const mainLine = arch.mainLine.filter((_, k) => k !== i)
+    const fixed = arch.mainLine.map((b, k) => (adaptation && bd ? { ...b, bench: benchSegment(project, k) } : b))
+    const mainLine = fixed.filter((_, k) => k !== i)
     reshape(mainLine, ends, (ph) => ph.filter((_, k) => k !== i), `冲突主线删除「${arch.mainLine[i].beat}」`)
   }
 
-  return (
-    <>
-      <Card className={clsx('px-5 py-4', approved && 'border-emerald-200', live && 'sticky top-stick-sm z-20')}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-[13px] text-ink-500">
-            <ReviewBadge approved={approved} pendingText="草稿" />
-            {approved ? '核心大纲已锁定，取消确认后可修改；节奏框架与其余设定随时可调，修改自动保存' : '填好核心大纲后确认，人物设定、情节大纲与伏笔都会以这里为准；修改自动保存'}
+  /** 已有内容时先确认再覆盖 */
+  const guard = (filled: boolean, next: Pending) => (filled ? setPending(next) : next.action())
+
+  /* ------------------------------ 每一项的标题行 ------------------------------ */
+
+  /** 标题 + ⓘ 依据 + 说明 + 右侧按钮；序号在左侧的节点上（11/4 起不再显示「依据说明」「依据已改」这两行） */
+  const head = (item: ArchItem, actions?: ReactNode, opts: { hint?: ReactNode } = {}) => {
+    const row = archBasis(project, item)
+    const hint = opts.hint ?? HINT[item]
+    return (
+      <>
+        <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+          <div className="min-w-0">
+            <h4 data-item-title className="flex flex-wrap items-center gap-1 text-[15px] leading-7 font-semibold text-ink-900">
+              {titleOf(item)}
+              {ARCH_REQUIRED.includes(item) && <span className="text-red-500">*</span>}
+              {row && <BasisInfo title={titleOf(item)} row={row} />}
+            </h4>
+            {hint && <p className="text-xs leading-5 text-ink-500">{hint}</p>}
           </div>
-          {approved ? (
-            <Button variant="secondary" size="sm" onClick={() => save({ status: 'pending' }, '取消确认故事架构')}>
-              取消确认
-            </Button>
+          {actions && !approved && <div className="flex shrink-0 items-center gap-1 pt-0.5">{actions}</div>}
+        </div>
+      </>
+    )
+  }
+
+  /** 单项的「AI 生成」：空着直接填，有内容先对比；采用时连同标记和依据指纹一起存 */
+  const generateButton = (item: ArchItem) => {
+    const row = archBasis(project, item)
+    const value = item === 'logline' ? project.logline : (arch[item as TextItem] ?? '')
+    return (
+      <GenerateButton
+        value={value}
+        label={titleOf(item)}
+        basis={row ? basisLine(row) : '编剧写的内容'}
+        disabled={blocked || !!running}
+        generate={async (signal) => {
+          const d = await draftArchItem(latestProject(project.id) ?? project, item, nextSeed(), signal)
+          drafts.current[item] = d
+          return d.text
+        }}
+        onApply={(text) => {
+          const d = drafts.current[item]
+          if (d && d.text === text) applyDraft(item, d, `AI 生成${titleOf(item)}`)
+          else if (item === 'logline') updateProject(project.id, { logline: text })
+          else save({ [item]: text })
+        }}
+      />
+    )
+  }
+
+  /** 纯文本的一项：AI 生成 → AI 润色 → 清除 */
+  const textItem = (item: TextItem, minRows = 4) => {
+    const value = arch[item]
+    const locked = approved
+    const split = item === 'heroSetup' && arch.heroSplitAt
+    const actions = (
+      <>
+        {item !== 'idea' && !split && generateButton(item)}
+        {!split && <PolishButton value={value} label={titleOf(item)} disabled={blocked} onApply={(text) => save({ [item]: text }, `AI 润色${titleOf(item)}`)} />}
+        {item !== 'idea' && !split && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!value.trim()}
+            aria-label={`清除${titleOf(item)}`}
+            title={`清除${titleOf(item)}`}
+            onClick={() => setPending({ title: `清除${titleOf(item)}？`, desc: '这一项的内容会被清空。', confirmText: '清除', danger: true, action: () => save({ [item]: '' }, `清除${titleOf(item)}`) })}
+          >
+            <Eraser size={14} />
+          </Button>
+        )}
+      </>
+    )
+    return (
+      <div data-item={item} key={item}>
+        {head(item, actions)}
+        {split ? (
+          <div data-hero-split className="rounded-lg border border-line bg-canvas/50 px-3.5 py-2.5">
+            <p className="text-[13px] leading-6 whitespace-pre-wrap text-ink-700">{value}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-line pt-2 text-xs text-ink-500">
+              <span>已于 {formatDateTime(arch.heroSplitAt!)} 拆到人物设定，主角以人物设定为准</span>
+              <Link to={stagePath(project, 'characters')} className="font-medium text-brand-600 hover:text-brand-700">
+                去人物设定修改 →
+              </Link>
+              {!locked && (
+                <button
+                  type="button"
+                  className="text-ink-500 hover:text-ink-900"
+                  onClick={() =>
+                    setPending({
+                      title: '仍在这里改主角人设？',
+                      desc: '人物设定里主角的小传不会跟着变；下次人物设定 AI 生成时才会按新的人物卡补空着的项。',
+                      confirmText: '在这里改',
+                      action: () => save({ heroSplitAt: undefined }, '主角人设改回在故事架构里改'),
+                    })
+                  }
+                >
+                  仍在这里改
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <AutoTextarea aria-label={titleOf(item)} minRows={minRows} value={value} disabled={locked} onChange={(e) => save({ [item]: e.target.value })} placeholder={PLACEHOLDER[item]} />
+          </>
+        )}
+      </div>
+    )
+  }
+
+  /* ---------------------------------- 各项 ---------------------------------- */
+
+  const directionButtons = !approved && (
+    <>
+      <div className="flex flex-wrap gap-2">
+        <AiButton variant="secondary" loading={running === 'directions' && !directions} disabled={blocked || !!running} onClick={propose}>
+          {adaptation ? '没有想法？AI 给出 3 个方向' : 'AI 给出 3 个方向'}
+        </AiButton>
+      </div>
+      {reference && (
+        <p data-arch-reference className="-mt-2 flex items-start gap-1.5 text-xs leading-5 text-ink-500">
+          <Info size={13} className="mt-[3px] shrink-0 text-ink-400" />
+          AI 出方向时会带上对标剧拆解的全部结果：{reference.used.join('、')}；不带：{reference.skipped.join('、')}
+        </p>
+      )}
+    </>
+  )
+
+  const loglineItem = (
+    <div data-item="logline" key="logline">
+      {head(
+        'logline',
+        <>
+          {!adaptation && !project.logline.trim() && project.idea.trim() && (
+            <button className="px-1 text-xs text-ink-500 hover:text-brand-600" onClick={() => updateProject(project.id, { logline: project.idea })}>
+              填入立项灵感
+            </button>
+          )}
+          {adaptation ? (
+            generateButton('logline')
           ) : (
-            <Button size="sm" disabled={blocked} onClick={confirm}>
-              <Check size={14} />
-              确认故事架构
+            <AiButton
+              variant="ghost"
+              loading={running === 'loglines'}
+              disabled={blocked || !!running || (!project.logline.trim() && !project.genres.length)}
+              onClick={proposeLoglines}
+              title={project.logline.trim() || project.genres.length ? `生成逻辑：${basisLine(archBasis(project, 'logline')!)}；给 3 个候选` : '先写几个字，或在基本信息里选题材类型'}
+              data-generate="核心设定"
+            >
+              {loglines.length ? '换一批' : 'AI 生成'}
+            </AiButton>
+          )}
+          <PolishButton value={project.logline} label="核心设定" onApply={(text) => updateProject(project.id, { logline: text }, 'AI 润色核心设定')} />
+        </>,
+        { hint: '一句话、一段话都可以：至少讲清主角是谁、核心困境、反常规点；后面每一项都从这里取材' },
+      )}
+      <AutoTextarea
+        aria-label="核心设定"
+        minRows={3}
+        value={project.logline}
+        disabled={approved}
+        onChange={(e) => updateProject(project.id, { logline: e.target.value })}
+        placeholder="如：被丈夫和闺蜜联手害死的女主重生回到婚礼前夜，这一次她要亲手把婚礼变成他们的审判庭"
+      />
+      {!approved && !adaptation && loglines.length > 0 && (
+        <ul data-logline-ideas className="mt-2 space-y-2">
+          {loglines.map((c) => {
+            const selected = project.logline === c.logline
+            return (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => updateProject(project.id, { logline: c.logline }, 'AI 生成核心设定：选用候选')}
+                  className={clsx(
+                    'flex w-full items-start gap-3 rounded-lg border bg-white px-3.5 py-2.5 text-left transition-colors',
+                    selected ? 'border-brand-500 ring-3 ring-brand-500/10' : 'border-line hover:border-brand-200',
+                  )}
+                >
+                  <span className={clsx('mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border', selected ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-300')}>
+                    {selected && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] leading-relaxed text-ink-900">{c.logline}</span>
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+          <li>
+            <button className="text-xs text-ink-500 hover:text-ink-900" onClick={() => setLoglines([])}>
+              收起候选
+            </button>
+          </li>
+        </ul>
+      )}
+    </div>
+  )
+
+  const ideaItem = (
+    <div data-item="idea" key="idea">
+      {head('idea', <PolishButton value={idea} label="改写想法" onApply={(text) => save({ idea: text }, 'AI 润色改写想法')} />, { hint: '可空：没有想法就让 AI 给出 3 个方向；写清保留什么、改动什么，下面的设定按「改动」改' })}
+      <AutoTextarea
+        aria-label="改写想法"
+        minRows={3}
+        value={idea}
+        disabled={approved}
+        onChange={(e) => save({ idea: e.target.value })}
+        placeholder="如：保留拒婚—归来结构，把狼人换成黑手党家族，女主是对立家族遗落的继承人"
+      />
+    </div>
+  )
+
+  // 创新点只有仿写有（11/4 第五轮：原创不要，原创没有它的依据，也不渲染）：设定写完后和对标剧比，对标剧怎么做 → 我们怎么做
+  const hasInnovations = arch.innovations.length > 0
+  const innovationsItem = adaptation && (
+    <div data-item="innovations" key="innovations">
+      {head(
+        'innovations',
+        <AiButton
+          variant="ghost"
+          loading={running === 'innovations'}
+          disabled={blocked || !!running}
+          data-generate="创新点"
+          title={`生成逻辑：${basisLine(archBasis(project, 'innovations')!)}`}
+          onClick={() =>
+            guard(hasInnovations, {
+              title: '重新生成创新点？',
+              desc: '现在的创新点会被新结果覆盖。',
+              confirmText: '重新生成',
+              action: async () => {
+                const d = await run('innovations', (signal) => draftArchItem(latestProject(project.id) ?? project, 'innovations', nextSeed(), signal))
+                if (d) applyDraft('innovations', d, 'AI 生成创新点')
+              },
+            })
+          }
+        >
+          AI 生成
+        </AiButton>,
+        { hint: `设定写完后和对标剧比：对标剧怎么做 → 我们怎么做，一般 3 条以上 · 共 ${arch.innovations.length} 条` },
+      )}
+      <ul className="divide-y divide-line rounded-lg border border-line">
+        {arch.innovations.map((x) => (
+          <li key={x.id} className="flex items-start gap-1 px-2 py-1.5">
+            <AutoTextarea inline aria-label="对标剧怎么做" value={x.theirs} disabled={approved} onChange={(e) => setInnovation(x.id, { theirs: e.target.value })} placeholder="对标剧怎么做" className="flex-1 text-ink-500" />
+            <ArrowRight size={14} className="mt-2.5 shrink-0 text-brand-400" />
+            <AutoTextarea inline aria-label="我们怎么做" value={x.ours} disabled={approved} onChange={(e) => setInnovation(x.id, { ours: e.target.value })} placeholder="我们怎么做" className="flex-1" />
+            {!approved && (
+              <button className="mt-1 rounded p-1 text-ink-300 hover:bg-red-50 hover:text-red-600" aria-label="删除创新点" onClick={() => save({ innovations: arch.innovations.filter((y) => y.id !== x.id) })}>
+                <Trash2 size={14} />
+              </button>
+            )}
+          </li>
+        ))}
+        {!hasInnovations && <li className="px-4 py-3 text-xs text-ink-400">还没有创新点，可由 AI 生成或手动添加</li>}
+      </ul>
+      {!approved && (
+        <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => save({ innovations: [...arch.innovations, { id: newId(), theirs: '', ours: '' }] })}>
+          <Plus size={14} />
+          添加创新点
+        </Button>
+      )}
+    </div>
+  )
+
+  const hasMainLine = arch.mainLine.some((b) => b.content.trim())
+  const benchList = bd ? benchRanges(bd) : []
+  // 仿写：冲突主线分两张表（我们的 / 对标剧拆解出来的），表头一样
+  const benchLine = adaptation && bd?.mainLine.length ? bd : null
+  const mainLineItem = (
+    <div data-item="mainLine" key="mainLine">
+      {head(
+        'mainLine',
+        <>
+          {arch.phaseEnds && (
+            <Button variant="ghost" size="sm" onClick={resetPhases}>
+              <RotateCcw size={13} />
+              恢复默认分段
             </Button>
           )}
+          <AiButton
+            variant="ghost"
+            loading={running === 'mainline'}
+            disabled={blocked || !!running}
+            data-generate="冲突主线"
+            title={`生成逻辑：${basisLine(archBasis(project, 'mainLine')!)}`}
+            onClick={() =>
+              guard(hasMainLine, {
+                title: '重新生成冲突主线？',
+                desc: '各段剧情会被 AI 结果覆盖；段落名与分段保留。',
+                confirmText: '重新生成',
+                action: async () => {
+                  const r = await run('mainline', async (signal) => {
+                    const d = await draftArchItem(latestProject(project.id) ?? project, 'mainLine', nextSeed(), signal)
+                    applyDraft('mainLine', d, 'AI 生成冲突主线')
+                    return { rhythm: await followRhythm(signal) }
+                  })
+                  if (!r) return
+                  toast(r.rhythm ? '冲突主线已生成，节奏框架也按分段生成好了（折在冲突主线下面）' : '冲突主线已生成；节奏框架没动，要按新分段更新就点「生成节奏框架」')
+                },
+              })
+            }
+          >
+            AI 生成
+          </AiButton>
+        </>,
+        { hint: '默认五段式：段落可增删，段落名、集数与剧情都可改；节奏框架折在下面，按这里的分段生成' },
+      )}
+      {benchLine && (
+        <div data-line-tabs className="mb-2 flex flex-wrap items-center gap-3">
+          <Segmented
+            value={lineTab}
+            onChange={setLineTab}
+            options={[
+              { value: 'bench', label: '对标剧（拆解）' },
+              { value: 'ours', label: '修改冲突主线' },
+            ]}
+          />
+          <span className="text-xs text-ink-500">
+            {lineTab === 'ours' ? (
+              '编剧自己定：段落、每段集数、剧情都可以改，可增删段；表头和对标剧那张一样'
+            ) : (
+              <>
+                对标剧拆解出来的，只读；到「修改冲突主线」里对照着定我们的段落和每段集数 ·{' '}
+                <Link to={stagePath(project, 'breakdown')} className="font-medium text-brand-600 hover:text-brand-700">
+                  去对标剧拆解修改
+                </Link>
+              </>
+            )}
+          </span>
         </div>
-        {live &&
-          (live.length ? (
-            <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-2.5 text-[13px] text-amber-800">
-              <TriangleAlert size={14} className="mt-0.5 shrink-0" />
-              <span>
-                确认前还差 <span className="font-medium tabular-nums">{live.length}</span> 项：{live.slice(0, 3).join('；')}
-                {live.length > 3 && ` 等`}
-              </span>
-            </div>
-          ) : (
-            <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-[13px] text-emerald-800">
-              <CircleCheck size={14} className="shrink-0" />
-              核心大纲已填完，可以确认
-            </div>
-          ))}
-        {!live && issues.length > 0 && (
-          <ul className="mt-3 space-y-1 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-700">
-            {issues.map((t) => (
-              <li key={t}>· {t}</li>
+      )}
+      {benchLine && lineTab === 'bench' ? (
+        <div data-line-table="bench" className="overflow-hidden rounded-lg border border-line bg-canvas/40">
+          <Table columns={['段落', '集数', '剧情']} minWidth={700}>
+            {benchLine.mainLine.map((b, k) => (
+              <tr key={k} className="align-top">
+                <td className="w-40 px-4 py-2.5 font-medium text-ink-900">{b.beat}</td>
+                <td className="w-44 px-4 py-2.5 whitespace-nowrap text-ink-500 tabular-nums">{benchList[k] ? rangeLabel(benchList[k]) : b.range}</td>
+                <td className="px-4 py-2.5 leading-relaxed text-ink-700">{b.content || '—'}</td>
+              </tr>
             ))}
-          </ul>
-        )}
-      </Card>
+          </Table>
+        </div>
+      ) : (
+        <div data-line-table="ours" className="overflow-hidden rounded-lg border border-line">
+          <Table columns={[...(approved ? [] : ['']), '段落', '集数', '剧情']} minWidth={700}>
+            {arch.mainLine.map((b, i) => {
+              const [from, to] = ranges[i] ?? [1, total]
+              const last = i === arch.mainLine.length - 1
+              return (
+                <tr key={i} className="align-top">
+                  {!approved && (
+                    <td className="w-16 px-1 py-1.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        aria-label={`在「${b.beat}」后新增一段`}
+                        title="在这段后面新增一段（把这段对半拆开）"
+                        disabled={count >= PHASE_LIMIT.max || to <= from}
+                        onClick={() => addPhase(i)}
+                        className="rounded p-1.5 text-ink-400 hover:bg-canvas hover:text-brand-600 disabled:pointer-events-none disabled:opacity-30"
+                      >
+                        <Plus size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`删除「${b.beat}」`}
+                        title="删除这段，集数并入相邻一段"
+                        disabled={count <= PHASE_LIMIT.min}
+                        onClick={() =>
+                          guard(!!b.content.trim(), {
+                            title: `删除「${b.beat}」？`,
+                            desc: '这段的剧情与情节大纲里对应的粗纲会一起删除，集数并入相邻一段。',
+                            confirmText: '删除',
+                            action: () => removePhase(i),
+                          })
+                        }
+                        className="rounded p-1.5 text-ink-400 hover:bg-canvas hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  )}
+                  <td className="w-40 px-2 py-1.5">
+                    <InlineInput aria-label={`第 ${i + 1} 段段落名`} value={b.beat} disabled={approved} onChange={(e) => setBeat(i, { beat: e.target.value })} className="font-medium" />
+                  </td>
+                  <td className="w-44 px-2 py-1.5 whitespace-nowrap text-ink-500 tabular-nums">
+                    {last || approved ? (
+                      <span className="inline-block px-2 py-1.5">{rangeLabel([from, to])}</span>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <span className="pl-2">第 {from}–</span>
+                        <EpisodeInput label={`${b.beat}结束集`} value={to} max={total - (arch.mainLine.length - 1 - i)} onChange={(v) => setPhaseEnd(i, v)} />
+                        <span>集</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <AutoTextarea inline aria-label={`我们的剧情：${b.beat}`} value={b.content} disabled={approved} onChange={(e) => setBeat(i, { content: e.target.value })} placeholder="这一段发生什么" />
+                  </td>
+                </tr>
+              )
+            })}
+          </Table>
+        </div>
+      )}
+      <RhythmBlock
+        key={`${project.id}-${total}`}
+        project={project}
+        ranges={ranges}
+        beats={arch.mainLine}
+        locked={approved}
+        row={archBasis(project, 'rhythm')}
+        generated={filledOf(project, 'rhythm')}
+        fresh={justMade === 'rhythm'}
+        onGenerated={() => stamp('rhythm')}
+      />
+    </div>
+  )
 
+  const content = (item: ArchItem): ReactNode => {
+    const dir = directionButtons && (
+      <div key="dir" className="mt-3 space-y-3">
+        {directionButtons}
+      </div>
+    )
+    switch (item) {
+      case 'idea':
+        return [ideaItem, dir]
+      case 'logline':
+        return adaptation ? loglineItem : [loglineItem, dir]
+      case 'innovations':
+        return innovationsItem
+      case 'mainLine':
+        return mainLineItem
+      case 'heroSetup':
+        return textItem('heroSetup', 5)
+      case 'goldenFinger':
+        return textItem('goldenFinger', 5)
+      default:
+        return textItem(item as TextItem)
+    }
+  }
+
+  /** 逐项生成停下来时，刚生成的那一项下面的提示：看过再继续 */
+  const stepBar = (
+    <div data-step-review className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-brand-200 bg-brand-50/60 px-3.5 py-2.5 text-[13px] text-ink-700">
+      <Eye size={14} className="shrink-0 text-brand-600" />
+      <span className="min-w-0 flex-1">{nextEmpty ? 'AI 刚生成了这一项，先停在这里：看过、改好再往下生成' : 'AI 刚生成了这一项，各项都有内容了：看过各项的「补充」再确认故事架构'}</span>
+      {nextEmpty && (
+        <AiButton size="sm" data-step-next loading={running === 'fill'} disabled={blocked || !!running} onClick={generateNext}>
+          继续生成「{titleOf(nextEmpty)}」
+        </AiButton>
+      )}
+      <button type="button" className="text-xs text-ink-500 hover:text-ink-900" onClick={() => setJustMade(null)}>
+        知道了
+      </button>
+    </div>
+  )
+
+  /** 每一项是一个节点：左边序号（有内容实心）+ 竖线连到下一项，右边是这一项；节奏框架折在冲突主线里，不单独排号 */
+  const render = (item: ArchItem, i: number) => {
+    const filled = filledOf(project, item)
+    const here = justMade === item || (item === 'mainLine' && justMade === 'rhythm')
+    const last = i === order.length - 1
+    return (
+      <section key={item} data-node={item} className="grid grid-cols-[28px_minmax(0,1fr)] gap-x-3" style={{ scrollMarginTop: 'calc(var(--stick, 0px) + 1rem)' }}>
+        <div className="relative flex justify-center">
+          <span
+            data-item-no
+            title={filled ? '已有内容' : '还没有内容'}
+            className={clsx(
+              'relative z-10 grid size-7 place-items-center rounded-full text-[13px] font-semibold tabular-nums transition-colors',
+              filled ? 'bg-brand-600 text-white' : 'border border-ink-200 bg-white text-ink-500',
+              here && 'ring-4 ring-brand-100',
+            )}
+          >
+            {i + 1}
+          </span>
+          {!last && <span aria-hidden className={clsx('absolute top-8 bottom-1 w-px', filled ? 'bg-brand-200' : 'bg-line')} />}
+        </div>
+        <div className={clsx('min-w-0', !last && 'pb-8')}>
+          {content(item)}
+          {here && !approved && stepBar}
+        </div>
+      </section>
+    )
+  }
+
+  /** 状态条：状态、还差什么、AI 生成下一项、确认；版本二放进页面底部的环节条（11/4 标注 #74；状态靠左、按钮靠右 #83，确认后最右接「去人物设定」），版本一悬浮在页面底部 */
+  const size = docked ? 'md' : 'sm'
+  const issueList = !live && issues.length > 0 && (
+    <ul className={clsx('max-h-28 space-y-1 overflow-y-auto rounded-lg bg-red-50 px-4 py-2.5 text-[13px] text-red-700', !docked && 'mb-2.5')}>
+      {issues.map((t) => (
+        <li key={t}>· {t}</li>
+      ))}
+    </ul>
+  )
+  const status = (
+    <div className={clsx('flex min-w-0 items-center gap-2 text-[13px] text-ink-500', !docked && 'flex-1')}>
+      <ReviewBadge approved={approved} pendingText="草稿" />
+      {approved ? (
+        '已确认，各项只读；要改就点「修改故事架构」，改完重新确认'
+      ) : live ? (
+        live.length ? (
+          <span data-live-missing className="flex min-w-0 items-center gap-1.5 text-amber-800">
+            <TriangleAlert size={14} className="shrink-0" />
+            <span className="truncate" title={live.join('；')}>
+              确认前还差 <span className="font-medium tabular-nums">{live.length}</span> 项：{live.slice(0, 3).join('；')}
+              {live.length > 3 && ` 等`}
+            </span>
+          </span>
+        ) : (
+          <span data-live-missing className="flex items-center gap-1.5 text-emerald-800">
+            <CircleCheck size={14} className="shrink-0" />
+            必填项已填完，可以确认
+          </span>
+        )
+      ) : (
+        <span className="truncate">修改自动保存；带 * 的确认前要有内容（AI 生成的也算）</span>
+      )}
+    </div>
+  )
+  const actions = (
+    <>
+      {SHOW_LABS && (
+        <>
+          <Link to={`/projects/${project.id}/lab/architecture`} data-lab-entry className="inline-flex items-center gap-1 text-[13px] text-brand-700 hover:underline">
+            <FlaskConical size={13} />
+            试用新版故事架构（Demo）
+          </Link>
+          <Link to={`/projects/${project.id}/lab/rewrite`} data-chat-entry className="inline-flex items-center gap-1 text-[13px] text-brand-700 hover:underline">
+            <MessagesSquare size={13} />
+            多轮改写对话（Demo）
+          </Link>
+        </>
+      )}
+      {approved ? (
+        <Button variant="secondary" size={size} disabled={blocked} onClick={reopen}>
+          <Pencil size={13} />
+          修改故事架构
+        </Button>
+      ) : (
+        <div className="flex gap-2">
+          {running === 'fill' && (
+            <Button variant="ghost" size={size} onClick={cancel} title="停下这一项，已生成的保留">
+              <Square size={12} />
+              停止
+            </Button>
+          )}
+          {(nextEmpty || running === 'fill') && (
+            <AiButton
+              variant="secondary"
+              size={size}
+              loading={running === 'fill'}
+              disabled={blocked || !!running}
+              data-fill-next
+              title="每次只生成一项（下一个空着的），生成完停下来等你看；看过、改好再继续。每一项读排在它前面的内容，已有内容不覆盖"
+              onClick={generateNext}
+            >
+              {nextEmpty ? `${justMade ? '继续生成' : 'AI 生成'}「${titleOf(nextEmpty)}」` : 'AI 生成'}
+            </AiButton>
+          )}
+          <Button size={size} disabled={blocked} onClick={confirm} title="逐项检查必填后确认">
+            <Check size={14} />
+            确认故事架构
+          </Button>
+        </div>
+      )}
+    </>
+  )
+
+  // 题材类型、风格元素的选项跟着目标市场走（目标市场在项目设置里改）
+  const regions = genreRegions(project.markets)
+  const jpkrOnly = regions.length === 1 && regions[0] === 'jpkr'
+  const regionAside = (max: number) => (
+    <span data-genre-region className="text-xs text-ink-400" title="选项跟着目标市场：选了日韩给日韩的，其余市场给欧美的；目标市场在项目设置里改">
+      {regions.map((r) => GENRE_REGION_LABEL[r]).join(' + ')} · 最多 {max} 个
+    </span>
+  )
+
+  return (
+    <>
       <Card>
         <div className="border-b border-line px-5 py-4">
           <h3 className="text-[15px] font-semibold text-ink-900">基本信息</h3>
         </div>
         <div className="space-y-4 p-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="类型">
-              <Select aria-label="类型" value={project.category} onChange={(e) => updateProject(project.id, { category: e.target.value }, `类型改为「${e.target.value}」`)}>
-                {!CATEGORIES.some((c) => c.value === project.category) && <option value={project.category}>{project.category || '选择类型'}</option>}
-                {CATEGORIES.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.value} · {c.en}
-                  </option>
-                ))}
-              </Select>
+            <Field label="题材类型" error={project.genres.length || adaptation ? null : '至少选择 1 个'} aside={regionAside(MAX_GENRES)}>
+              <MultiSelect value={project.genres} options={themeGroups(project.markets)} max={MAX_GENRES} invalid={!project.genres.length && !adaptation} onChange={(genres) => updateProject(project.id, { genres })} placeholder={jpkrOnly ? '如：财阀继承 / 反派千金' : '如：狼人传说 / 都市豪门'} />
             </Field>
-            <Field label="题材元素" error={project.genres.length ? null : '至少选择 1 个'} aside={<span className="text-xs text-ink-400">最多 {MAX_GENRES} 个</span>}>
-              <MultiSelect value={project.genres} options={GENRE_GROUPS} max={MAX_GENRES} invalid={!project.genres.length} onChange={(genres) => updateProject(project.id, { genres })} placeholder="如：重生 / 复仇 / 豪门" />
+            <Field label="风格元素" aside={regionAside(MAX_TONES)}>
+              <MultiSelect value={project.tones} options={styleGroups(project.markets)} max={MAX_TONES} onChange={(tones) => updateProject(project.id, { tones })} placeholder={jpkrOnly ? '如：溺爱甜宠 / 和服' : '如：爽感复仇虐渣 / 狼人印记'} />
             </Field>
-            <Field label="目标受众">
-              <Select aria-label="目标受众" value={project.audience} onChange={(e) => updateProject(project.id, { audience: e.target.value as Audience })}>
+            <Field label="目标受众" required>
+              <Select aria-label="目标受众" value={project.audience} onChange={(e) => updateProject(project.id, { audience: e.target.value as Project['audience'] })}>
+                <option value="">请选择</option>
                 {AUDIENCES.map((a) => (
                   <option key={a.value} value={a.value}>
-                    {a.label} · {a.hint}
+                    {a.label}
                   </option>
                 ))}
               </Select>
             </Field>
           </div>
-
-          <div className="grid gap-4 md:grid-cols-4">
-            <Field label={<Tip label="故事结构" tip="单线 / 双线 / 多线决定情节大纲里有几条叙事线并行" />} hint={structureHint}>
-              <Select aria-label="故事结构" value={arch.structure} onChange={(e) => save({ structure: e.target.value as StoryStructure }, `故事结构改为「${e.target.value}」`)}>
-                {STORY_STRUCTURES.map((s) => (
-                  <option key={s.value}>{s.value}</option>
-                ))}
-              </Select>
-            </Field>
-            <Field label={<Tip label="叙事视角" tip="写作时镜头跟谁走、观众知道多少" />} hint={viewpointRule(arch.viewpoint)}>
-              <Select aria-label="叙事视角" value={arch.viewpoint} onChange={(e) => save({ viewpoint: e.target.value })}>
-                {VIEWPOINTS.map((v) => (
-                  <option key={v}>{v}</option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="总集数" required hint={`${EPISODE_RANGE.min}–${EPISODE_RANGE.max} 集`}>
-              <NumberInput label="总集数" value={total} min={EPISODE_RANGE.min} max={EPISODE_RANGE.max} onChange={(v) => setSpec({ totalEpisodes: v }, `总集数改为 ${v} 集`)} />
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="总集数" required>
+              {follow ? (
+                <Input aria-label="总集数" disabled value={`${total} 集 · 按对标剧`} />
+              ) : (
+                <NumberInput label="总集数" value={total} min={EPISODE_RANGE.min} max={EPISODE_RANGE.max} onChange={(v) => setSpec({ totalEpisodes: v }, `总集数改为 ${v} 集`)} />
+              )}
             </Field>
             <Field label={<Tip label="单集时长（秒）" tip="逐集剧本按时长换算篇幅；竖屏短剧常见 60–120 秒" />} required hint={secondsHint(project.spec.episodeSeconds)}>
-              <NumberInput
-                label="单集时长"
-                value={project.spec.episodeSeconds}
-                min={EPISODE_SECONDS.min}
-                max={EPISODE_SECONDS.max}
-                onChange={(v) => setSpec({ episodeSeconds: v }, `单集时长改为 ${v} 秒`)}
-              />
+              {follow ? (
+                <Input aria-label="单集时长" disabled value={`${project.spec.episodeSeconds} 秒${bench.seconds ? ' · 按对标剧' : ''}`} />
+              ) : (
+                <NumberInput
+                  label="单集时长"
+                  value={project.spec.episodeSeconds}
+                  min={EPISODE_SECONDS.min}
+                  max={EPISODE_SECONDS.max}
+                  onChange={(v) => setSpec({ episodeSeconds: v }, `单集时长改为 ${v} 秒`)}
+                />
+              )}
+            </Field>
+            <Field label={<Tip label="剧本语言" tip="英文剧本 + 中文对照时，中文创作与审核，定稿后一键把台词译成英文" />} hint={LANGUAGES.find((l) => l.value === project.spec.language)?.hint}>
+              <Select aria-label="剧本语言" value={project.spec.language} onChange={(e) => setSpec({ language: e.target.value as ScriptLanguage }, '修改剧本语言')}>
+                {LANGUAGES.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </Select>
             </Field>
           </div>
-
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <Field label={<Tip label="剧本语言" tip="英文剧本 + 中文对照时，中文创作与审核，定稿后一键把台词译成英文" />} hint={LANGUAGES.find((l) => l.value === project.spec.language)?.hint}>
-                <Select aria-label="剧本语言" value={project.spec.language} onChange={(e) => setSpec({ language: e.target.value as ScriptLanguage }, '修改剧本语言')}>
-                  {LANGUAGES.map((l) => (
-                    <option key={l.value} value={l.value}>
-                      {l.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            <div className="md:col-span-2">
-              <Field
-                label={<Tip label="沉寂提醒阈值（集）" tip="已埋设的伏笔 / 叙事线索连续多少集没有推进，就在伏笔与状态库里提醒" />}
-                hint={arch.silenceThreshold ? `连续 ${arch.silenceThreshold} 集没推进就提醒` : '默认无：不做沉寂提醒，只提醒逾期'}
-                aside={
-                  arch.silenceThreshold !== SILENCE_DEFAULT && (
-                    <button className="flex items-center gap-1 text-xs text-ink-500 hover:text-brand-600" onClick={() => save({ silenceThreshold: SILENCE_DEFAULT })}>
-                      <RotateCcw size={12} />
-                      恢复默认（无）
-                    </button>
-                  )
-                }
-              >
-                <NumberInput label="沉寂提醒阈值" optional value={arch.silenceThreshold} min={1} max={20} onChange={(v) => save({ silenceThreshold: v })} />
-              </Field>
-            </div>
-          </div>
+          {adaptation && (
+            <label data-follow-benchmark className="-mt-1 flex items-start gap-2 text-[13px] text-ink-700">
+              <input
+                type="checkbox"
+                checked={follow}
+                onChange={(e) => updateProject(project.id, { spec: { ...project.spec, followBenchmark: e.target.checked } }, e.target.checked ? '集数与单集时长改为完全按对标剧' : '集数与单集时长改为自己定')}
+                className="mt-0.5 size-3.5 accent-brand-600"
+              />
+              <span>
+                完全按对标剧的集数和单集时长来
+                <span className="ml-1.5 text-xs text-ink-400">
+                  {follow
+                    ? bench.episodes
+                      ? `对标剧 ${bench.episodes} 集${bench.seconds ? `，平均每集 ${bench.seconds} 秒` : '；单集时长没有视频可量，沿用当前设置'}`
+                      : '对标剧还没拆解，拆解后自动同步'
+                    : '想快速出稿时勾上，两项跟着对标剧走'}
+                </span>
+              </span>
+            </label>
+          )}
         </div>
       </Card>
 
-      <Card>
-        <Section
-          title="核心大纲"
-          filled={hasCore || !!arch.plan}
-          open={open.has('core')}
-          onToggle={() => toggle('core')}
-          actions={
-            !approved && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={!hasCore}
-                  onClick={() =>
-                    setPending({
-                      title: '清除核心大纲？',
-                      desc: `爽点公式、创新点与冲突主线（含分段）会被清空；${planLabel}和核心设定保留。`,
-                      confirmText: '清除',
-                      danger: true,
-                      action: () => save({ formula: '', mainLine: emptyArchitecture(total).mainLine, phaseEnds: null, innovations: [] }, '清除核心大纲'),
-                    })
-                  }
-                >
-                  <Eraser size={14} />
-                  清除
-                </Button>
-                <AiButton
-                  variant="secondary"
-                  loading={running === 'core'}
-                  disabled={blocked || !!running}
-                  onClick={() =>
-                    guard(hasCore, {
-                      title: '重新生成核心大纲？',
-                      desc: `爽点公式、创新点与冲突主线会被新结果覆盖；${planLabel}和核心设定保留。`,
-                      confirmText: '重新生成',
-                      action: generateCore,
-                    })
-                  }
-                >
-                  AI 生成
-                </AiButton>
-              </>
-            )
-          }
-        >
-          <div className="space-y-5">
-            {adaptation ? (
-              <Field label="你的改写想法" hint={approved ? '核心大纲已确认，取消确认后可修改' : undefined}>
-                <AutoTextarea
-                  aria-label="改写想法"
-                  minRows={2}
-                  value={idea}
-                  disabled={approved}
-                  onChange={(e) => save({ idea: e.target.value })}
-                  placeholder="如：保留拒婚—归来结构，把狼人换成黑手党家族，女主是对立家族遗落的继承人"
-                />
-              </Field>
-            ) : (
-              <Field
-                label="核心设定"
-                required
-                hint={approved ? '核心大纲已确认，取消确认后可修改' : '主角是谁 + 核心困境 + 反常规设定'}
-                aside={
-                  !approved &&
-                  !project.logline.trim() &&
-                  project.idea.trim() && (
-                    <button className="text-xs text-ink-500 hover:text-brand-600" onClick={() => updateProject(project.id, { logline: project.idea })}>
-                      填入立项灵感
-                    </button>
-                  )
-                }
-              >
-                <AutoTextarea
-                  aria-label="核心设定"
-                  minRows={2}
-                  value={project.logline}
-                  disabled={approved}
-                  onChange={(e) => updateProject(project.id, { logline: e.target.value })}
-                  placeholder="如：被丈夫和闺蜜联手害死的女主重生回到婚礼前夜，这一次她要亲手把婚礼变成他们的审判庭"
-                />
-              </Field>
-            )}
-            {!approved && (
-              <div className="flex flex-wrap gap-2">
-                <AiButton loading={running === 'evaluate'} disabled={blocked || !seedText.trim() || !!running} onClick={evaluate}>
-                  AI 评估可行性
-                </AiButton>
-                <AiButton variant="secondary" loading={running === 'directions' && !directions} disabled={blocked || !!running} onClick={propose}>
-                  {adaptation ? '没有想法？AI 给出 3 个方向' : 'AI 给出 3 个方向'}
-                </AiButton>
-              </div>
-            )}
-            {review && (
-              <ReviewPanel
-                review={review}
-                adoptText={`采用为${planLabel}`}
-                onClose={() => setReview(null)}
-                onAdopt={() => {
-                  save({ plan: review.plan, idea }, `AI 评估${adaptation ? '改写想法' : '核心设定'}，采用为${planLabel}`)
-                  setReview(null)
-                  toast(`已写入${planLabel}`)
-                }}
-              />
-            )}
-            <Field label={planLabel} hint="保留什么、改动什么、爽点在哪；AI 生成核心大纲时会参考这里">
-              <AutoTextarea aria-label={planLabel} minRows={3} value={arch.plan} disabled={approved} onChange={(e) => save({ plan: e.target.value })} placeholder="可直接填写，也可以从上方 AI 结果中采用" />
-            </Field>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {adaptation && (
-                <Field label="核心设定" required hint="主角是谁 + 核心困境 + 反常规设定">
-                  <AutoTextarea aria-label="核心设定" value={project.logline} disabled={approved} onChange={(e) => updateProject(project.id, { logline: e.target.value })} />
-                </Field>
-              )}
-              <Field label="爽点公式" hint="选填：每 X 集一次什么爽感">
-                <Input aria-label="爽点公式" value={arch.formula} disabled={approved} onChange={(e) => save({ formula: e.target.value })} placeholder="如：每 3 集一次打脸，每 10 集一次身份升级" />
-              </Field>
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-center justify-between text-[13px]">
-                <span className="font-medium text-ink-700">
-                  创新点<span className="ml-0.5 text-red-500">*</span>
-                  <span className="ml-2 font-normal text-ink-400">{adaptation ? '对标剧怎么做 → 我们怎么做' : '同类爆款怎么做 → 我们怎么做'}，建议 3–5 条</span>
-                </span>
-                <span className="text-xs text-ink-500 tabular-nums">{arch.innovations.length} 条</span>
-              </div>
-              <ul className="divide-y divide-line rounded-lg border border-line">
-                {arch.innovations.map((x) => (
-                  <li key={x.id} className="flex items-start gap-1 px-2 py-1.5">
-                    <AutoTextarea inline aria-label="对标剧怎么做" value={x.theirs} disabled={approved} onChange={(e) => setInnovation(x.id, { theirs: e.target.value })} placeholder="对标剧怎么做" className="flex-1 text-ink-500" />
-                    <ArrowRight size={14} className="mt-2.5 shrink-0 text-brand-400" />
-                    <AutoTextarea inline aria-label="我们怎么做" value={x.ours} disabled={approved} onChange={(e) => setInnovation(x.id, { ours: e.target.value })} placeholder="我们怎么做" className="flex-1" />
-                    {!approved && (
-                      <button className="mt-1 rounded p-1 text-ink-300 hover:bg-red-50 hover:text-red-600" aria-label="删除创新点" onClick={() => save({ innovations: arch.innovations.filter((y) => y.id !== x.id) })}>
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </li>
-                ))}
-                {!arch.innovations.length && <li className="px-4 py-3 text-xs text-ink-400">还没有创新点，可由 AI 生成或手动添加</li>}
-              </ul>
-              {!approved && (
-                <Button variant="ghost" size="sm" className="mt-1.5" onClick={() => save({ innovations: [...arch.innovations, { id: newId(), theirs: '', ours: '' }] })}>
-                  <Plus size={14} />
-                  添加创新点
-                </Button>
-              )}
-            </div>
-
-            <div>
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-ink-700">
-                  冲突主线<span className="ml-0.5 text-red-500">*</span>
-                  <span className="ml-2 font-normal text-ink-400">默认五段式：段落可增删，段落名、集数与剧情都可改；先定主线，再生成节奏框架</span>
-                </span>
-                {!approved && (
-                  <div className="flex gap-1.5">
-                    {arch.phaseEnds && (
-                      <Button variant="ghost" size="sm" onClick={resetPhases}>
-                        <RotateCcw size={13} />
-                        恢复默认分段
-                      </Button>
-                    )}
-                    <AiButton
-                      variant="secondary"
-                      loading={running === 'mainline'}
-                      disabled={blocked || !!running}
-                      onClick={() =>
-                        guard(hasMainLine, {
-                          title: '重新生成冲突主线？',
-                          desc: '各段剧情会被 AI 结果覆盖；段落名与分段保留。',
-                          confirmText: '重新生成',
-                          action: generateMainLine,
-                        })
-                      }
-                    >
-                      AI 生成
-                    </AiButton>
-                  </div>
-                )}
-              </div>
-              <div className="overflow-hidden rounded-lg border border-line">
-                <Table columns={[...(approved ? [] : ['']), '段落', '集数', '我们的剧情', ...(bd ? ['对标剧'] : [])]} minWidth={bd ? 940 : 700}>
-                  {arch.mainLine.map((b, i) => {
-                    const [from, to] = ranges[i] ?? [1, total]
-                    const last = i === arch.mainLine.length - 1
-                    return (
-                      <tr key={i} className="align-top">
-                        {!approved && (
-                          <td className="w-16 px-1 py-1.5 whitespace-nowrap">
-                            <button
-                              type="button"
-                              aria-label={`在「${b.beat}」后新增一段`}
-                              title="在这段后面新增一段（把这段对半拆开）"
-                              disabled={count >= PHASE_LIMIT.max || to <= from}
-                              onClick={() => addPhase(i)}
-                              className="rounded p-1.5 text-ink-400 hover:bg-canvas hover:text-brand-600 disabled:pointer-events-none disabled:opacity-30"
-                            >
-                              <Plus size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`删除「${b.beat}」`}
-                              title="删除这段，集数并入相邻一段"
-                              disabled={count <= PHASE_LIMIT.min}
-                              onClick={() =>
-                                guard(!!b.content.trim(), {
-                                  title: `删除「${b.beat}」？`,
-                                  desc: '这段的剧情与情节大纲里对应的粗纲会一起删除，集数并入相邻一段。',
-                                  confirmText: '删除',
-                                  action: () => removePhase(i),
-                                })
-                              }
-                              className="rounded p-1.5 text-ink-400 hover:bg-canvas hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        )}
-                        <td className="w-28 px-2 py-1.5">
-                          <InlineInput aria-label={`第 ${i + 1} 段段落名`} value={b.beat} disabled={approved} onChange={(e) => setBeat(i, { beat: e.target.value })} className="font-medium" />
-                        </td>
-                        <td className="w-44 px-2 py-1.5 whitespace-nowrap text-ink-500 tabular-nums">
-                          {last || approved ? (
-                            <span className="inline-block px-2 py-1.5">{rangeLabel([from, to])}</span>
-                          ) : (
-                            <span className="flex items-center gap-1">
-                              <span className="pl-2">第 {from}–</span>
-                              <EpisodeInput label={`${b.beat}结束集`} value={to} max={total - (arch.mainLine.length - 1 - i)} onChange={(v) => setPhaseEnd(i, v)} />
-                              <span>集</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <AutoTextarea inline aria-label={`我们的剧情：${b.beat}`} value={b.content} disabled={approved} onChange={(e) => setBeat(i, { content: e.target.value })} placeholder="这一段发生什么" />
-                        </td>
-                        {bd && <td className="w-64 px-4 py-3 text-xs leading-5 text-ink-500">{bd.mainLine[i]?.content || '—'}</td>}
-                      </tr>
-                    )
-                  })}
-                </Table>
-              </div>
-            </div>
-
-            <RhythmBlock key={`${project.id}-${total}`} project={project} ranges={ranges} beats={arch.mainLine} />
-          </div>
-        </Section>
-
-        {TEXT_SECTIONS.map((s) => {
-          const value = arch[s.key]
-          const filled = !!value.trim()
-          return (
-            <Section
-              key={s.key}
-              title={s.title}
-              filled={filled}
-              open={open.has(s.key)}
-              onToggle={() => toggle(s.key)}
-              actions={
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!filled}
-                    onClick={() =>
-                      setPending({ title: `清除${s.title}？`, desc: '这一段的内容会被清空。', confirmText: '清除', danger: true, action: () => save(textPatch(s.key, ''), `清除${s.title}`) })
-                    }
-                  >
-                    <Eraser size={14} />
-                    清除
-                  </Button>
-                  {s.key !== 'references' && (
-                    <AiButton
-                      variant="secondary"
-                      loading={running === s.key}
-                      disabled={blocked || !!running}
-                      onClick={() => {
-                        const key = s.key as ArchitectureSection
-                        guard(filled, {
-                          title: `重新生成${s.title}？`,
-                          desc: '当前内容会被 AI 结果覆盖。',
-                          confirmText: '重新生成',
-                          action: () => generateSection(key, s.title),
-                        })
-                      }}
-                    >
-                      AI 生成
-                    </AiButton>
-                  )}
-                </>
-              }
-            >
-              <AutoTextarea aria-label={s.title} minRows={s.key === 'references' ? 2 : 4} value={value} onChange={(e) => save(textPatch(s.key, e.target.value))} placeholder={s.placeholder} />
-            </Section>
-          )
-        })}
+      <Card id="arch-items" className={clsx(approved && 'border-emerald-200')}>
+        <div className="border-b border-line px-5 py-3.5">
+          <h3 className="text-[15px] font-semibold text-ink-900">各项设定</h3>
+          <p data-arch-order className="mt-0.5 text-xs leading-5 text-ink-500">
+            {order.map((i) => (i === 'mainLine' ? '冲突主线（含节奏框架）' : titleOf(i))).join(' → ')}
+          </p>
+          {!approved && <p className="mt-0.5 text-xs leading-5 text-ink-400">从上往下一项项写，每一项只读排在它前面的项；AI 每次只生成一项，停下来等你看过再继续</p>}
+        </div>
+        <div className="p-5">{order.map(render)}</div>
       </Card>
+
+      {slot ? (
+        <>
+          {createPortal(
+            <div data-arch-bar className="flex min-w-0 flex-col gap-2">
+              {issueList}
+              {status}
+            </div>,
+            slot.info,
+          )}
+          {createPortal(<div className="flex flex-wrap items-center gap-2">{actions}</div>, slot.actions)}
+        </>
+      ) : (
+        !v2 && (
+          <div data-arch-bar className={clsx('sticky bottom-4 z-20 rounded-xl border bg-white/95 px-5 py-3 shadow-pop backdrop-blur', approved || live?.length === 0 ? 'border-emerald-200' : 'border-line')}>
+            {issueList}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {status}
+              {actions}
+            </div>
+          </div>
+        )
+      )}
 
       {directions && (
         <DirectionDialog
           directions={directions}
           planLabel={planLabel}
-          overwrite={hasCore || !!arch.plan.trim()}
+          overwrite={[adaptation ? idea : '', project.logline, arch.world, arch.goldenFinger, arch.background].some((t) => !!t.trim())}
           refreshing={running === 'directions'}
           onRefresh={propose}
           onPick={pickDirection}

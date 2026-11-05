@@ -1,11 +1,9 @@
 import { EPISODE_RANGE, EPISODE_SECONDS } from './constants'
 import type { ProjectDraft } from './types'
 
-export type FormErrors = Partial<Record<'title' | 'titleEn' | 'benchmarkTitle' | 'genres' | 'totalEpisodes' | 'episodeSeconds' | 'markets', string>>
+export type FormErrors = Partial<Record<'title' | 'titleEn' | 'benchmarkTitle' | 'markets', string>>
 
-const inRange = (n: number, range: { min: number; max: number }) => Number.isInteger(n) && n >= range.min && n <= range.max
-
-/** 立项页与项目设置页的全部字段（节奏框架在故事架构中单独编辑） */
+/** 立项页与项目设置页的字段：基本信息、市场与发行（故事设定和节奏框架都在故事架构里编辑） */
 export function validateAll(d: ProjectDraft): FormErrors {
   const e: FormErrors = {}
   const title = d.title.trim()
@@ -13,11 +11,7 @@ export function validateAll(d: ProjectDraft): FormErrors {
   else if (title.length > 30) e.title = '剧本名称不超过 30 个字'
   if (d.titleEn.length > 60) e.titleEn = '英文剧名不超过 60 个字符'
   if (d.mode !== 'original' && !d.benchmark?.title.trim()) e.benchmarkTitle = '请填写对标剧剧名'
-  if (d.genres.length === 0) e.genres = '至少选择 1 个题材元素'
-  // 视频转剧本：集数与时长可以留空，保存时按识别结果或默认值补上
-  const optional = (n: number) => d.mode === 'video' && !n
-  if (!optional(d.spec.totalEpisodes) && !inRange(d.spec.totalEpisodes, EPISODE_RANGE)) e.totalEpisodes = `总集数需在 ${EPISODE_RANGE.min}–${EPISODE_RANGE.max} 之间`
-  if (!optional(d.spec.episodeSeconds) && !inRange(d.spec.episodeSeconds, EPISODE_SECONDS)) e.episodeSeconds = `单集时长需在 ${EPISODE_SECONDS.min}–${EPISODE_SECONDS.max} 秒之间`
+  // 题材类型、风格元素、集数与时长不在立项和设置里填：立项先用默认值，到故事架构填，原创的题材在确认故事架构时检查
   if (d.markets.length === 0) e.markets = '至少选择 1 个目标市场'
   return e
 }

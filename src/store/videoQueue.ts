@@ -9,8 +9,8 @@ import { transcribeEpisode } from '../services/ai'
 import { useProjects } from './projects'
 import { toast } from './toast'
 
-/** 同时转写的集数 */
-export const CONCURRENCY = 3
+/** 同时转写的集数：一集转完再转下一集 */
+export const CONCURRENCY = 1
 
 interface QueueState {
   /** 正在跑队列的项目 */
@@ -139,11 +139,11 @@ export function retryFailed(projectId: string, ep?: number) {
   startQueue(projectId)
 }
 
-/** 重新转写某一集（如没按模板输出）：这一集回到排队，合并好的剧本作废，转写完成后重新合并 */
+/** 重新转写某一集（如人工校对时发现漏了一大段）：这一集回到排队，校对记录清掉，合并好的剧本作废，转写完成后重新合并 */
 export function retranscribe(projectId: string, ep: number, reason: string) {
   const job = jobOf(projectId)
   if (!job) return
-  const episodes = job.episodes.map((e): VideoEpisode => (e.ep === ep ? { ...e, status: 'queued', shots: [], error: undefined, doneAt: undefined } : e))
+  const episodes = job.episodes.map((e): VideoEpisode => (e.ep === ep ? { ...e, status: 'queued', shots: [], error: undefined, doneAt: undefined, editedAt: undefined } : e))
   useProjects.getState().patchWork(projectId, { video: { ...job, episodes, merged: null } }, `重新转写第 ${ep} 集：${reason}`)
   startQueue(projectId)
 }

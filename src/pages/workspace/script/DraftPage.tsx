@@ -3,19 +3,19 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, ClipboardChe
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { ConfirmDialog } from '../../../components/overlay'
+import { ConfirmDialog, Modal } from '../../../components/overlay'
 import { ReviewButton, WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Card, EmptyState, buttonClass, dotBefore } from '../../../components/ui'
+import { Badge, Button, Card, EmptyState, buttonClass, dotBefore } from '../../../components/ui'
 import { DRAFT_STATUS_META } from '../../../domain/constants'
 import { modelLabel, modelOf } from '../../../domain/models'
-import { REVIEW_BASIS, basisLabel } from '../../../domain/review'
+import { basisLabel, reviewScope } from '../../../domain/review'
 import { preWriteCheck } from '../../../domain/state'
-import type { DraftReview, DraftRevision, EpisodeDraft, ModelId, Project } from '../../../domain/types'
+import type { DraftReview, DraftRevision, EpisodeDraft, ModelId, Project, ScriptLine } from '../../../domain/types'
 import { blueprintOf, carryOf, draftLabel, draftsOf, plainText, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
-import { nextSeed, reviewDraft, reviseDraft } from '../../../services/ai'
+import { nextSeed, polishLines, reviewDraft, reviseDraft } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { STATE_TAB, activeTab, openPanelTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
@@ -28,6 +28,7 @@ import { NotesTab } from './NotesTab'
 import { ScriptEditor } from './ScriptEditor'
 import type { LinePick, Updater } from './ScriptEditor'
 import { MAX_REVISE_ROUNDS, addDraft, draftPath, finalPath, finalizeDraft, linesSig, openBlocks, patchDraft, reviewBase, reviewCounts, reviseRounds, scriptStagePath } from './ops'
+import { DiffRow, diffLines } from './QaFix'
 import { FinalGate, KeptList, ReviewItems } from './ReviewItems'
 
 /** 定稿按钮：绿色主按钮 */
@@ -89,6 +90,7 @@ export default function DraftPage() {
   const [confirmFinal, setConfirmFinal] = useState(false)
   const [gate, setGate] = useState(false)
   const [notice, setNotice] = useState<DraftReview | null>(null)
+  const [polished, setPolished] = useState<{ lines: ScriptLine[]; base: string } | null>(null)
   // 点审稿意见里的原句：正文滚到那一行并高亮
   const [focusLine, setFocusLine] = useState<string | null>(null)
   // 正文里选中的段落：状态库侧栏「标注」给它加标注
@@ -203,6 +205,28 @@ export default function DraftPage() {
     openPanel('reviews')
   }
 
+  /** AI 润色：整集逐行理顺措辞，先看改动再采用；在当前版本上改，采用后可撤销 */
+  const polish = async () => {
+    const cur = latestProject(project.id)
+    const d = cur?.work.drafts.find((x) => x.id === draft.id)
+    if (!cur || !d) return
+    const lines = await run('polish', (signal) => polishLines(cur, d.lines, signal))
+    if (!lines) return
+    if (!diffLines(d.lines, lines).length) return toast('这一版没有需要润色的地方', 'info')
+    setPolished({ lines, base: linesSig(d) })
+  }
+
+  const applyPolish = () => {
+    const cur = latestProject(project.id)
+    const d = cur?.work.drafts.find((x) => x.id === draft.id)
+    if (!polished || !d) return
+    setPolished(null)
+    if (linesSig(d) !== polished.base) return toast('正文在润色期间有改动，请重新 AI 润色', 'error')
+    const before = d.lines
+    patch(() => ({ lines: polished.lines }), `AI 润色：第 ${d.ep} 集 ${draftLabel(d)}`)
+    toast('已润色这一版', 'success', { label: '撤销', run: () => patch(() => ({ lines: before }), `撤销 AI 润色：第 ${d.ep} 集`) })
+  }
+
   /** AI 审稿：修稿出来的版本默认复审（只查上一轮意见与改过的段落），full 全量重审；model：这次换用的模型 */
   const audit = async (kind?: 'full', model?: ModelId) => {
     const cur = latestProject(project.id)
@@ -284,17 +308,13 @@ export default function DraftPage() {
             重新生成
           </WriteButton>
           <AiButton
-            variant={suggested('revise')}
-            loading={running === 'revise'}
-            disabled={!!running || reviseCapped}
-            title={
-              reviseCapped
-                ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮：请按审稿意见人工修改，或直接定稿`
-                : `${lastReview ? `按审稿 #${draft.reviews.length} 的意见逐条修改（AI 改不动、保留不改的不动）` : '还没审稿：按标注与自检修改（先 AI 审稿，可按审稿意见逐条改）'}${draft.notes.length ? `，${draft.notes.length} 条标注一并改写` : ''}，生成 ${nextLabel}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
-            }
-            onClick={() => revise()}
+            variant="secondary"
+            loading={running === 'polish'}
+            disabled={!!running || !editable}
+            title={editable ? '整集逐行理顺措辞、去 AI 味词，先看改动再采用；在当前版本上改，可撤销' : '只读版本不能润色'}
+            onClick={polish}
           >
-            AI 修稿
+            AI 润色
           </AiButton>
           <span className="flex items-center gap-1">
             <ReviewButton
@@ -326,7 +346,7 @@ export default function DraftPage() {
                 <div className="mb-1.5 text-[13px] font-medium text-ink-900">AI 审稿检查什么</div>
                 <p className="mb-1.5 text-xs leading-5 text-ink-500">每条意见都写明依据和正文原句；说不出依据的只算建议。AI 写作也按这几项写。</p>
                 <ul className="space-y-1 text-xs leading-5 text-ink-700">
-                  {REVIEW_BASIS.map((x) => (
+                  {reviewScope(project.mode === 'original').map((x) => (
                     <li key={x.key} className="flex gap-1.5">
                       <span className="mt-2 size-1 shrink-0 rounded-full bg-ink-300" />
                       <span>
@@ -341,7 +361,26 @@ export default function DraftPage() {
               </div>
             </span>
           </span>
-          <button type="button" className={advice && advice.action !== 'final' ? finalOutline : finalButton} disabled={draft.status === 'final' || !!running} onClick={tryFinalize}>
+          <AiButton
+            variant={suggested('revise')}
+            loading={running === 'revise'}
+            disabled={!!running || reviseCapped}
+            title={
+              reviseCapped
+                ? `本集已 AI 修稿 ${MAX_REVISE_ROUNDS} 轮：请按审稿意见人工修改，或直接定稿`
+                : `${lastReview ? `按审稿 #${draft.reviews.length} 的意见逐条修改（AI 改不动、保留不改的不动）` : '还没审稿：按标注与自检修改（先 AI 审稿，可按审稿意见逐条改）'}${draft.notes.length ? `，${draft.notes.length} 条标注一并改写` : ''}，生成 ${nextLabel}（第 ${rounds + 1}/${MAX_REVISE_ROUNDS} 轮）`
+            }
+            onClick={() => revise()}
+          >
+            AI 修稿
+          </AiButton>
+          <button
+            type="button"
+            className={advice && advice.action !== 'final' ? finalOutline : finalButton}
+            disabled={draft.status === 'final' || !!running}
+            title={draft.reviews.length ? undefined : '审稿可以跳过：没审稿也能直接定稿'}
+            onClick={tryFinalize}
+          >
             <ClipboardCheck size={14} />
             {draft.status === 'final' ? '已定稿' : '定稿'}
           </button>
@@ -422,11 +461,9 @@ export default function DraftPage() {
                 <dl className="space-y-2.5 text-[12.5px] leading-5">
                   {[
                     { k: '定位', v: blueprint.position },
-                    { k: '小目标', v: blueprint.goal },
                     { k: '冲突与转折', v: blueprint.conflict },
                     { k: '承接', v: carry ? plainText(carry.text) : '', note: carry?.auto ? '默认接上集结尾' : undefined },
                     { k: '末尾钩子', v: blueprint.hook },
-                    { k: '作者微操指导', v: blueprint.guidance },
                   ]
                     .filter(({ v }) => v.trim())
                     .map(({ k, v, note }) => (
@@ -447,8 +484,8 @@ export default function DraftPage() {
                   <div className="mb-1.5 text-[13px] font-medium text-ink-900">写作依据</div>
                   <p className="mb-2 text-xs text-ink-400">AI 写这一版时对照的设定，和审稿是同一份清单</p>
                   <ul className="space-y-1.5 text-[12.5px] leading-5">
-                    {draft.basis.map((b) => (
-                      <li key={b.basis} className="flex gap-2">
+                    {draft.basis.map((b, i) => (
+                      <li key={i} className="flex gap-2">
                         <span className="w-16 shrink-0 text-ink-400">{basisLabel(b.basis)}</span>
                         <span className="min-w-0 text-ink-900">{b.text}</span>
                       </li>
@@ -611,6 +648,33 @@ export default function DraftPage() {
             else finalize()
           }}
         />
+      )}
+
+      {polished && (
+        <Modal
+          open
+          onClose={() => setPolished(null)}
+          width={760}
+          title={`AI 润色 · ${draftLabel(draft)}`}
+          desc="只理顺措辞、去掉 AI 味词，场次、人物和剧情不动；采用后在当前版本上改，可撤销"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setPolished(null)}>
+                不用了
+              </Button>
+              <Button onClick={applyPolish}>
+                <Check size={15} />
+                采用（改 {diffLines(draft.lines, polished.lines).length} 行）
+              </Button>
+            </>
+          }
+        >
+          <ul data-polish-diff className="scrollbar-thin max-h-[56vh] divide-y divide-line overflow-y-auto rounded-lg border border-line">
+            {diffLines(draft.lines, polished.lines).map((d) => (
+              <DiffRow key={`${d.kind}-${d.no}`} d={d} />
+            ))}
+          </ul>
+        </Modal>
       )}
 
       <ConfirmDialog

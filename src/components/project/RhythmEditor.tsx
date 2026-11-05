@@ -6,6 +6,7 @@ import { defaultRhythm, validateRhythm } from '../../domain/rhythm'
 import type { RhythmFrame } from '../../domain/types'
 import { Button, Field, Input, Segmented } from '../ui'
 import { RhythmChart } from './RhythmChart'
+import type { RhythmCompare } from './RhythmChart'
 
 function EpisodeListEditor({
   label,
@@ -79,6 +80,7 @@ export function RhythmEditor({
   onChange,
   recommended,
   chartFooter,
+  compare,
 }: {
   rhythm: RhythmFrame
   total: number
@@ -87,6 +89,8 @@ export function RhythmEditor({
   recommended?: RhythmFrame
   /** 曲线下方的附加内容，如冲突主线分段 */
   chartFooter?: ReactNode
+  /** 叠在曲线上的对标剧对比线 */
+  compare?: RhythmCompare
 }) {
   const [brush, setBrush] = useState<'paywalls' | 'twists'>('paywalls')
   const issues = validateRhythm(rhythm, total)
@@ -117,7 +121,7 @@ export function RhythmEditor({
             恢复推荐
           </Button>
         </div>
-        <RhythmChart rhythm={rhythm} total={total} onPick={pick} />
+        <RhythmChart rhythm={rhythm} total={total} onPick={pick} compare={compare} />
         {chartFooter}
       </div>
 

@@ -1,8 +1,10 @@
 import { ArrowLeft, ArrowRight, Lock, MessageSquareQuote, Package } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router'
 import { useV2 } from '../../store/uiVersion'
+import { StageBar } from '../../v2/StageBar'
 import { StageHeadV2 } from '../../v2/StageHead'
 import { GateNotice, stagePath } from '../../components/stage/StageKit'
+import { StageNeed, StageNeedText } from '../../components/stage/StageNeed'
 import { Badge, Button, Card, CardHeader } from '../../components/ui'
 import { MODE_STAGES, QA_CHECKS, STAGES } from '../../domain/pipeline'
 import type { StageMeta } from '../../domain/pipeline'
@@ -121,7 +123,7 @@ function StageBody({ stage, project }: { stage: StageKey; project: Project }) {
   )
 }
 
-function StageHead({ meta, index }: { meta: StageMeta; index: number }) {
+function StageHead({ project, meta, index, next }: { project: Project; meta: StageMeta; index: number; next: StageMeta | null }) {
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
@@ -132,16 +134,19 @@ function StageHead({ meta, index }: { meta: StageMeta; index: number }) {
           </div>
           <h2 className="mt-1 flex items-center gap-2 text-lg font-semibold">
             {meta.label}
-            {meta.phase && (
+            {meta.phase ? (
               <Badge tone="gray">
                 <Lock size={10} />
                 {meta.phase}
               </Badge>
+            ) : (
+              <StageNeed project={project} meta={meta} next={next} />
             )}
           </h2>
         </div>
       </div>
       {!meta.phase && <p className="-mt-2 max-w-3xl text-[13px] leading-6 text-ink-500">{meta.summary}</p>}
+      {!meta.phase && <StageNeedText meta={meta} />}
     </>
   )
 }
@@ -162,10 +167,12 @@ export default function StagePage() {
 
   return (
     <div className="space-y-4">
-      {v2 ? <StageHeadV2 project={project} meta={meta} index={index} next={next} /> : <StageHead meta={meta} index={index} />}
+      {v2 ? <StageHeadV2 project={project} meta={meta} index={index} next={next} /> : <StageHead project={project} meta={meta} index={index} next={next} />}
 
       {/* key：切换项目时重置各环节的本地状态 */}
       {meta.phase ? <LockedStage meta={meta} /> : <StageBody key={`${project.id}-${meta.key}`} stage={meta.key} project={project} />}
+      {/* 版本二：本环节的状态、操作和去下一步放在页面底部那一条（11/4 标注 #74） */}
+      {v2 && <StageBar project={project} meta={meta} next={next} />}
 
       <div className="flex items-center justify-between gap-3 pt-2">
         <Link to={stagePath(project, prev.key)} className="flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-900">

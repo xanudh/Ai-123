@@ -10,6 +10,8 @@ import ProjectLayout from './pages/workspace/ProjectLayout'
 import ProjectSettings from './pages/workspace/ProjectSettings'
 import StagePage from './pages/workspace/StagePage'
 import StateLibraryPage from './pages/workspace/StateLibraryPage'
+import ArchitectureLab from './pages/workspace/lab/ArchitectureLab'
+import RewriteChat from './pages/workspace/lab/RewriteChat'
 import DraftPage from './pages/workspace/script/DraftPage'
 import FinalPage from './pages/workspace/script/FinalPage'
 
@@ -34,6 +36,10 @@ const router = createBrowserRouter([
           { path: 'settings', element: <ProjectSettings /> },
           // 剧本状态库完整视图（已从流程移出，侧栏「全剧」可打开）
           { path: 'state', element: <StateLibraryPage /> },
+          // 故事架构新版 Demo：单独的试验页，确定后再替换正式的故事架构
+          { path: 'lab/architecture', element: <ArchitectureLab /> },
+          // 改写方案 · 多轮对话 Demo：同样单独一页，不读写正式流程
+          { path: 'lab/rewrite', element: <RewriteChat /> },
         ],
       },
       { path: 'modules/:key', element: <ModulePage /> },

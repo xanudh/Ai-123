@@ -4,25 +4,29 @@ import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { CheckLink, CheckTab, useCheckTab } from '../../../components/project/CheckTab'
+import { LooksEditor } from '../../../components/project/LooksEditor'
 import { WriteButton } from '../../../components/project/ModelBits'
 import { AiButton, AutoTextarea, CheckList, latestProject, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, EmptyState, Field, Input, NumberInput, Select, dotBefore } from '../../../components/ui'
-import { DRAFT_STATUS_META, EPISODE_POSITIONS, EPISODE_RANGE, SCRIPT_BATCH } from '../../../domain/constants'
+import { Badge, Button, Card, EmptyState, Field, Input, NumberInput, dotBefore } from '../../../components/ui'
+import { DRAFT_STATUS_META, EPISODE_RANGE, SCRIPT_BATCH } from '../../../domain/constants'
 import { modelLabel, modelOf } from '../../../domain/models'
+import { SHOW_FORESHADOW } from '../../../domain/pipeline'
 import { rhythmOnResize } from '../../../domain/rhythm'
 import { buildState, preWriteCheck } from '../../../domain/state'
 import type { EpisodeBlueprint, Foreshadow, ModelId, Project } from '../../../domain/types'
 import { blueprintOf, draftLabel, draftsOf, foreshadowName, plainText, prevHookOf, scriptOf } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
-import { draftBlueprints, nextSeed, positionOf, writeEpisode } from '../../../services/ai'
-import { setBatchRun, useBatchRun } from '../../../store/batchRun'
+import { BasisInfo } from '../../../components/project/BasisInfo'
+import { downBasis } from '../../../domain/basis'
+import { draftBlueprints, nextSeed, positionOf } from '../../../services/ai'
+import { startBatch, useBatchRun } from '../../../store/batchRun'
 import { useProjects } from '../../../store/projects'
 import { useStateFocus } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
 import { EpisodeDots, EpisodeSteps } from '../../../v2/EpisodeSteps'
 import { FinalizeAll, finalizeRows } from '../script/FinalizeAll'
-import { addDraft, draftPath, finalPath, nextUnwritten } from '../script/ops'
+import { draftPath, finalPath, nextUnwritten } from '../script/ops'
 import { writeDraft } from '../script/write'
 
 interface Pending {
@@ -52,7 +56,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const updateProject = useProjects((s) => s.updateProject)
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const { running, run, cancel } = useAiTask()
+  const { running, run } = useAiTask()
   const v2 = useV2()
   const total = project.spec.totalEpisodes
   const w = project.work
@@ -101,7 +105,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     if (cur) patchWork(project.id, { blueprints: cur.work.blueprints.map((b) => (b.ep === ep ? { ...b, ...patch } : b)) })
   }
 
-  /** AI 结果合并回最新数据：作者微操指导与要点以等待期间的最新内容为准 */
+  /** AI 结果合并回最新数据：本集要点以等待期间的最新内容为准（作者微操指导 11/4 从页面删掉，旧数据照样带着） */
   const merge = (result: EpisodeBlueprint[], note: string) => {
     const cur = latestProject(project.id)
     if (!cur) return
@@ -124,7 +128,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
       return
     }
     merge(result, `AI 生成分集蓝图：${result.length} 集`)
-    toast(`已按情节大纲生成 ${result.length} 集蓝图，作者微操指导与要点已保留`)
+    toast(`已按情节大纲生成 ${result.length} 集蓝图，本集要点已保留`)
     if (!current) setSelected(result.some((b) => b.ep === next) ? next : result[0].ep)
   }
 
@@ -172,47 +176,15 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     toast(`已加到 ${n} 集，第 ${n} 集蓝图待填写`)
   }
 
-  const markWriting = () => {
-    if (latestProject(project.id)?.status === 'draft') updateProject(project.id, { status: 'writing' })
-  }
-
   const write = async (ep: number, model?: ModelId) => {
     const draft = await writeDraft(project.id, ep, run, model)
     if (draft) navigate(draftPath(project, draft.id))
   }
 
-  /** 按选好的范围逐集写；遇到不能写的集就停，中途可以停止，已写出的草稿保留 */
-  const batch = async (from: number, to: number) => {
-    const start = latestProject(project.id)
-    if (!start) return
-    // 整批用开写时的文本模型：中途在页头换模型，本批剩下的集仍用它写完，同一批文风一致
-    const model = modelOf(start, 'text')
-    let done = 0
-    const result = await run('batch', async (signal) => {
-      for (let ep = from; ep <= to; ep++) {
-        const cur = latestProject(project.id)
-        if (!cur) break
-        const block = preWriteCheck(cur, ep).find((c) => c.level === 'block')
-        if (block) return { stop: `第 ${ep} 集：${block.text}` }
-        setBatchRun({ projectId: project.id, model, ep, i: ep - from + 1, n: to - from + 1, stop: cancel })
-        const content = await writeEpisode(cur, ep, 0, signal, model)
-        const latest = latestProject(project.id)
-        if (!latest) break
-        patchWork(project.id, { drafts: addDraft(latest.work, ep, content).drafts }, `批量写作：第 ${ep} 集草稿`)
-        done++
-      }
-      return { stop: '' }
-    })
-    setBatchRun(null)
+  /** 按选好的范围逐集写：在页面之外跑，离开这一页也会接着写；遇到不能写的集就停，中途可以停止，已写出的草稿保留 */
+  const batch = (from: number, to: number) => {
     setRange(null)
-    if (done) markWriting()
-    if (!result) {
-      if (done) toast(`已停止批量写作，写出的 ${done} 集草稿已保存`)
-    } else if (done) {
-      toast(`已用 ${modelLabel(model)} 写出 ${done} 集草稿，逐集审稿后定稿${result.stop ? `（${result.stop}）` : ''}`)
-    } else if (result.stop) {
-      toast(result.stop, 'error')
-    }
+    void startBatch(project.id, from, to)
   }
 
   /** 范围里有已写过的集：另存新版本前先确认 */
@@ -233,7 +205,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     blueprints.length
       ? setPending({
           title: '重新生成全部蓝图？',
-          desc: '定位、出场人物、小目标、冲突与钩子会按最新的情节大纲重写；作者微操指导与本集要点保留。',
+          desc: '出场人物、冲突与钩子会按最新的情节大纲重写；本集要点保留。',
           confirmText: '重新生成',
           action: generateAll,
         })
@@ -242,7 +214,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const askRemove = (ep: number) =>
     setPending({
       title: `删除第 ${ep} 集蓝图？`,
-      desc: '本集的定位、出场人物、小目标、冲突、钩子、作者微操指导与要点都会删除；草稿与正文不受影响。',
+      desc: '本集的出场人物、冲突、钩子与要点都会删除；草稿与正文不受影响。',
       confirmText: '删除',
       danger: true,
       action: () => {
@@ -254,14 +226,14 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
   const askClear = () =>
     setPending({
       title: '清空全部蓝图？',
-      desc: `${blueprints.length} 集蓝图（含作者微操指导与定稿要点）都会删除；草稿箱与正文章节不受影响。`,
+      desc: `${blueprints.length} 集蓝图（含定稿要点）都会删除；草稿箱与正文章节不受影响。`,
       confirmText: '清空',
       danger: true,
       action: () => setBlueprints([], '清空全部分集蓝图'),
     })
 
   const checkTab = (
-    <CheckTab title={`写作前检查 · 第 ${writeEp} 集`} desc="对照剧本状态库：集纲与蓝图、上一集定稿、伏笔到期、钩子承接、人物最新状态">
+    <CheckTab title={`写作前检查 · 第 ${writeEp} 集`} desc={`对照剧本状态库：集纲与蓝图、上一集定稿、${SHOW_FORESHADOW ? '伏笔到期、' : ''}钩子承接、人物最新状态`}>
       <CheckList items={checks} empty="一切就绪，可以开始写作" />
       {(versions.length > 0 || final) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3 text-[13px]">
@@ -286,7 +258,6 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
     </CheckTab>
   )
 
-  const positions = current ? [...new Set<string>([...EPISODE_POSITIONS, current.position].filter(Boolean))] : []
   const currentFinal = current && scriptOf(w, current.ep)
   // 承接没填时默认接上集结尾的钩子，作为输入框提示
   const carryDefault = current ? plainText(prevHookOf(w, current.ep)) : ''
@@ -321,7 +292,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                     value={batchFrom}
                     min={1}
                     max={startMax}
-                    disabled={!!running}
+                    disabled={!!running || !!batchAt}
                     onCommit={(from) => setRange({ from, to: Math.min(total, from + SCRIPT_BATCH - 1) })}
                   />
                   –
@@ -332,15 +303,15 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                     value={batchTo}
                     min={batchFrom}
                     max={total}
-                    disabled={!!running}
+                    disabled={!!running || !!batchAt}
                     onCommit={(to) => setRange({ from: batchFrom, to })}
                   />
                   集
                 </span>
                 <AiButton
                   variant="secondary"
-                  loading={running === 'batch'}
-                  disabled={blocked || !!running}
+                  loading={!!batchAt}
+                  disabled={blocked || !!running || !!batchAt}
                   title={
                     batchAt
                       ? `本批用 ${modelLabel(batchAt.model)} 写：开写时定下，中途在页头换模型不影响本批`
@@ -348,10 +319,11 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                   }
                   onClick={askBatch}
                 >
-                  {running === 'batch' && batchAt ? `正在写第 ${batchAt.ep} 集（${batchAt.i}/${batchAt.n}）…` : '批量写作'}
+                  {batchAt ? `正在写第 ${batchAt.ep} 集（${batchAt.i}/${batchAt.n}）…` : '批量写作'}
                 </AiButton>
-                {running === 'batch' && (
-                  <Button variant="ghost" size="sm" title="停止后续集；已写出的草稿保留" onClick={cancel}>
+                <BasisInfo title="逐集写作" row={downBasis(project, 'write')} align="right" />
+                {batchAt && (
+                  <Button variant="ghost" size="sm" title="停止后续集；已写出的草稿保留" onClick={batchAt.stop}>
                     停止
                   </Button>
                 )}
@@ -373,6 +345,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
             <AiButton variant="secondary" loading={running === 'blueprints'} disabled={blocked || !!running} onClick={askGenerate}>
               AI 生成蓝图
             </AiButton>
+            <BasisInfo title="分集蓝图" row={downBasis(project, 'blueprint')} align="right" />
             <Button
               variant="secondary"
               size="sm"
@@ -409,7 +382,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
             <EmptyState
               icon={<Layers size={22} />}
               title="还没有分集蓝图"
-              desc="蓝图是写作前的预览设定：本集定位、出场人物、主角小目标、冲突与转折、末尾钩子，以及作者微操指导。先按情节大纲生成，确认后再点击写作。"
+              desc="蓝图是写作前的预览设定：出场人物、冲突与转折、承接、末尾钩子。先按情节大纲生成，确认后再点击写作。"
               action={
                 <AiButton size="md" loading={running === 'blueprints'} disabled={blocked || !outlined || !!running} onClick={generateAll}>
                   AI 生成蓝图（{outlined} 集）
@@ -455,7 +428,6 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                         )}
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Badge tone={POSITION_TONE[b.position] ?? 'gray'}>{b.position || '未定位'}</Badge>
-                          {b.guidance.trim() && <Badge tone="violet">有指导</Badge>}
                           {b.points.trim() && <Badge tone="green">有要点</Badge>}
                           {n > 0 && <Badge tone="gray">{n} 稿</Badge>}
                         </span>
@@ -497,11 +469,11 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                     variant="secondary"
                     loading={running === 'one'}
                     disabled={blocked || !!running}
-                    title={`只重新生成第 ${current.ep} 集的蓝图，作者微操指导与本集要点保留`}
+                    title={`只重新生成第 ${current.ep} 集的蓝图，本集要点保留`}
                     onClick={() =>
                       setPending({
                         title: `重新生成第 ${current.ep} 集蓝图？`,
-                        desc: '本集标题、定位、出场人物、小目标、冲突与钩子会按集纲重新生成；作者微操指导与本集要点保留，其他集不受影响。',
+                        desc: '本集标题、出场人物、冲突与钩子会按集纲重新生成；本集要点保留，其他集不受影响。',
                         confirmText: '重新生成',
                         action: () => regenerate(current.ep),
                       })
@@ -537,31 +509,20 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                 <Field label="本集标题">
                   <Input value={current.title} onChange={(e) => update(current.ep, { title: e.target.value })} placeholder="本集标题" />
                 </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="本集定位" hint="按节奏框架预填，可改">
-                    <Select value={current.position} onChange={(e) => update(current.ep, { position: e.target.value })}>
-                      {positions.map((p) => (
-                        <option key={p}>{p}</option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field label="出场关键人（逗号分隔）" hint="AI 审稿会检查这些人物是否出场">
-                    <Input value={current.cast} onChange={(e) => update(current.ep, { cast: e.target.value })} placeholder="主角、反派、关键配角" />
-                  </Field>
-                </div>
-                <Field label="主角小目标（本集最想解决的事）">
-                  <Input value={current.goal} onChange={(e) => update(current.ep, { goal: e.target.value })} placeholder="这一集主角最想做成的一件事" />
+                {/* 本集定位、主角小目标 11/4 标注删掉（定位仍按节奏框架标在左侧列表里） */}
+                <Field label="出场关键人（逗号分隔）" hint="AI 审稿会检查这些人物是否出场">
+                  <Input value={current.cast} onChange={(e) => update(current.ep, { cast: e.target.value })} placeholder="主角、反派、关键配角" />
                 </Field>
                 <Field label="实质冲突与转折">
                   <AutoTextarea minRows={3} value={current.conflict} onChange={(e) => update(current.ep, { conflict: e.target.value })} placeholder="谁阻碍主角、怎么升级、在哪里反转" />
                 </Field>
-                <Field label="承接" hint="本集开头接住什么：上集结尾的钩子，或前几集埋下、本集要响的伏笔；不填时默认接上集结尾的钩子">
+                <Field label="承接" hint={`本集开头接住什么：上集结尾的钩子${SHOW_FORESHADOW ? '，或前几集埋下、本集要响的伏笔' : ''}；不填时默认接上集结尾的钩子`}>
                   <AutoTextarea
                     aria-label="承接"
                     minRows={2}
                     value={current.carry ?? ''}
                     onChange={(e) => update(current.ep, { carry: e.target.value })}
-                    placeholder={carryDefault ? `默认接上集结尾：${carryDefault}` : current.ep === 1 ? '第 1 集是开篇，没有上集可承接' : '上集结尾留下的悬念、前几集埋下的伏笔'}
+                    placeholder={carryDefault ? `默认接上集结尾：${carryDefault}` : current.ep === 1 ? '第 1 集是开篇，没有上集可承接' : SHOW_FORESHADOW ? '上集结尾留下的悬念、前几集埋下的伏笔' : '上集结尾留下的悬念'}
                   />
                   {carryForeshadows.length > 0 && (
                     <div data-carry-foreshadows className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
@@ -590,20 +551,13 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                 <Field label="末尾悬念钩子">
                   <AutoTextarea minRows={2} value={current.hook} onChange={(e) => update(current.ep, { hook: e.target.value })} placeholder="最后 10 秒留什么让观众点下一集" />
                 </Field>
-
-                <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-4">
-                  <div className="mb-2 flex flex-wrap items-baseline gap-1">
-                    <span className="text-[13px] font-semibold text-brand-700">作者微操指导</span>
-                    <span className="text-xs text-ink-500">（写稿时会作为最高优先级注入 AI — 可覆盖蓝图）</span>
-                  </div>
-                  <AutoTextarea
-                    aria-label="作者微操指导"
-                    minRows={3}
-                    value={current.guidance}
-                    onChange={(e) => update(current.ep, { guidance: e.target.value })}
-                    placeholder={'我想在这集加入一个意外的背叛…\n让反派在这集露出破绽…\n（不填则完全按蓝图走）'}
+                <Field label="人物本集状态" hint="每个人在哪个场景进来、服化道重点；状态库与导出的剧本开头按这里列，方便拆资产">
+                  <LooksEditor
+                    looks={current.looks ?? []}
+                    cast={current.cast.split(/[,，、;；\s]+/).map((n) => n.trim()).filter(Boolean)}
+                    onChange={(looks) => update(current.ep, { looks })}
                   />
-                </div>
+                </Field>
 
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
                   <div className="mb-2 flex flex-wrap items-baseline gap-1">
@@ -615,7 +569,7 @@ export default function ScriptStage({ project, blocked }: { project: Project; bl
                     minRows={4}
                     value={current.points}
                     onChange={(e) => update(current.ep, { points: e.target.value })}
-                    placeholder="定稿后 AI 会自动填充本集要点（事件进展 / 角色变化 / 伏笔埋点），也可以提前手动输入给 AI 作参考"
+                    placeholder={`定稿后 AI 会自动填充本集要点（事件进展 / 角色变化${SHOW_FORESHADOW ? ' / 伏笔埋点' : ''}），也可以提前手动输入给 AI 作参考`}
                     className="font-mono text-[12.5px] leading-6"
                   />
                 </div>

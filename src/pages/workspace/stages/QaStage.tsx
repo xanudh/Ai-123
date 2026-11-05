@@ -11,14 +11,18 @@ import { ConfirmDialog } from '../../../components/overlay'
 import { AiButton, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card } from '../../../components/ui'
 import { AUDIENCES } from '../../../domain/constants'
-import { QA_CHECKS, STAGES } from '../../../domain/pipeline'
+import { QA_CHECKS, STAGES, hasInnovations, qaChecks } from '../../../domain/pipeline'
+import type { QaCheckMeta } from '../../../domain/pipeline'
+import { episodeLooks, looksText } from '../../../domain/looks'
 import { castBios, episodeText, sceneCast, sceneNumbers, speakerLabel } from '../../../domain/scriptFormat'
 import type { EpisodeScript, Project, QaCheckKey, QaIssue, QaReport, ScriptLine } from '../../../domain/types'
-import { plainText, qaStale } from '../../../domain/work'
+import { overviewStory, plainText, qaStale } from '../../../domain/work'
 import { downloadText } from '../../../lib/download'
 import { modelLabel } from '../../../domain/models'
 import { formatDateTime } from '../../../lib/format'
-import { QA_STEPS, innovationLanding, runQa } from '../../../services/ai'
+import { BasisInfo } from '../../../components/project/BasisInfo'
+import { downBasis } from '../../../domain/basis'
+import { innovationLanding, qaSteps, runQa } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
 import { useV2 } from '../../../store/uiVersion'
@@ -122,21 +126,29 @@ function packageText(p: Project, scripts: EpisodeScript[], report: QaReport | nu
     '（一）剧本信息',
     `剧名：《${p.title}》`,
     p.titleEn && `英文剧名：${p.titleEn}`,
-    `题材元素：${[AUDIENCES.find((x) => x.value === p.audience)?.label, p.category, ...p.genres, ...p.tones].filter(Boolean).join(' ')}`,
+    `题材元素：${[AUDIENCES.find((x) => x.value === p.audience)?.label, ...p.genres, ...p.tones].filter(Boolean).join(' ')}`,
     `总集数：${totalEpisodes}集`,
     p.rhythm.paywalls[0] && `免费集数：${p.rhythm.paywalls[0]}集`,
     `预估总时长：${minutes((totalEpisodes * episodeSeconds) / 60)}分钟（按${minutes(episodeSeconds / 60)}分钟/集估算）`,
     '（二）故事简介',
-    [p.logline, p.work.plot?.overview].map((t) => t?.trim()).filter(Boolean).join('\n') || p.idea || '（待补充）',
+    // 总纲开头的【故事简介】那一段（11/4 起），旧总纲没有这一段就用整段总纲
+    overviewStory(p.work.plot?.overview) || p.work.plot?.overview?.trim() || p.idea || '（待补充）',
+    // 核心设定先直接写那一段话，下面再列世界观与背景（主要势力 11/4 删掉）
     '（三）核心设定',
+    p.logline.trim() || '（待补充）',
     ...section('世界观设定', a?.world),
-    ...section('主要势力', a?.factions),
     ...section('故事背景', a?.background),
+    ...section('核心亮点', a?.highlights),
     '（四）人物小传',
     castBios(p.work.characters, p.work.relations) || '（待补充）',
   ].filter(Boolean)
   const names = p.work.characters.map((c) => c.name.trim())
-  const eps = scripts.map((s) => episodeText(s.ep, s.lines, names, p.spec.language !== 'zh' && s.translated))
+  // 每集开头列本集人物状态（场次 + 服化道），方便拆资产
+  const eps = scripts.map((s) => {
+    const [heading, ...rest] = episodeText(s.ep, s.lines, names, p.spec.language !== 'zh' && s.translated).split('\n')
+    const looks = looksText(episodeLooks(p, s.ep))
+    return [heading, ...(looks ? [looks] : []), ...rest].join('\n')
+  })
   const qa = report && `附：质检 ${report.score} 分（${formatDateTime(report.at)}，已定稿 ${scripts.length}/${totalEpisodes} 集）· ${report.checks.map((c) => `${CHECK_LABEL[c.key]} ${c.score}`).join(' / ')}`
   return [head.join('\n'), ...eps, qa].filter(Boolean).join('\n\n')
 }
@@ -144,6 +156,7 @@ function packageText(p: Project, scripts: EpisodeScript[], report: QaReport | nu
 /* ---------------------------------- 总结 ---------------------------------- */
 
 function Summary({
+  checks,
   report,
   open,
   check,
@@ -152,6 +165,8 @@ function Summary({
   onLevel,
   children,
 }: {
+  /** 这个项目跑的几项：原创六项，仿写七项 */
+  checks: QaCheckMeta[]
   report: QaReport
   open: QaIssue[]
   check: QaCheckKey | null
@@ -197,7 +212,7 @@ function Summary({
         </div>
         <div className="min-w-0 flex-1">
           <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
-            {QA_CHECKS.map((c) => {
+            {checks.map((c) => {
               const r = report.checks.find((x) => x.key === c.key)
               if (!r) return null
               const on = check === c.key
@@ -222,7 +237,7 @@ function Summary({
               )
             })}
           </ul>
-          <p className="mt-1 px-2 text-[11px] leading-4 text-ink-400">总分按权重加权：{QA_CHECKS.map((c) => `${shortLabel(c.label)} ${Math.round(c.weight * 100)}%`).join(' + ')}</p>
+          <p className="mt-1 px-2 text-[11px] leading-4 text-ink-400">总分按权重加权：{checks.map((c) => `${shortLabel(c.label)} ${Math.round(c.weight * 100)}%`).join(' + ')}</p>
         </div>
       </div>
       {children}
@@ -282,6 +297,7 @@ function Counts({ issues }: { issues: QaIssue[] }) {
 }
 
 function Directory({
+  innovation,
   scripts,
   report,
   open,
@@ -289,6 +305,8 @@ function Directory({
   missing,
   onSelect,
 }: {
+  /** 仿写才有创新点落地；原创的「全剧」一栏列跨集问题 */
+  innovation: boolean
   scripts: EpisodeScript[]
   report: QaReport
   open: QaIssue[]
@@ -305,7 +323,7 @@ function Directory({
         <li>
           <button className={row(current === 'global')} onClick={() => onSelect('global')}>
             <span className="w-11 shrink-0 text-xs text-ink-500">全剧</span>
-            <span className={clsx('min-w-0 flex-1 truncate text-[13px]', current === 'global' ? 'font-medium text-brand-700' : 'text-ink-900')}>创新点落地</span>
+            <span className={clsx('min-w-0 flex-1 truncate text-[13px]', current === 'global' ? 'font-medium text-brand-700' : 'text-ink-900')}>{innovation ? '创新点落地' : '跨集问题'}</span>
             <Counts issues={global} />
           </button>
         </li>
@@ -460,8 +478,41 @@ function ScriptView({
   )
 }
 
+/** 全剧层面：不落在某一集正文里的问题（阶段情绪回落等）；创新点落地收起时只列这些 */
+function CrossIssues({ issues, activeId, onPick }: { issues: QaIssue[]; activeId: string | null; onPick: (i: QaIssue) => void }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-line px-4 py-3">
+        <h3 className="text-[15px] font-semibold text-ink-900">全剧 · 跨集问题</h3>
+        <p className="mt-0.5 text-xs text-ink-500">不落在某一集正文里的问题，如阶段情绪回落</p>
+      </div>
+      {issues.length ? (
+        <ul data-cross-issues className="divide-y divide-line">
+          {[...issues].sort(byLevel).map((i) => (
+            <li
+              key={i.id}
+              onClick={() => onPick(i)}
+              className={clsx('flex cursor-pointer items-start gap-3 px-4 py-3', LEVEL[i.level].row, i.id === activeId && 'outline-2 -outline-offset-2 outline-brand-400')}
+            >
+              <LevelIcon level={i.level} className="mt-1" />
+              <div className="min-w-0 flex-1 text-[13px] leading-6">
+                <div className="text-ink-900">{i.title}</div>
+                <div className="text-ink-500">{i.detail}</div>
+              </div>
+              <div className="w-24 shrink-0 text-right text-xs leading-6 text-ink-500">{CHECK_LABEL[i.check]}</div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-8 text-center text-[13px] text-ink-400">全剧层面没有待处理的问题</p>
+      )}
+    </Card>
+  )
+}
+
 /** 全剧层面：创新点逐条落地情况 */
 function GlobalView({ project, issues, activeId, onPick }: { project: Project; issues: QaIssue[]; activeId: string | null; onPick: (i: QaIssue) => void }) {
+  if (!hasInnovations(project)) return <CrossIssues issues={issues} activeId={activeId} onPick={onPick} />
   const list = innovationLanding(project)
   return (
     <Card className="overflow-hidden">
@@ -488,7 +539,7 @@ function GlobalView({ project, issues, activeId, onPick }: { project: Project; i
               >
                 {level ? <LevelIcon level={level} className="mt-1" /> : <CircleCheck size={14} className="mt-1 shrink-0 text-emerald-500" aria-label="已落地" />}
                 <div className="min-w-0 flex-1 text-[13px] leading-6">
-                  <div className="text-ink-500">{x.theirs || '—'}</div>
+                  {x.theirs && <div className="text-ink-500">{x.theirs}</div>}
                   <div className="text-ink-900">{level && x.key ? highlight(x.ours, [{ text: x.key, level }]) : x.ours}</div>
                 </div>
                 <div className="w-28 shrink-0 text-right text-xs leading-6 text-ink-500">
@@ -543,15 +594,15 @@ function IssueItem({ project, issue, active, done, fixed, onPick, onToggle }: { 
 
 /* ---------------------------------- 页面 ---------------------------------- */
 
-function Running() {
+function Running({ steps }: { steps: string[] }) {
   const [step, setStep] = useState(0)
   useEffect(() => {
-    const t = setInterval(() => setStep((s) => Math.min(s + 1, QA_STEPS.length - 1)), 280)
+    const t = setInterval(() => setStep((s) => Math.min(s + 1, steps.length - 1)), 280)
     return () => clearInterval(t)
   }, [])
   return (
     <ol className="space-y-2">
-      {QA_STEPS.map((s, i) => (
+      {steps.map((s, i) => (
         <li key={s} className={clsx('flex items-center gap-2 text-[13px]', i <= step ? 'text-ink-900' : 'text-ink-400')}>
           {i < step ? <CircleCheck size={14} className="text-emerald-500" /> : i === step ? <Loader2 size={14} className="animate-spin text-brand-500" /> : <span className="mx-[3px] size-2 rounded-full bg-ink-300" />}
           {s}
@@ -564,6 +615,7 @@ function Running() {
 export default function QaStage({ project, blocked }: { project: Project; blocked: boolean }) {
   const { patchWork, updateProject } = useProjects()
   const { running, run } = useAiTask()
+  const checks = qaChecks(project)
   // 版本二：从正文页「返回质检」回来时，回到原来那条问题（已处理就接着看同一集的下一条）
   const [params] = useSearchParams()
   const [back] = useState(() => {
@@ -654,12 +706,12 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-6 px-6 py-5">
           <div className="min-w-0 flex-1">
-            <h3 className="text-[15px] font-semibold text-ink-900">{QA_CHECKS.length} 项自动检查</h3>
+            <h3 className="text-[15px] font-semibold text-ink-900">{checks.length} 项自动检查</h3>
             <p className="mt-1 text-[13px] text-ink-500">
               将检查已定稿的 {scripts.length} 集正文（共 {total} 集{missing > 0 ? `，${missing} 集未定稿不在范围内` : ''}），总分按权重加权
             </p>
             <ul className="mt-4 divide-y divide-line rounded-lg border border-line">
-              {QA_CHECKS.map((c, i) => (
+              {checks.map((c, i) => (
                 <li key={c.key} className="flex items-start gap-3 px-4 py-3">
                   <span className="mt-0.5 text-xs text-ink-400 tabular-nums">{i + 1}</span>
                   <div className="min-w-0 flex-1">
@@ -673,7 +725,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
           </div>
           <div className="w-full rounded-xl border border-line bg-canvas/60 p-4 sm:w-64">
             {running === 'qa' ? (
-              <Running />
+              <Running steps={qaSteps(project)} />
             ) : (
               <>
                 <div className="flex items-center gap-1.5 text-[13px] font-medium">
@@ -733,6 +785,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
             <AiButton variant={stale ? 'primary' : 'secondary'} loading={running === 'qa'} disabled={blocked || !!running} onClick={start}>
               重新质检
             </AiButton>
+            <BasisInfo title="质检交付" row={downBasis(project, 'qa')} align="right" />
             <Button variant="secondary" size="sm" onClick={exportPackage}>
               <Download size={14} />
               导出剧本包
@@ -758,7 +811,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
         )}
       </Card>
 
-      <Summary report={report} open={open} check={check} onCheck={setCheck} level={allLevel} onLevel={setAllLevel}>
+      <Summary checks={checks} report={report} open={open} check={check} onCheck={setCheck} level={allLevel} onLevel={setAllLevel}>
         <div id="qa-all" className="border-t border-line">
           <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
             <h3 className="text-[13px] font-semibold text-ink-900">
@@ -802,6 +855,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
       <div className="grid items-start gap-4 md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_300px]">
         <Card className="scrollbar-thin md:row-span-2 xl:sticky xl:top-stick xl:row-span-1 xl:max-h-stick xl:overflow-y-auto">
           <Directory
+            innovation={hasInnovations(project)}
             scripts={scripts}
             report={report}
             open={open}

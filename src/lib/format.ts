@@ -17,7 +17,7 @@ export function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-export const audienceLabel = (a: Audience) => AUDIENCES.find((x) => x.value === a)?.label ?? a
+export const audienceLabel = (a: Audience | '') => AUDIENCES.find((x) => x.value === a)?.label ?? a
 
 export const languageLabel = (l: ScriptLanguage) => LANGUAGES.find((x) => x.value === l)?.label ?? l
 

@@ -7,7 +7,7 @@ import { placeOf } from './scriptFormat'
 import { buildState, silenceThreshold } from './state'
 import type { SceneEntry } from './state'
 import type { CharacterRole, EpisodeDraft, Foreshadow, Project, Relation, ScriptLine } from './types'
-import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, hookOf, lateStep, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'
+import { blueprintOf, draftLabel, draftsOf, foreshadowAlert, foreshadowPlans, hookOf, lateStep, latestDraft, phaseNames, phaseOf, projectPhases, scriptOf, traceForeshadow } from './work'
 import type { ForeshadowTrace, LateStep } from './work'
 
 /** 页面告诉侧栏当前选中的层级 */
@@ -154,7 +154,7 @@ export function episodeSnapshot(p: Project, ep: number, draftId?: string): Episo
   const done = basis === 'final'
   const at = done ? ep : ep - 1
   const threshold = silenceThreshold(p)
-  const foreshadows = w.foreshadows
+  const foreshadows = foreshadowPlans(w)
     .map((f) => {
       const e = foreshadowAt(f, at, at, threshold)
       const here = f.events.filter((x) => x.ep === ep && done)
@@ -242,7 +242,7 @@ export function phaseSnapshot(p: Project, index: number): PhaseSnapshot {
   const latest = Math.max(0, ...w.scripts.map((s) => s.ep))
   const at = Math.min(b, latest)
   const threshold = silenceThreshold(p)
-  const foreshadows = w.foreshadows
+  const foreshadows = foreshadowPlans(w)
     .map((f) => {
       const e = foreshadowAt(f, b, at >= a ? at : 0, threshold)
       const plans = [f.plantEp >= a && f.plantEp <= b && `第 ${f.plantEp} 集埋设`, f.payoffEp >= a && f.payoffEp <= b && `第 ${f.payoffEp} 集回收`].filter(Boolean)

@@ -3,7 +3,7 @@ import { Check, Lock, Pencil } from 'lucide-react'
 import { Link } from 'react-router'
 import { Badge, Card, CardHeader, Segmented } from '../../components/ui'
 import { MODE_META, STATUS_META } from '../../domain/constants'
-import { MODE_STAGES, STAGES } from '../../domain/pipeline'
+import { MODE_STAGES, STAGES, hasInnovations } from '../../domain/pipeline'
 import { estimateChars } from '../../domain/rhythm'
 import type { Project, ProjectStatus, StageKey } from '../../domain/types'
 import { finalCount, stageState } from '../../domain/work'
@@ -138,7 +138,7 @@ export default function Overview() {
             }
           />
           <dl className="divide-y divide-line px-5 py-1">
-            <KV label="题材">
+            <KV label="题材类型">
               <div className="flex flex-wrap gap-1">
                 {project.genres.map((g) => (
                   <Badge key={g} tone="violet">
@@ -147,7 +147,7 @@ export default function Overview() {
                 ))}
               </div>
             </KV>
-            <KV label="受众 / 基调">
+            <KV label="受众 / 风格">
               {audienceLabel(project.audience)}
               {project.tones.length > 0 && ` · ${project.tones.join(' / ')}`}
             </KV>
@@ -179,7 +179,6 @@ export default function Overview() {
           />
           <dl className="divide-y divide-line px-5 py-1">
             <KV label="核心设定">{project.logline || <span className="text-ink-400">未填写，可在项目设置中补充</span>}</KV>
-            <KV label="爽点公式">{arch?.formula.trim() || <Missing to="architecture">在故事架构中生成</Missing>}</KV>
             <KV label="人物">
               {cast.length ? (
                 <>
@@ -199,20 +198,23 @@ export default function Overview() {
                 在故事架构中调整
               </Link>
             </KV>
-            <KV label="创新点">
-              {arch?.innovations.length ? (
-                <ul className="space-y-1">
-                  {arch.innovations.slice(0, 3).map((n) => (
-                    <li key={n.id}>
-                      {n.theirs && <span className="text-ink-500">{n.theirs} → </span>}
-                      {n.ours}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <Missing to="architecture">{project.benchmark ? `对标《${project.benchmark.title}》，在故事架构中逐条列出` : '在故事架构中生成'}</Missing>
-              )}
-            </KV>
+            {/* 创新点只有仿写有（11/4 第五轮：原创不要） */}
+            {hasInnovations(project) && (
+              <KV label="创新点">
+                {arch?.innovations.length ? (
+                  <ul className="space-y-1">
+                    {arch.innovations.slice(0, 3).map((n) => (
+                      <li key={n.id}>
+                        {n.theirs && <span className="text-ink-500">{n.theirs} → </span>}
+                        {n.ours}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Missing to="architecture">{project.benchmark ? `对标《${project.benchmark.title}》，在故事架构中逐条列出` : '在故事架构中生成'}</Missing>
+                )}
+              </KV>
+            )}
           </dl>
         </Card>
       </div>

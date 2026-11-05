@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ChevronLeft, CloudCheck, Copy, Download, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
+import { ChevronLeft, CloudCheck, Copy, Download, Loader2, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useMatch, useNavigate, useOutletContext, useParams } from 'react-router'
 import { ConfirmDialog, Menu } from '../../components/overlay'
@@ -13,6 +13,7 @@ import type { Project } from '../../domain/types'
 import { downloadText } from '../../lib/download'
 import { formatDateTime } from '../../lib/format'
 import { useDismiss } from '../../lib/useDismiss'
+import { useBatchRun } from '../../store/batchRun'
 import { useProject, useProjects } from '../../store/projects'
 import { toast } from '../../store/toast'
 import { useStatePanel } from '../../store/statePanel'
@@ -23,6 +24,23 @@ import { SearchX } from 'lucide-react'
 import { ScriptTree } from './script/ScriptTree'
 
 export const useCurrentProject = () => useOutletContext<Project>()
+
+/** 批量写作在后台跑：离开分集蓝图页也看得到进度，可以停 */
+function BatchChip({ project }: { project: Project }) {
+  const run = useBatchRun((s) => (s.run?.projectId === project.id ? s.run : null))
+  if (!run) return null
+  return (
+    <span data-batch-chip className="flex h-8 items-center gap-1.5 rounded-lg bg-brand-50 pr-1 pl-2.5 text-xs text-brand-700">
+      <Loader2 size={13} className="animate-spin" />
+      <Link to="stage/script" className="tabular-nums hover:underline">
+        批量写作第 {run.ep} 集（{run.i}/{run.n}）
+      </Link>
+      <button type="button" onClick={run.stop} className="rounded px-1.5 py-0.5 hover:bg-brand-100" title="停止后续集；已写出的草稿保留">
+        停止
+      </button>
+    </span>
+  )
+}
 
 const exportJson = (project: Project) => downloadText(`${project.title || 'project'}.json`, JSON.stringify(project, null, 2), 'application/json')
 
@@ -136,6 +154,7 @@ export default function ProjectLayout() {
           已自动保存 · {formatDateTime(project.updatedAt)}
         </span>
       )}
+      <BatchChip project={project} />
       {/* 模型是整个项目的选择，各环节都在页头看得到、随时可换 */}
       <ProjectModels project={project} size={isOverview ? 'md' : 'sm'} />
       <Link to="settings" className={buttonClass('secondary', isOverview ? 'md' : 'sm')}>

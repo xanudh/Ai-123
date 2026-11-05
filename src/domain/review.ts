@@ -2,18 +2,23 @@
  * 审稿依据：AI 写作和 AI 审稿对照的是同一份清单。每条审稿意见都要说清依据哪一项、依据原文是什么；
  * 说不出依据的只算建议，不拦定稿。
  */
+import { SHOW_FORESHADOW } from './pipeline'
 import type { ReviewBasis, ReviewCode, ReviewItem, ReviewItemStatus, ReviewKeep } from './types'
 
 export const REVIEW_BASIS: { key: ReviewBasis; label: string; covers: string }[] = [
-  { key: 'core', label: '核心设定', covers: '故事架构里的全局写作要求：明确不许出现的内容' },
+  { key: 'core', label: '核心设定', covers: '正文有没有偏离核心设定（主角、核心困境、反常规点）；故事架构全局写作要求里明确不许出现的内容' },
   { key: 'character', label: '人物设定', covers: '人物是否登记、主角是否有戏、台词是否符合人物性格（如寡言的人不说长句）' },
-  { key: 'state', label: '状态库', covers: '与前面已定稿的剧情一致：人物状态、道具归属、已回收的伏笔' },
+  { key: 'state', label: '状态库', covers: `与前面已定稿的剧情一致：人物状态、道具归属${SHOW_FORESHADOW ? '、已回收的伏笔' : ''}` },
   { key: 'outline', label: '集纲', covers: '本集集纲里的事件是否写进正文' },
   { key: 'blueprint', label: '蓝图', covers: '开场承接、蓝图里的出场人物' },
   { key: 'foreshadow', label: '伏笔计划', covers: '计划本集埋设 / 回收的伏笔是否写进正文' },
   { key: 'format', label: '格式与篇幅', covers: '按单集时长换算的字数、场景标题、集末钩子' },
   { key: 'style', label: '文风', covers: 'AI 味词汇、过长的台词' },
+  { key: 'bench', label: '对标剧拆解', covers: '只有仿写：对标剧人名残留、照搬对标剧台词（严重）；本集事件照抄对位集、结构偏离对标剧（建议）' },
 ]
+
+/** 审稿范围里列出的依据：伏笔这一步拿掉时不列伏笔计划（旧报告里的伏笔意见照样有标签） */
+export const reviewScope = (original: boolean) => REVIEW_BASIS.filter((x) => (x.key !== 'bench' || !original) && (x.key !== 'foreshadow' || SHOW_FORESHADOW))
 
 export const basisLabel = (b?: ReviewBasis) => REVIEW_BASIS.find((x) => x.key === b)?.label ?? ''
 
@@ -32,6 +37,11 @@ export const BASIS_OF: Record<ReviewCode, ReviewBasis | undefined> = {
   state: 'state',
   paid: 'state',
   rule: 'core',
+  drift: 'core',
+  benchName: 'bench',
+  benchLine: 'bench',
+  benchEvent: 'bench',
+  benchShape: 'bench',
   event: 'outline',
   filler: 'style',
   longLine: 'style',

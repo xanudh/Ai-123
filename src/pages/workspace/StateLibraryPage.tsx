@@ -1,5 +1,6 @@
 import { ArrowLeft, Info } from 'lucide-react'
 import { useNavigate } from 'react-router'
+import { SHOW_FORESHADOW } from '../../domain/pipeline'
 import { useCurrentProject } from './ProjectLayout'
 import StateStage from './stages/StateStage'
 
@@ -20,7 +21,7 @@ export default function StateLibraryPage() {
         <h2 className="text-lg font-semibold">剧本状态库 · 完整视图</h2>
         <p className="mt-1 flex items-start gap-1.5 text-[13px] leading-6 text-ink-500">
           <Info size={14} className="mt-[5px] shrink-0 text-ink-400" />
-          状态库已改为侧栏：在情节大纲、伏笔与线索、逐集剧本里随时展开核对。这里保留原来的完整页面，按全部定稿汇总。
+          状态库已改为侧栏：在情节大纲{SHOW_FORESHADOW ? '、伏笔与线索' : ''}、逐集剧本里随时展开核对。这里保留原来的完整页面，按全部定稿汇总。
         </p>
       </div>
       <StateStage project={project} />

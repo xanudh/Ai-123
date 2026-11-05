@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, X } from 'lucide-react'
 import { forwardRef, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
 import { useDismiss } from '../lib/useDismiss'
@@ -236,7 +236,7 @@ export function Chip({
   )
 }
 
-/** 下拉选项：value 为存档值；en 为平台英文原词，灰字显示在后面 */
+/** 下拉选项：value 为存档值；en 为英文原词（有的话灰字显示在后面） */
 export interface SelectOption {
   value: string
   en?: string
@@ -248,8 +248,8 @@ export interface SelectGroup {
 }
 
 /**
- * 多选下拉框：已选项以标签显示在框内，达到上限后其余选项禁用。
- * 选项可以分组；已选但不在选项里的旧值放在最前面，仍可取消。
+ * 多选下拉框：已选项以标签显示在框内（点 × 直接去掉），达到上限后其余选项禁用。已选但不在选项里的旧值放在最前面，仍可取消。
+ * 分组少时并排成几列，一眼看全；分组多、选项多（题材类型这种上百个）时换成左边分组、右边选项，顶上可以搜。面板靠右放不下时右对齐。
  */
 export function MultiSelect({
   value,
@@ -267,6 +267,9 @@ export function MultiSelect({
   invalid?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [alignRight, setAlignRight] = useState(false)
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
 
   useDismiss(ref, open, setOpen)
@@ -276,29 +279,145 @@ export function MultiSelect({
     else if (value.length < max) onChange([...value, o])
   }
 
-  const groups: readonly { label?: string; options: readonly SelectOption[] }[] = options.length && 'options' in options[0] ? (options as readonly SelectGroup[]) : [{ options: options as readonly SelectOption[] }]
+  const grouped = options.length > 0 && 'options' in options[0]
+  const groups: readonly { label?: string; options: readonly SelectOption[] }[] = grouped ? (options as readonly SelectGroup[]) : [{ options: options as readonly SelectOption[] }]
   const known = new Set(groups.flatMap((g) => g.options.map((o) => o.value)))
   const legacy = value.filter((v) => !known.has(v))
-  const all = legacy.length ? [{ label: '已选（不在现有选项里）', options: legacy.map((v): SelectOption => ({ value: v })) }, ...groups] : groups
+  const all = legacy.length ? [{ label: '不在选项里', options: legacy.map((v): SelectOption => ({ value: v })) }, ...groups] : groups
+  const big = grouped && (groups.length > 4 || known.size > 40)
+  // 分组少时并排成列：面板比输入框宽
+  const wide = grouped && groups.length > 1
+  const panelWidth = big ? 600 : Math.min(220 * all.length, 720)
+
+  const openPanel = () => {
+    if (!open && wide && ref.current) {
+      const rect = ref.current.getBoundingClientRect()
+      setAlignRight(rect.left + panelWidth > window.innerWidth - 16)
+    }
+    if (!open && big) {
+      setQuery('')
+      setActive(Math.max(0, all.findIndex((g) => g.options.some((o) => value.includes(o.value)))))
+    }
+    setOpen((v) => !v)
+  }
+
+  const option = (o: SelectOption, group = '', chip = false) => {
+    const selected = value.includes(o.value)
+    return (
+      <button
+        key={`${group}/${o.value}`}
+        type="button"
+        role="option"
+        aria-selected={selected}
+        disabled={!selected && value.length >= max}
+        onClick={() => toggle(o.value)}
+        className={clsx(
+          'items-center gap-2 rounded-md text-left text-[13px] disabled:cursor-not-allowed disabled:opacity-40',
+          chip ? 'inline-flex border px-2 py-0.5' : 'flex w-full px-2 py-1',
+          selected ? clsx('bg-brand-50 font-medium text-brand-700', chip && 'border-brand-300') : clsx('text-ink-700 enabled:hover:bg-canvas', chip && 'border-line'),
+        )}
+      >
+        <span className="shrink-0">{o.value}</span>
+        {o.en && <span className="min-w-0 truncate text-[11px] font-normal text-ink-400">{o.en}</span>}
+        {!chip && <span className="flex-1" />}
+        {selected && <Check size={13} strokeWidth={2.5} className="shrink-0" />}
+      </button>
+    )
+  }
+
+  const q = query.trim()
+  const matches = q ? all.map((g) => ({ ...g, options: g.label?.includes(q) ? g.options : g.options.filter((o) => o.value.includes(q)) })).filter((g) => g.options.length) : []
+  const current = all[Math.min(active, all.length - 1)]
+
+  const bigBody = (
+    <>
+      <div className="border-b border-line p-1.5">
+        <input
+          type="search"
+          aria-label="搜索选项"
+          value={query}
+          autoFocus
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`搜索 ${known.size} 个选项，或输入分组名`}
+          className="h-8 w-full rounded-md bg-canvas px-2.5 text-[13px] outline-none placeholder:text-ink-400 focus:bg-white focus:ring-2 focus:ring-brand-100"
+        />
+      </div>
+      {q ? (
+        <div data-search-results className="scrollbar-thin h-80 space-y-2 overflow-y-auto p-2">
+          {matches.length ? (
+            matches.map((g) => (
+              <div key={g.label} role="group" aria-label={g.label}>
+                <div className="px-0.5 pb-1 text-[11px] font-medium text-ink-400">{g.label}</div>
+                <div className="flex flex-wrap gap-1.5">{g.options.map((o) => option(o, g.label, true))}</div>
+              </div>
+            ))
+          ) : (
+            <p className="px-1 py-6 text-center text-[13px] text-ink-400">没有含「{q}」的选项</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex h-80">
+          <div className="scrollbar-thin w-32 shrink-0 overflow-y-auto border-r border-line p-1">
+            {all.map((g, gi) => {
+              const n = g.options.filter((o) => value.includes(o.value)).length
+              return (
+                <button
+                  key={g.label}
+                  type="button"
+                  data-group={g.label}
+                  title={g.label}
+                  aria-pressed={g === current}
+                  onClick={() => setActive(gi)}
+                  className={clsx(
+                    'flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-[13px]',
+                    g === current ? 'bg-brand-50 font-medium text-brand-700' : 'text-ink-700 hover:bg-canvas',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{g.label}</span>
+                  {n > 0 && <span className="shrink-0 rounded-full bg-brand-600 px-1.5 text-[10px] leading-4 text-white tabular-nums">{n}</span>}
+                </button>
+              )
+            })}
+          </div>
+          <div role="group" aria-label={current.label} className="scrollbar-thin min-w-0 flex-1 overflow-y-auto p-2">
+            <div className="flex flex-wrap content-start gap-1.5">{current.options.map((o) => option(o, current.label, true))}</div>
+          </div>
+        </div>
+      )}
+    </>
+  )
 
   return (
     <div ref={ref} className="relative">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={openPanel}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), openPanel())}
         className={clsx(
           inputBase,
-          'flex min-h-10 w-full items-center gap-2 py-1.5 text-left',
+          'flex min-h-10 w-full cursor-pointer items-center gap-2 py-1.5 text-left',
           invalid ? 'border-red-400 focus:border-red-500' : open ? 'border-brand-500' : 'border-line focus:border-brand-500',
         )}
       >
         <span className="flex min-w-0 flex-1 flex-wrap gap-1">
           {value.length ? (
             value.map((v) => (
-              <span key={v} className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[13px] leading-5 text-brand-700">
+              <span key={v} className="inline-flex items-center gap-0.5 rounded-md bg-brand-50 py-0.5 pr-0.5 pl-1.5 text-[13px] leading-5 text-brand-700">
                 {v}
+                <button
+                  type="button"
+                  aria-label={`去掉${v}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onChange(value.filter((x) => x !== v))
+                  }}
+                  className="rounded p-0.5 text-brand-400 hover:bg-brand-100 hover:text-brand-700"
+                >
+                  <X size={12} />
+                </button>
               </span>
             ))
           ) : (
@@ -306,41 +425,38 @@ export function MultiSelect({
           )}
         </span>
         <ChevronDown size={16} className={clsx('shrink-0 text-ink-400 transition-transform', open && 'rotate-180')} />
-      </button>
+      </div>
       {open && (
         <div
           role="listbox"
           aria-multiselectable="true"
-          className="scrollbar-thin absolute inset-x-0 top-full z-30 mt-1 max-h-72 animate-fade-in overflow-y-auto rounded-lg border border-line bg-white p-1 shadow-pop"
+          style={wide ? { width: panelWidth, maxWidth: 'calc(100vw - 2rem)' } : undefined}
+          className={clsx('absolute top-full z-30 mt-1 animate-fade-in rounded-lg border border-line bg-white shadow-pop', wide ? (alignRight ? 'right-0' : 'left-0') : 'inset-x-0')}
         >
-          {all.map((g, gi) => (
-            <div key={g.label ?? gi} role={g.label ? 'group' : undefined} aria-label={g.label}>
-              {g.label && <div className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-ink-400">{g.label}</div>}
-              {g.options.map((o) => {
-                const selected = value.includes(o.value)
-                return (
-                  <button
-                    key={o.value}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    disabled={!selected && value.length >= max}
-                    onClick={() => toggle(o.value)}
-                    className={clsx(
-                      'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] disabled:cursor-not-allowed disabled:opacity-40',
-                      selected ? 'font-medium text-brand-700' : 'text-ink-700',
-                      'enabled:hover:bg-canvas',
-                    )}
-                  >
-                    <span>{o.value}</span>
-                    {o.en && <span className="truncate text-xs font-normal text-ink-400">{o.en}</span>}
-                    <span className="flex-1" />
-                    {selected && <Check size={14} strokeWidth={2.5} className="shrink-0" />}
-                  </button>
-                )
-              })}
+          <div className="flex items-center justify-between border-b border-line px-3 py-1.5 text-xs text-ink-500">
+            <span className="tabular-nums">
+              已选 {value.length}
+              {Number.isFinite(max) && ` / ${max}`}
+              {value.length >= max && <span className="ml-1.5 text-amber-700">已到上限，去掉一个才能再选</span>}
+            </span>
+            {value.length > 0 && (
+              <button type="button" onClick={() => onChange([])} className="hover:text-ink-900">
+                清空
+              </button>
+            )}
+          </div>
+          {big ? (
+            bigBody
+          ) : (
+            <div className={clsx('scrollbar-thin max-h-80 overflow-y-auto p-1.5', wide && 'grid gap-x-2')} style={wide ? { gridTemplateColumns: `repeat(${all.length}, minmax(0, 1fr))` } : undefined}>
+              {all.map((g, gi) => (
+                <div key={g.label ?? gi} role={g.label ? 'group' : undefined} aria-label={g.label} className="min-w-0">
+                  {g.label && <div className={clsx('px-2 pt-1.5 pb-1 text-[11px] font-medium text-ink-400', wide && 'sticky top-0 bg-white')}>{g.label}</div>}
+                  {g.options.map((o) => option(o, g.label))}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>

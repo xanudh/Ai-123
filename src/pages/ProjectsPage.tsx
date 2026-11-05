@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { PageHeader } from '../components/layout/AppShell'
 import { ConfirmDialog } from '../components/overlay'
+import { ChangelogButton } from '../components/project/Changelog'
 import { ModeBadge, ProjectCard, ProjectCover, StatusBadge } from '../components/project/ProjectBits'
 import { Badge, Button, Card, EmptyState, Segmented, buttonClass } from '../components/ui'
 import { MODE_META, STATUS_META } from '../domain/constants'
@@ -65,10 +66,13 @@ export default function ProjectsPage() {
         title="我的剧本"
         desc={`共 ${projects.length} 个项目`}
         actions={
-          <Link to="/projects/new" className={buttonClass()}>
-            <Plus size={16} />
-            新建剧本
-          </Link>
+          <>
+            <ChangelogButton />
+            <Link to="/projects/new" className={buttonClass()}>
+              <Plus size={16} />
+              新建剧本
+            </Link>
+          </>
         }
       />
 

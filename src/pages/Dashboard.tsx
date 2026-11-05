@@ -11,8 +11,8 @@ import { SAMPLE_IDEAS } from '../services/ai'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
 
-/** 首页快捷题材：几家平台标签里最常见的 9 个 */
-const QUICK_GENRES = ['重生', '复仇', '霸总', '狼人', '隐藏身份', '先婚后爱', '追妻火葬场', '逆袭', '萌宝']
+/** 首页快捷题材：欧美那套题材类型里常见的 9 个（新项目默认目标市场北美） */
+const QUICK_GENRES = ['都市豪门', '契约婚姻', '真假千金博弈', '黑手党风云', '狼人传说', '吸血鬼家族', '女巫觉醒', '穿越重生', '身份反转']
 
 export default function Dashboard() {
   const navigate = useNavigate()

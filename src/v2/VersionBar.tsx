@@ -1,9 +1,10 @@
 import { Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal } from '../components/overlay'
 import { Badge, Button, Segmented } from '../components/ui'
-import { useUiVersion } from '../store/uiVersion'
+import { SHOW_V1, useUiVersion } from '../store/uiVersion'
 import type { UiVersion } from '../store/uiVersion'
+import { useBottomSlot } from './bottomSlot'
 import { CHANGES, LATER, METHOD } from './notes'
 
 function ChangeNotes({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -69,13 +70,42 @@ function ChangeNotes({ open, onClose }: { open: boolean; onClose: () => void }) 
   )
 }
 
-/** 页面最底部的版本切换：版本一为原方案，版本二为交互优化方案 */
+/** 页面最底部那一条：环节页的环节条放在这里（本环节的状态、操作和去下一步，见 StagePage 的 StageBar），没东西时整条不显示（11/4 标注 #73：去掉「版本二 · 交互优化 / 改动说明」）；版本一入口打开时这里是版本切换 */
 export function VersionBar() {
   const { version, setVersion } = useUiVersion()
   const [notes, setNotes] = useState(false)
+  const setSlot = useBottomSlot((s) => s.setEl)
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const slotBar = useCallback(
+    (el: HTMLDivElement | null) => {
+      barRef.current = el
+      setSlot(el)
+    },
+    [setSlot],
+  )
+
+  // 量出这一条的高度写进 --bottom-bar：状态库侧栏、吸顶块据此让位；整条隐藏时为 0
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const root = document.documentElement
+    const sync = () => root.style.setProperty('--bottom-bar', `${bar.offsetHeight}px`)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(bar)
+    return () => {
+      ro.disconnect()
+      root.style.removeProperty('--bottom-bar')
+    }
+  }, [version])
+
+  if (!SHOW_V1) {
+    // 比原来那条高一倍（11/4 标注 #75），内容靠左排（#74）
+    return <div ref={slotBar} data-bottom-slot aria-label="环节操作" className="flex min-h-24 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-line bg-white px-6 py-3 empty:hidden xl:px-8" />
+  }
 
   return (
-    <div className="flex h-12 shrink-0 items-center gap-3 border-t border-line bg-white px-6 xl:px-8" aria-label="界面版本">
+    <div ref={barRef} className="flex h-12 shrink-0 items-center gap-3 border-t border-line bg-white px-6 xl:px-8" aria-label="界面版本">
       <span className="text-xs text-ink-500">界面版本</span>
       <Segmented<UiVersion>
         value={version}
@@ -92,6 +122,7 @@ export function VersionBar() {
         </Button>
       )}
       <span className="hidden text-xs text-ink-400 md:inline">两个版本共用同一份项目数据，可随时切换对比</span>
+      {version === 2 && <div ref={setSlot} data-bottom-slot className="flex min-w-0 flex-1 empty:hidden" />}
       <ChangeNotes open={notes} onClose={() => setNotes(false)} />
     </div>
   )

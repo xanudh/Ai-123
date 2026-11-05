@@ -29,11 +29,6 @@ const REVISE: { mode: ReviseMode; label: string }[] = [
   { mode: 'expand', label: '扩写' },
 ]
 
-const EXTEND: { mode: ExtendMode; label: string }[] = [
-  { mode: 'continue', label: '续写' },
-  { mode: 'dialogue', label: '对话' },
-]
-
 function ToolButton({ loading, children, ...rest }: { loading?: boolean; children: ReactNode; onClick: () => void; disabled?: boolean; title?: string }) {
   return (
     <button
@@ -434,7 +429,7 @@ export function ScriptEditor({
         <div className="invisible absolute top-full right-0 z-40 w-80 pt-1.5 opacity-0 transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
           <div role="tooltip" className="rounded-lg border border-line bg-white p-3 text-left shadow-pop">
             <ul className="mb-2.5 space-y-1 border-b border-line pb-2.5 text-xs leading-5 text-ink-700">
-              {['点选一段浮出 AI 工具条：改写 / 润色 / 扩写 / 续写 / 改成对话；框选部分文字时只改选中的部分', ...(tips ?? []), '修改自动保存'].map((tip, i) => (
+              {['点选一段浮出 AI 工具条：改写 / 润色 / 扩写 / 续写；框选部分文字时只改选中的部分', ...(tips ?? []), '修改自动保存'].map((tip, i) => (
                 <li key={i} className="flex gap-1.5">
                   <span className="mt-2 size-1 shrink-0 rounded-full bg-ink-300" />
                   <span>{tip}</span>
@@ -510,11 +505,9 @@ export function ScriptEditor({
                       {r.label}
                     </ToolButton>
                   ))}
-                  {EXTEND.map((x) => (
-                    <ToolButton key={x.mode} loading={running === x.mode} disabled={!!running} title={x.mode === 'continue' ? '接着这一段往下写' : '围绕这一段补一段对白'} onClick={() => extend(l, x.mode)}>
-                      {x.label}
-                    </ToolButton>
-                  ))}
+                  <ToolButton loading={running === 'continue'} disabled={!!running} title="接着这一段往下写" onClick={() => extend(l, 'continue')}>
+                    续写
+                  </ToolButton>
                   <Divider />
                   <ToolButton title="在下方插入一段动作" onClick={() => insertAfter(l.id, [{ id: newId(), kind: 'action', zh: '△ ' }])}>
                     <ListPlus size={13} />

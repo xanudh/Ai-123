@@ -1,46 +1,62 @@
 import clsx from 'clsx'
-import { Copy, Plus, Trash2, Users } from 'lucide-react'
-import { useState } from 'react'
+import { Copy, Info, Plus, Trash2, Users } from 'lucide-react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ConfirmDialog } from '../../../components/overlay'
+import { GenerateButton, PolishButton } from '../../../components/project/PolishButton'
 import { RELATION_GROUPS, RelationGraph, RelationLegend } from '../../../components/project/RelationGraph'
+import { BasisInfo, StaleNote } from '../../../components/project/BasisInfo'
 import { AiButton, AutoTextarea, CheckList, InlineInput, RelationKindList, Table, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import type { CheckItem } from '../../../components/stage/StageKit'
 import { Button, Card, CardHeader, EmptyState, Input, Segmented, Select } from '../../../components/ui'
 import { CHARACTER_ROLES } from '../../../domain/constants'
 import { characterBio } from '../../../domain/scriptFormat'
 import type { Character, CharacterRole, Project, Relation } from '../../../domain/types'
-import { newCharacter, relationGroup } from '../../../domain/work'
-import { draftCharacters, nextSeed } from '../../../services/ai'
+import { PRINT_KEY, basisLine, downBasis, printOf } from '../../../domain/basis'
+import { parseHeroCard } from '../../../domain/cards'
+import { mergeCast, newCharacter, relationGroup } from '../../../domain/work'
+import { draftCharacterField, draftCharacters, nextSeed } from '../../../services/ai'
+import type { BioField } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
 
 const ROLE_DOT: Record<CharacterRole, string> = { 主角: 'bg-brand-500', 暧昧对象: 'bg-rose-400', 反派: 'bg-red-600', 配角: 'bg-ink-300' }
 
-type TextField = keyof Pick<Character, 'profile' | 'appearance' | 'costume' | 'lookRef' | 'personality' | 'background' | 'ability' | 'goal' | 'desire' | 'fear' | 'flaw' | 'arc' | 'notes'>
+type TextField = BioField
+
+/** basis：这一项的生成逻辑，标在名字旁的 ⓘ 和「AI 生成」的提示里；都会带上这个人物的定位和已填的名字 */
+interface FieldDef {
+  key: TextField
+  label: string
+  placeholder: string
+  basis: string
+}
 
 /** 人物小传字段；外形、服装、外形参考对应样稿小传后的三项，交给选角与美术 */
-const FIELDS: { key: TextField; label: string; placeholder: string }[] = [
-  { key: 'profile', label: '身份', placeholder: '职业、身份、外在标签' },
-  { key: 'appearance', label: '外形', placeholder: '身高身材、长相、发型、眼神、标志性细节、随身物件' },
-  { key: 'costume', label: '服装', placeholder: '可按阶段写，如「战甲（1–51 集）：前期破损沾血，后期锃亮」' },
-  { key: 'lookRef', label: '外形参考', placeholder: '参考演员、参考图链接，或对选角 / 美术的要求' },
-  { key: 'personality', label: '性格', placeholder: '核心性格与行为习惯' },
-  { key: 'background', label: '背景', placeholder: '出身、经历、与主线的关联' },
-  { key: 'ability', label: '能力', placeholder: '能力 / 金手指，以及它的代价与限制' },
+const FIELDS: FieldDef[] = [
+  { key: 'profile', label: '身份', placeholder: '职业、身份、外在标签', basis: '按定位和故事架构的核心设定、题材类型' },
+  { key: 'appearance', label: '外形', placeholder: '身高身材、长相、发型、眼神、标志性细节、随身物件', basis: '按性别、年龄、身份和风格元素' },
+  { key: 'costume', label: '服装', placeholder: '可按阶段写，如「战甲（1–51 集）：前期破损沾血，后期锃亮」', basis: '按身份和冲突主线的阶段，分阶段写' },
+  { key: 'lookRef', label: '外形参考', placeholder: '参考演员、参考图链接，或对选角 / 美术的要求', basis: '按外形、年龄和目标市场，给选角 / 美术的方向' },
+  { key: 'personality', label: '性格', placeholder: '核心性格与行为习惯', basis: '按定位和身份，和缺陷、弧光对得上' },
+  { key: 'background', label: '背景', placeholder: '出身、经历、与主线的关联', basis: '按身份和冲突主线里与这个人物有关的旧账' },
+  { key: 'ability', label: '能力', placeholder: '能力 / 金手指，以及它的代价与限制', basis: '按核心设定里的金手指和关键道具' },
 ]
 
-const MOTIVES: { key: TextField; label: string; placeholder: string }[] = [
-  { key: 'goal', label: '表面追求', placeholder: '眼下想做成的事' },
-  { key: 'desire', label: '终极渴望', placeholder: '内心真正想要的' },
-  { key: 'fear', label: '潜意识恐惧', placeholder: '最怕的事' },
+const MOTIVES: FieldDef[] = [
+  { key: 'goal', label: '表面追求', placeholder: '眼下想做成的事', basis: '按定位和冲突主线的开局' },
+  { key: 'desire', label: '终极渴望', placeholder: '内心真正想要的', basis: '按弧光的终点' },
+  { key: 'fear', label: '潜意识恐惧', placeholder: '最怕的事', basis: '按背景里的经历' },
 ]
 
-const TAIL: { key: TextField; label: string; placeholder: string }[] = [
-  { key: 'flaw', label: '缺陷', placeholder: '性格上的短板，推动冲突的根源' },
-  { key: 'arc', label: '弧光', placeholder: '从 A → B，成长核心是什么' },
-  { key: 'notes', label: '备注', placeholder: '写作注意事项、出场节奏等' },
+const TAIL: FieldDef[] = [
+  { key: 'flaw', label: '缺陷', placeholder: '性格上的短板，推动冲突的根源', basis: '按性格的短板，要能推动冲突' },
+  { key: 'arc', label: '弧光', placeholder: '从 A → B，成长核心是什么', basis: '按冲突主线从开局到结局的变化' },
+  { key: 'notes', label: '备注', placeholder: '写作注意事项、出场节奏等', basis: '按定位和出场节奏，给写作的注意事项' },
 ]
+
+/** 显示用的定位：自定义的优先 */
+const roleName = (c: Character) => c.roleLabel?.trim() || c.role
 
 /** 主角与反派必须填的项 */
 const REQUIRED: [TextField, string][] = [
@@ -74,11 +90,102 @@ function characterChecks(project: Project): CheckItem[] {
 const relationsOf = (c: Character, relations: Relation[]) =>
   relations.map((r, i) => ({ r, i, other: r.a === c.name ? r.b : r.a })).filter(({ r }) => c.name && (r.a === c.name || r.b === c.name))
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+function Row({ label, basis, children }: { label: string; basis?: string; children: ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <dt className="w-20 shrink-0 pt-2 text-[13px] text-ink-500">{label}</dt>
+      <dt className="w-24 shrink-0 pt-2 text-[13px] text-ink-500">
+        {basis ? (
+          <span className="inline-flex items-center gap-1" title={`生成逻辑：${basis}`}>
+            {label}
+            <Info size={12} className="text-ink-300" aria-label={`${label}的生成逻辑：${basis}`} />
+          </span>
+        ) : (
+          label
+        )}
+      </dt>
       <dd className="min-w-0 flex-1">{children}</dd>
+    </div>
+  )
+}
+
+const CUSTOM = '__custom'
+
+/**
+ * 定位：四个固定定位 + 本项目里自定义过的 + 「自定义」；
+ * 自定义的定位（如「女主闺蜜」）另选按哪类检查，缺主角 / 缺反派、必填项和写作都按这一类走。
+ */
+function RoleField({ c, characters, onChange }: { c: Character; characters: Character[]; onChange: (patch: Partial<Character>) => void }) {
+  const [typing, setTyping] = useState(false)
+  const cancel = useRef(false)
+  const customs = [...new Map(characters.flatMap((x) => (x.roleLabel?.trim() ? [[x.roleLabel.trim(), x.role] as const] : []))).entries()]
+  const label = c.roleLabel?.trim()
+
+  const commit = (text: string) => {
+    setTyping(false)
+    const v = text.trim()
+    if (cancel.current || !v) return void (cancel.current = false)
+    if ((CHARACTER_ROLES as string[]).includes(v)) onChange({ role: v as CharacterRole, roleLabel: undefined })
+    else onChange({ roleLabel: v })
+  }
+  const pick = (v: string) => {
+    if (v === CUSTOM) return setTyping(true)
+    if (!v.startsWith('label:')) return onChange({ role: v as CharacterRole, roleLabel: undefined })
+    const next = v.slice('label:'.length)
+    onChange({ roleLabel: next, role: customs.find(([l]) => l === next)?.[1] ?? c.role })
+  }
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-1 text-xs text-ink-500">
+        定位
+        {label && !typing && (
+          <span className="flex items-center gap-0.5" title="缺主角 / 缺反派的检查、主角与反派的必填项、AI 写作都按这一类">
+            按
+            <select aria-label="按哪类定位检查" value={c.role} onChange={(e) => onChange({ role: e.target.value as CharacterRole })} className="rounded bg-transparent text-xs text-ink-700 hover:bg-canvas focus:outline-none">
+              {CHARACTER_ROLES.map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </select>
+            检查
+          </span>
+        )}
+      </div>
+      {typing ? (
+        <Input
+          autoFocus
+          aria-label="自定义定位"
+          defaultValue={label ?? ''}
+          placeholder="如：女主闺蜜、男主母亲，回车保存"
+          className="h-9 text-[13px]"
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') {
+              e.stopPropagation()
+              cancel.current = true
+              e.currentTarget.blur()
+            }
+          }}
+        />
+      ) : (
+        <Select aria-label="定位" value={label ? `label:${label}` : c.role} onChange={(e) => pick(e.target.value)} className="h-9 text-[13px]">
+          {CHARACTER_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+          {customs.length > 0 && (
+            <optgroup label="自定义过的">
+              {customs.map(([l]) => (
+                <option key={l} value={`label:${l}`}>
+                  {l}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <option value={CUSTOM}>＋ 自定义定位…</option>
+        </Select>
+      )}
     </div>
   )
 }
@@ -87,12 +194,14 @@ function CharacterEditor({
   project,
   c,
   benchNames,
+  blocked,
   onChange,
   onRemove,
 }: {
   project: Project
   c: Character
   benchNames: string[] | null
+  blocked: boolean
   onChange: (patch: Partial<Character>) => void
   onRemove: () => void
 }) {
@@ -102,19 +211,25 @@ function CharacterEditor({
   const others = characters.filter((x) => x.id !== c.id && x.name.trim()).map((x) => x.name)
   const mine = relationsOf(c, relations)
   const setRelations = (next: Relation[]) => patchWork(project.id, { relations: next })
-  const field = (f: { key: TextField; label: string; placeholder: string }) => (
-    <Row key={f.key} label={f.label}>
-      <AutoTextarea
-        inline
-        aria-label={f.label}
-        value={c[f.key]}
-        onChange={(e) => {
-          const patch: Partial<Character> = {}
-          patch[f.key] = e.target.value
-          onChange(patch)
-        }}
-        placeholder={f.placeholder}
-      />
+  const set = (key: TextField, text: string) => {
+    const patch: Partial<Character> = {}
+    patch[key] = text
+    onChange(patch)
+  }
+  // 生成时取最新的项目和人物：刚改过的名字、定位都要算进去
+  const generate = (key: TextField) => (signal: AbortSignal) => {
+    const cur = latestProject(project.id) ?? project
+    return draftCharacterField(cur, cur.work.characters.find((x) => x.id === c.id) ?? c, key, nextSeed(), signal)
+  }
+  const field = (f: FieldDef) => (
+    <Row key={f.key} label={f.label} basis={f.basis}>
+      <div className="flex items-start gap-1">
+        <AutoTextarea inline aria-label={f.label} value={c[f.key]} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder} className="flex-1" />
+        <span className="flex shrink-0 items-center pt-0.5" data-field-ai={f.key}>
+          <GenerateButton compact value={c[f.key]} label={f.label} basis={f.basis} disabled={blocked} generate={generate(f.key)} onApply={(text) => set(f.key, text)} />
+          <PolishButton compact value={c[f.key]} label={f.label} onApply={(text) => set(f.key, text)} />
+        </span>
+      </div>
     </Row>
   )
   const copy = () =>
@@ -128,7 +243,7 @@ function CharacterEditor({
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <span className={clsx('size-2.5 shrink-0 rounded-full', ROLE_DOT[c.role])} />
         <h3 className="mr-auto text-[15px] font-semibold text-ink-900">
-          {c.role}：{c.name || '未命名'}
+          {roleName(c)}：{c.name || '未命名'}
         </h3>
         <Segmented
           value={view}
@@ -160,14 +275,7 @@ function CharacterEditor({
               <span className="mb-1 block text-xs text-ink-500">英文名</span>
               <Input aria-label="英文名" value={c.nameEn} onChange={(e) => onChange({ nameEn: e.target.value })} placeholder="英文名" className="h-9" />
             </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-ink-500">定位</span>
-              <Select aria-label="定位" value={c.role} onChange={(e) => onChange({ role: e.target.value as CharacterRole })} className="h-9 text-[13px]">
-                {CHARACTER_ROLES.map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </Select>
-            </label>
+            <RoleField c={c} characters={characters} onChange={onChange} />
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <span className="mb-1 block text-xs text-ink-500">性别</span>
@@ -196,6 +304,10 @@ function CharacterEditor({
             </label>
           )}
 
+          <p className="-mb-2 flex items-center gap-1 text-xs text-ink-400">
+            <Info size={12} />
+            每一项都可以 AI 生成、AI 润色：按这个人物的定位和故事架构来，具体按什么生成看各项名字旁的 ⓘ；已经有内容时先对比再替换
+          </p>
           <dl className="space-y-1">{FIELDS.map(field)}</dl>
 
           <div className="rounded-lg bg-canvas/70 px-3 py-2">
@@ -255,7 +367,6 @@ function CharacterEditor({
 export default function CharactersStage({ project, blocked }: { project: Project; blocked: boolean }) {
   const patchWork = useProjects((s) => s.patchWork)
   const { running, run } = useAiTask()
-  const [confirmRegen, setConfirmRegen] = useState(false)
   const [removing, setRemoving] = useState<Character | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [graphView, setGraphView] = useState<'graph' | 'table'>('graph')
@@ -263,14 +374,27 @@ export default function CharactersStage({ project, blocked }: { project: Project
   const selected = characters.find((c) => c.id === selectedId) ?? characters[0]
   const benchNames = project.mode !== 'original' && project.work.breakdown ? project.work.breakdown.characters.map((c) => c.name) : null
 
+  // 已有人物时「重新生成」只补不换：已有的人物和填过的内容都不动，只补缺的角色、空着的项和关系
   const generate = async () => {
     const cur = latestProject(project.id)
     if (!cur) return
     const result = await run('characters', (signal) => draftCharacters(cur, nextSeed(), signal))
     if (!result) return
-    patchWork(project.id, result, `AI 生成人物设定：${result.characters.length} 个角色`)
-    setSelectedId(null)
-    toast('人物已生成，名字与设定都可直接修改')
+    const now = latestProject(project.id) ?? cur
+    // 记下这次按的依据；主角人设写成人物卡的，记拆卡时间，之后主角以人物设定为准
+    const prints = { ...now.work.prints, [PRINT_KEY.characters]: printOf(now, downBasis(now, 'characters').deps) }
+    const a = now.work.architecture
+    const split = a && parseHeroCard(a.heroSetup) ? { architecture: { ...a, heroSplitAt: new Date().toISOString() } } : {}
+    if (!now.work.characters.length) {
+      patchWork(project.id, { ...result, prints, ...split }, `AI 生成人物设定：${result.characters.length} 个角色${'architecture' in split ? '（主角按人物卡拆）' : ''}`)
+      setSelectedId(null)
+      return toast('人物已生成，名字与设定都可直接修改')
+    }
+    const m = mergeCast(now.work, result)
+    const parts = [m.added && `${m.added} 个人物`, m.filled && `${m.filled} 项空着的设定`, m.linked && `${m.linked} 条关系`].filter(Boolean)
+    if (!parts.length) return toast('人物都已齐全，没有要补的；已有内容不会被替换', 'info')
+    patchWork(project.id, { characters: m.characters, relations: m.relations, prints, ...split }, `AI 补充人物设定：补上 ${parts.join('、')}`)
+    toast(`已补上 ${parts.join('、')}；已有的人物和内容都没动`)
   }
 
   const update = (id: string, patch: Partial<Character>) => {
@@ -320,12 +444,24 @@ export default function CharactersStage({ project, blocked }: { project: Project
                   添加人物
                 </Button>
               )}
-              <AiButton variant={characters.length ? 'secondary' : 'primary'} loading={running === 'characters'} disabled={blocked} onClick={() => (characters.length ? setConfirmRegen(true) : generate())}>
+              <AiButton
+                variant={characters.length ? 'secondary' : 'primary'}
+                loading={running === 'characters'}
+                disabled={blocked}
+                onClick={generate}
+                title={`${characters.length ? '保留已有的人物和填过的内容，只补缺的角色、空着的项和关系。' : ''}生成逻辑：${basisLine(downBasis(project, 'characters'))}`}
+              >
                 {characters.length ? '重新生成' : 'AI 生成人物'}
               </AiButton>
+              <BasisInfo title="人物设定" row={downBasis(project, 'characters')} align="right" />
             </div>
           }
         />
+        {characters.length > 0 && (
+          <div className="border-b border-line px-5 py-2.5 empty:hidden">
+            <StaleNote project={project} printKey={PRINT_KEY.characters} deps={downBasis(project, 'characters').deps} action="点「重新生成」补空着的项，或直接改小传" />
+          </div>
+        )}
         {characters.length && selected ? (
           <>
             <div className="border-b border-line px-5 py-3">
@@ -343,7 +479,7 @@ export default function CharactersStage({ project, blocked }: { project: Project
                       <span className="min-w-0">
                         <span className={clsx('block truncate text-[13px] font-medium', c.id === selected.id ? 'text-brand-700' : 'text-ink-900')}>{c.name || '未命名'}</span>
                         <span className="block truncate text-xs text-ink-500">
-                          {c.role}
+                          {roleName(c)}
                           {c.profile && ` · ${c.profile}`}
                         </span>
                       </span>
@@ -351,7 +487,7 @@ export default function CharactersStage({ project, blocked }: { project: Project
                   </li>
                 ))}
               </ul>
-              <CharacterEditor key={selected.id} project={project} c={selected} benchNames={benchNames} onChange={(patch) => update(selected.id, patch)} onRemove={() => setRemoving(selected)} />
+              <CharacterEditor key={selected.id} project={project} c={selected} benchNames={benchNames} blocked={blocked} onChange={(patch) => update(selected.id, patch)} onRemove={() => setRemoving(selected)} />
             </div>
           </>
         ) : (
@@ -416,14 +552,6 @@ export default function CharactersStage({ project, blocked }: { project: Project
         </Card>
       )}
 
-      <ConfirmDialog
-        open={confirmRegen}
-        onClose={() => setConfirmRegen(false)}
-        onConfirm={generate}
-        title="重新生成人物？"
-        desc="当前人物与关系网会被替换；已写的大纲和剧本不会自动改名。"
-        confirmText="重新生成"
-      />
       <ConfirmDialog
         open={!!removing}
         onClose={() => setRemoving(null)}

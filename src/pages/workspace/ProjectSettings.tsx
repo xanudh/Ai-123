@@ -3,10 +3,9 @@ import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ConfirmDialog, UnsavedChangesPrompt } from '../../components/overlay'
 import { MODE_ICON } from '../../components/project/ProjectBits'
-import { BasicSection, ScriptUploadField, SpecSection, StorySection } from '../../components/project/ProjectForm'
+import { BasicSection, ScriptUploadField, SpecSection, StorySummary } from '../../components/project/ProjectForm'
 import { Button, Card } from '../../components/ui'
 import { MODE_META } from '../../domain/constants'
-import { rhythmForTotal } from '../../domain/rhythm'
 import type { Project, ProjectDraft } from '../../domain/types'
 import { hasErrors, validateAll, withSpecDefaults } from '../../domain/validate'
 import { useProjects } from '../../store/projects'
@@ -19,7 +18,6 @@ const toDraft = (p: Project): ProjectDraft => ({
   titleEn: p.titleEn,
   idea: p.idea,
   logline: p.logline,
-  category: p.category,
   genres: p.genres,
   audience: p.audience,
   tones: p.tones,
@@ -71,8 +69,6 @@ export default function ProjectSettings() {
       titleEn: draft.titleEn.trim(),
       idea: draft.idea.trim(),
       logline: draft.logline.trim(),
-      // 节奏框架在故事架构中编辑，这里只随总集数同步
-      rhythm: rhythmForTotal(project.rhythm, project.spec.totalEpisodes, filled.spec.totalEpisodes),
     }
     if (draftChanged) updateProject(project.id, clean, '更新项目设置')
     // 与对标剧拆解里的“重新导入”一致：换了剧本，旧拆解作废
@@ -131,7 +127,7 @@ export default function ProjectSettings() {
       </Card>
 
       <Card className="p-6">
-        <StorySection draft={draft} patch={patch} errors={shownErrors} />
+        <StorySummary draft={draft} editTo={`/projects/${project.id}/stage/architecture`} />
       </Card>
 
       <Card className="p-6">

@@ -4,30 +4,18 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../components/overlay'
 import { MODE_ICON } from '../components/project/ProjectBits'
-import { BasicSection, ScriptUploadField, SpecSection, StorySection } from '../components/project/ProjectForm'
+import { BasicSection, ScriptUploadField, SpecSection } from '../components/project/ProjectForm'
 import { Badge, Button, Card, Field } from '../components/ui'
-import { EPISODE_RANGE, EPISODE_SECONDS, GENRES, MODE_META, PALETTES } from '../domain/constants'
+import { ALL_THEMES, EPISODE_RANGE, EPISODE_SECONDS, MODE_META, PALETTES } from '../domain/constants'
 import { defaultRhythm } from '../domain/rhythm'
 import type { ProjectDraft, ProjectMode, SourceScript } from '../domain/types'
 import { hasErrors, validateAll, withSpecDefaults } from '../domain/validate'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
 
-/** 按一句话灵感里的关键词预选类型，猜不到就用“都市” */
-const CATEGORY_HINTS: [RegExp, string][] = [
-  [/修仙|仙门|仙尊|渡劫|宗门|飞升/, '仙侠'],
-  [/斗气|玄幻|斗破|异世|魔法|血脉|觉醒/, '玄幻'],
-  [/星际|机甲|AI|人工智能|未来|穿越时空/, '科幻'],
-  [/末日|末世|丧尸|天灾/, '末世'],
-  [/皇|王爷|宫|侯府|嫡女|古代/, '古装'],
-  [/凶手|命案|悬疑|侦探|失踪/, '悬疑'],
-  [/年代|七十年代|八十年代|知青/, '年代'],
-  [/校园|高中|大学|同桌/, '校园'],
-]
-
 function initialDraft(params: URLSearchParams): ProjectDraft {
   const mode = (['original', 'adaptation', 'video'] as const).find((m) => m === params.get('mode')) ?? 'original'
-  const genres = (params.get('genres') ?? '').split(',').filter((g) => GENRES.some((o) => o.value === g))
+  const genres = (params.get('genres') ?? '').split(',').filter((g) => ALL_THEMES.has(g))
   // 首页输入的一句话保留为原始灵感，同时预填到核心设定供继续打磨
   const idea = params.get('idea') ?? ''
   return {
@@ -36,13 +24,12 @@ function initialDraft(params: URLSearchParams): ProjectDraft {
     titleEn: '',
     idea,
     logline: idea,
-    category: CATEGORY_HINTS.find(([re]) => re.test(idea))?.[1] ?? '都市',
     genres,
-    audience: 'female',
+    audience: '',
     tones: [],
     markets: ['北美'],
     platforms: [],
-    spec: { totalEpisodes: EPISODE_RANGE.default, episodeSeconds: EPISODE_SECONDS.default, aspectRatio: '9:16', language: 'en_zh' },
+    spec: { totalEpisodes: EPISODE_RANGE.default, episodeSeconds: EPISODE_SECONDS.default, language: 'en_zh' },
     rhythm: defaultRhythm(EPISODE_RANGE.default),
     benchmark: mode === 'original' ? null : { title: '', platform: 'ReelShort', url: '', episodes: null, notes: '' },
     palette: Math.floor(Math.random() * PALETTES.length),
@@ -160,7 +147,7 @@ export default function NewProjectPage() {
         返回
       </button>
       <h1 className="text-[26px] font-semibold tracking-tight">新建剧本</h1>
-      <p className="mt-1 text-sm text-ink-500">整页填完三部分，点「创建剧本」即可；之后在项目工作台中推进对标剧拆解、故事架构、情节大纲与逐集剧本。</p>
+      <p className="mt-1 text-sm text-ink-500">填完下面两部分，点「创建剧本」即可。类型、题材、核心设定、集数与时长立项后在「故事架构」里填，之后再推进情节大纲与逐集剧本。</p>
 
       <div className="mt-6 space-y-5">
         <Card className="p-6">
@@ -175,10 +162,7 @@ export default function NewProjectPage() {
           />
         </Card>
         <Card className="p-6">
-          <StorySection index={2} draft={draft} patch={patch} errors={shownErrors} />
-        </Card>
-        <Card className="p-6">
-          <SpecSection index={3} draft={draft} patch={patch} errors={shownErrors} />
+          <SpecSection index={2} draft={draft} patch={patch} errors={shownErrors} />
         </Card>
       </div>
 

@@ -1,83 +1,61 @@
-import type { Audience, CharacterRole, DraftStatus, ForeshadowType, HookType, PlanEventKind, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
+import { GENRE_OPTIONS, type GenreRegion } from './genreOptions'
+import type { Audience, CharacterRole, DraftStatus, ForeshadowType, HeroDetailKey, HookType, PlanEventKind, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
 
-/** 平台原生标签：value 为中文名（存档与 AI 用），en 为平台上的英文原词 */
-export interface TagOption {
-  value: string
-  en: string
-}
-
+/** 下拉框的一组选项 */
 export interface TagGroup {
   label: string
-  options: TagOption[]
+  options: { value: string }[]
 }
 
-const tags = (list: [string, string][]) => list.map(([value, en]) => ({ value, en }))
-
 /*
- * 类型 / 题材元素 / 风格基调对齐海外短剧平台的原生分类（2026-10 交叉核对）：
- * 以 FlexTV「全部短剧」筛选为骨架（类型 / 时代 / 情节 / 关系 / 角色五行，与收到的中文截图一致），
- * 再用 ReelShort（Story Beats / Identities / Moods）、DramaBox（Genres）、GoodShort（Genres / Tags）、
- * NetShort（All plots）、ShortMax（Genres）核对：至少两家平台都有的标签才收录，英文为平台原词。
+ * 题材类型 / 风格元素（11/4 起）：选项取自 StoryPlay，跟着目标市场走——选了日韩用日韩那套（日本、韩国清洗后合并），
+ * 其余市场用欧美那套，两种都选了两套都给。存档仍是 genres（题材类型）和 tones（风格元素）两个字段；原来的「类型」不再显示、不再读。
+ * 选项由 scripts/storyplay-clean.mjs 生成在 genreOptions.ts。
  */
+export const GENRE_REGION_LABEL: Record<GenreRegion, string> = { west: '欧美', jpkr: '日韩' }
 
-/** 类型：故事的大类，单选。对应 FlexTV 第一行与 GoodShort / ShortMax 的 Genres */
-export const CATEGORIES: TagOption[] = tags([
-  ['都市', 'Urban'], ['言情', 'Romance'], ['奇幻', 'Fantasy'], ['悬疑', 'Suspense'], ['古装', 'Historical'],
-  ['家庭', 'Family'], ['玄幻', 'Cultivation'], ['灵异', 'Supernatural'], ['科幻', 'Sci-Fi'], ['末世', 'Apocalypse'],
-  ['武侠', 'Martial Arts'], ['职场', 'Workplace'], ['青春', 'Youth'], ['成长', 'Coming-of-Age'], ['惊悚', 'Thriller'],
-])
+/** 目标市场 → 用哪几套选项 */
+export function genreRegions(markets: readonly string[]): GenreRegion[] {
+  const jpkr = markets.includes('日韩')
+  const west = !jpkr || markets.some((m) => m !== '日韩')
+  return [...(west ? (['west'] as const) : []), ...(jpkr ? (['jpkr'] as const) : [])]
+}
 
-/** 题材元素：平台上的剧情标签，按人设身份 / 情感关系 / 情节套路分组，最多选 MAX_GENRES 个 */
-export const GENRE_GROUPS: TagGroup[] = [
-  {
-    label: '人设身份',
-    options: tags([
-      ['霸总', 'CEO'], ['豪门', 'Rich Family'], ['神豪', 'Billionaire'], ['狼人', 'Werewolf'], ['吸血鬼', 'Vampire'],
-      ['黑帮', 'Mafia'], ['战神', 'War God'], ['赘婿', 'Son-in-Law'], ['神医', 'Miracle Doctor'], ['萌宝', 'Genius Babies'],
-      ['龙族', 'Dragon'], ['大女主', 'Strong Female Lead'],
-    ]),
-  },
-  {
-    label: '情感关系',
-    options: tags([
-      ['闪婚', 'Flash Marriage'], ['先婚后爱', 'Love After Marriage'], ['契约婚姻', 'Contract Marriage'], ['替嫁', 'Substitute Bride'], ['真假千金', 'Real vs Fake Heiress'],
-      ['年上年下', 'Age Gap'], ['破镜重圆', 'Second Chance'], ['追妻火葬场', 'All-Too-Late'], ['离婚后爱', 'Love After Divorce'], ['冤家变恋人', 'Enemies to Lovers'],
-      ['三角恋', 'Love Triangle'], ['禁忌之恋', 'Forbidden Love'], ['强制爱', 'Toxic Love'], ['一夜情', 'One-Night Stand'], ['灵魂互换', 'Freaky Friday'],
-    ]),
-  },
-  {
-    label: '情节套路',
-    options: tags([
-      ['重生', 'Rebirth'], ['穿越', 'Time Travel'], ['复仇', 'Revenge'], ['隐藏身份', 'Hidden Identity'], ['马甲', 'Multiple Identities'],
-      ['逆袭', 'Underdog Rise'], ['强者回归', 'Comeback'], ['灰姑娘', 'Cinderella'], ['团宠', 'Group Favorite'], ['超能力', 'Super Power'],
-      ['系统', 'System'], ['读心', 'Mind Reading'], ['失忆', 'Memory Loss'], ['宫斗', 'Palace Scheming'], ['商战', 'Corporate Warfare'],
-    ]),
-  },
-]
+const groupsOf = (markets: readonly string[], field: 'themes' | 'styles'): TagGroup[] => {
+  const regions = genreRegions(markets)
+  return regions.flatMap((r) =>
+    Object.entries(GENRE_OPTIONS[r][field]).map(([label, list]) => ({
+      label: regions.length > 1 ? `${GENRE_REGION_LABEL[r]} · ${label}` : label,
+      options: list.map((value) => ({ value })),
+    })),
+  )
+}
 
-export const GENRES = GENRE_GROUPS.flatMap((g) => g.options)
+/** 题材类型：按目标市场给选项，最多 MAX_GENRES 个；原创必选 */
+export const themeGroups = (markets: readonly string[]) => groupsOf(markets, 'themes')
 
-export const MAX_GENRES = 4
+/** 风格元素：风格（看完什么感觉）+ 元素（服饰、道具、场景），最多 MAX_TONES 个 */
+export const styleGroups = (markets: readonly string[]) => groupsOf(markets, 'styles')
 
-/** 风格基调：看完是什么感觉，最多 MAX_TONES 个。对应 FlexTV「情节」行里的情绪标签与 ReelShort Moods */
-export const TONES: TagOption[] = tags([
-  ['打脸', 'Clapback'], ['甜宠', 'Sweet Romance'], ['虐恋', 'Love-Torture'], ['治愈', 'Feel-Good'], ['喜剧', 'Comedy'],
-  ['励志', 'Inspirational'], ['反转', 'Plot Twist'], ['热血', 'Action'], ['权谋', 'Power Play'],
-])
+/** 所有题材类型（两套都算），首页带过来的题材按它过滤 */
+export const ALL_THEMES = new Set(Object.values(GENRE_OPTIONS).flatMap((o) => Object.values(o.themes).flat()))
 
-export const MAX_TONES = 3
+export const MAX_GENRES = 3
 
-/** 改版前的选项 → 现在的平台标签；旧项目读档时换过来，对不上的保留原值 */
+export const MAX_TONES = 5
+
+/** v7 迁移用：10/30 改版前的选项 → 当时的平台标签；旧项目读档时换过来，对不上的保留原值 */
 export const LEGACY_TAGS: Record<'category' | 'genres' | 'tones', Record<string, string>> = {
   category: { 仙侠: '玄幻', 历史: '古装', 校园: '青春' },
   genres: { 黑手党: '黑帮' },
   tones: { 爽感: '打脸', 虐心: '虐恋', 搞笑: '喜剧', 悬疑: '反转' },
 }
 
-export const AUDIENCES: { value: Audience; label: string; hint: string }[] = [
-  { value: 'female', label: '女频', hint: '情感线主导' },
-  { value: 'male', label: '男频', hint: '逆袭打脸主导' },
-  { value: 'all', label: '全年龄', hint: '家庭 / 悬疑' },
+// 只写男频 / 女频 / 全年龄，后面不加说明，免得引起歧义
+export const AUDIENCES: { value: Audience; label: string }[] = [
+  { value: 'female', label: '女频' },
+  { value: 'male', label: '男频' },
+  { value: 'all', label: '全年龄' },
 ]
 
 export const MARKETS = ['北美', '东南亚', '拉美', '欧洲', '中东', '日韩'] as const
@@ -93,7 +71,8 @@ export const LANGUAGES: { value: ScriptLanguage; label: string; hint: string }[]
 /** 单集时长（秒） */
 export const EPISODE_SECONDS = { min: 30, max: 300, default: 90 } as const
 
-export const EPISODE_RANGE = { min: 20, max: 120, default: 70 } as const
+/** 总集数：最少 1 集、最多 1000 集，新项目默认 20 集（11/4 标注 #80） */
+export const EPISODE_RANGE = { min: 1, max: 1000, default: 20 } as const
 
 /** 英文对白语速（词 / 分钟），用于估算单集台词量 */
 export const SPEECH_WPM = 150
@@ -157,6 +136,26 @@ export const RELATION_KINDS = [
   '同学', '同门', '室友', '闺蜜', '朋友', '盟友', '合作伙伴', '上下级', '主仆', '师徒',
   '宿敌', '仇人', '对手',
 ] as const
+
+/**
+ * 金手指分类：页面上不再标类型（对标剧拆解 11/4 第二轮、故事架构 11/4 第五轮标注），只讲清能力是什么；
+ * 拆解时用它挑出有哪几项能力，故事架构生成时用 layer 写「核心能力」每一条的结尾（如「这是其物理层面的硬金手指」）
+ */
+export const GOLDEN_FINGER_KINDS = [
+  { label: '力量型', layer: '物理层面', desc: '超能力、异能、血脉觉醒、体质改造' },
+  { label: '武力型', layer: '物理层面', desc: '武功、格斗、兵王战力，能打' },
+  { label: '幸运型', layer: '运气层面', desc: '幸运值、气运、天降机缘' },
+  { label: '身份型', layer: '社会层面', desc: '隐藏身份、血统、地位' },
+  { label: '财富型', layer: '社会层面', desc: '财富、资源、权力，能调动的钱和人' },
+  { label: '智谋型', layer: '能力层面', desc: '洞察、专业技能（医术、商业、鉴宝）' },
+  { label: '系统型', layer: '外挂层面', desc: '系统、空间、签到、任务奖励' },
+  { label: '先知型', layer: '信息层面', desc: '重生、预知、读心，靠信息差' },
+] as const
+
+export type GoldenFingerKind = (typeof GOLDEN_FINGER_KINDS)[number]['label']
+
+/** 对标剧拆解里主角另拆的几项（11/4 标注：主角要拆细），按页面顺序 */
+export const HERO_DETAIL: HeroDetailKey[] = ['intro', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']
 
 export const FORESHADOW_TYPES: ForeshadowType[] = ['人物秘密', '隐藏身份', '关键道具', '前情恩怨', '叙事线索']
 

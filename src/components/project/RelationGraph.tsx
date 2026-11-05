@@ -25,8 +25,11 @@ const W = 640
 const H = 380
 const R = 28
 
+/** 关系图只用人物的 id、名字和定位：人物设定传 Character，拆解传对标剧人物 */
+export type GraphPerson = Pick<Character, 'id' | 'name' | 'role'>
+
 interface Node {
-  c: Character
+  c: GraphPerson
   x: number
   y: number
 }
@@ -43,7 +46,7 @@ interface Edge {
 }
 
 /** 主角居中，其余人物按定位顺序排在椭圆上（从正上方顺时针） */
-function layout(characters: Character[]): Node[] {
+function layout(characters: GraphPerson[]): Node[] {
   const named = characters.filter((c) => c.name.trim())
   const sorted = [...named].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role))
   const center = sorted.length >= 3 && sorted[0].role === '主角' ? sorted[0] : null
@@ -127,7 +130,7 @@ export function RelationGraph({
   selectedId,
   onSelect,
 }: {
-  characters: Character[]
+  characters: GraphPerson[]
   relations: Relation[]
   selectedId?: string
   onSelect?: (id: string) => void

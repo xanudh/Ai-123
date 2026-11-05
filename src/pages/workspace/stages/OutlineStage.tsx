@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ConfirmDialog } from '../../../components/overlay'
 import { CheckLink, CheckTab, useCheckTab } from '../../../components/project/CheckTab'
+import { PolishButton } from '../../../components/project/PolishButton'
+import { BasisInfo, StaleNote } from '../../../components/project/BasisInfo'
+import { alignEp, alignLabel } from '../../../domain/align'
+import { PRINT_KEY, basisLine, downBasis, printOf } from '../../../domain/basis'
 import { AiButton, AutoTextarea, CheckList, InlineInput, latestProject, useAiTask } from '../../../components/stage/StageKit'
 import type { CheckItem } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, Select } from '../../../components/ui'
@@ -74,6 +78,7 @@ function EpisodeBlock({
   generate: { loading: boolean; disabled: boolean; hint?: string; onClick: () => void }
 }) {
   const paywall = project.rhythm.paywalls.includes(ep)
+  const aligned = alignEp(project, ep)
   return (
     <div
       id={`outline-ep-${ep}`}
@@ -88,6 +93,7 @@ function EpisodeBlock({
           <span className="text-[13px] text-ink-300">未生成</span>
         )}
         <PositionBadge ep={ep} project={project} />
+        {aligned.length > 0 && <AlignChip project={project} eps={aligned} />}
         <div className="ml-auto flex items-center gap-3">
           {o && paywall && (
             <label className="flex items-center gap-1.5 text-xs whitespace-nowrap">
@@ -105,11 +111,12 @@ function EpisodeBlock({
           >
             {o ? '重新生成集纲' : '生成集纲'}
           </AiButton>
+          {o && <PolishButton value={o.event} label={`第 ${ep} 集集纲`} onApply={(event) => onChange({ event })} />}
         </div>
       </div>
       {o && (
         <div className="mt-1.5 space-y-1">
-          <AutoTextarea inline aria-label={`第 ${ep} 集集纲`} value={o.event} onChange={(e) => onChange({ event: e.target.value })} placeholder="本集发生什么" />
+          <AutoTextarea inline aria-label={`第 ${ep} 集集纲`} value={o.event} onChange={(e) => onChange({ event: e.target.value })} placeholder="写成一段：本集发生什么 → 主角怎么应对、为什么 → 推进到哪" />
           <div className="flex items-start gap-1">
             <span className="shrink-0 pt-1.5 pl-2 text-[13px] text-ink-500">集末钩子：</span>
             <Select aria-label={`第 ${ep} 集钩子类型`} value={o.hook} onChange={(e) => onChange({ hook: e.target.value as HookType })} className="h-8 w-28 shrink-0 px-2 text-[13px]">
@@ -122,6 +129,37 @@ function EpisodeBlock({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * 仿写的对位集：我们这一集 ≈ 对标剧第几集（先对段、段内先对节点、其余按比例）。
+ * 点开看那一两集拆解出的力度和钩子；生成集纲时只学力度和形式（冲突、情绪、付费点、钩子），不学事件。
+ */
+function AlignChip({ project, eps }: { project: Project; eps: number[] }) {
+  const rows = project.work.breakdown?.episodes.filter((e) => eps.includes(e.ep)) ?? []
+  return (
+    <span className="group relative">
+      <button type="button" data-align className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 ring-1 ring-violet-200 ring-inset hover:bg-violet-100">
+        对位：{alignLabel(eps)}
+      </button>
+      <span
+        role="tooltip"
+        className="invisible absolute top-full left-0 z-40 mt-1 w-96 rounded-lg border border-line bg-white p-3 text-xs leading-5 opacity-0 shadow-pop transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
+      >
+        <span className="mb-1 block text-[13px] font-medium text-ink-900">{alignLabel(eps)} · 拆解</span>
+        <span className="mb-1.5 block text-ink-500">学力度和形式，不学事件；本集事件来自我们自己的阶段粗纲</span>
+        {rows.map((r) => (
+          <span key={r.ep} className="mb-1.5 block border-t border-line pt-1.5 text-ink-700">
+            <span className="font-medium">第 {r.ep} 集</span>：冲突 {r.conflict} · 情绪 {r.emotion}
+            {r.paywall && ' · 付费卡点'}
+            <span className="block text-ink-500">开场钩子：{r.openHook}</span>
+            <span className="block text-ink-500">结尾钩子：{r.endHook}</span>
+            {(r.plant || r.payoff) && <span className="block text-ink-500">伏笔：{[r.plant && `埋 ${r.plant}`, r.payoff && `收 ${r.payoff}`].filter(Boolean).join('；')}</span>}
+          </span>
+        ))}
+      </span>
+    </span>
   )
 }
 
@@ -176,6 +214,13 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const checks = outlineChecks(project)
   useCheckTab(checks)
 
+  /** 记下总纲 / 各段粗纲这次按的依据：上游改了就提示「依据已改」 */
+  const stampPrints = (cur: Project, which: ('overview' | number)[]) => {
+    const prints = { ...cur.work.prints }
+    for (const w of which) prints[w === 'overview' ? PRINT_KEY.overview : PRINT_KEY.phase(w)] = printOf(cur, downBasis(cur, w === 'overview' ? 'overview' : 'phase').deps)
+    return prints
+  }
+
   /** 只生成总纲（全剧总览），各段粗纲不动 */
   const generateOverview = async () => {
     const cur = latestProject(project.id)
@@ -183,7 +228,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     const result = await run('overview', (signal) => draftPlot(cur, signal))
     if (!result) return
     const latest = latestProject(project.id)?.work.plot
-    patchWork(project.id, { plot: { overview: result.overview, phases: latest?.phases ?? ranges.map(() => '') } }, '生成情节大纲：全剧总纲')
+    patchWork(project.id, { plot: { overview: result.overview, phases: latest?.phases ?? ranges.map(() => '') }, prints: stampPrints(cur, ['overview']) }, '生成情节大纲：全剧总纲')
     toast('总纲已生成，各段粗纲未改动')
   }
 
@@ -195,7 +240,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     if (!result) return
     const latest = latestProject(project.id)?.work.plot
     const phases = ranges.map((_, k) => (k === i ? result.phases[i] : (latest?.phases[k] ?? '')))
-    patchWork(project.id, { plot: { overview: latest?.overview ?? '', phases } }, `生成情节大纲：${names[i]}粗纲`)
+    patchWork(project.id, { plot: { overview: latest?.overview ?? '', phases }, prints: stampPrints(latestProject(project.id) ?? cur, [i]) }, `生成情节大纲：${names[i]}粗纲`)
     toast(`「${names[i]}」粗纲已生成，可直接修改`)
     setLevel({ kind: 'phase', index: i })
   }
@@ -242,7 +287,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         const merged: Plot = old
           ? { overview: old.overview.trim() ? old.overview : fresh.overview, phases: fresh.phases.map((t, i) => old.phases[i]?.trim() || t) }
           : fresh
-        patchWork(project.id, { plot: merged }, '生成情节大纲：全剧总览与阶段粗纲')
+        patchWork(project.id, { plot: merged, prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '生成情节大纲：全剧总览与阶段粗纲')
       }
       // 逐段补齐：每段内连续缺失的集一次生成，开场承接上一集的钩子
       for (const [a, b] of projectPhases(cur)) {
@@ -274,7 +319,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     const done = await run('all', async (signal) => {
       let cur = latestProject(project.id)
       if (!cur) return false
-      patchWork(project.id, { plot: await draftPlot(cur, signal) }, '重新生成情节大纲：总纲与各段粗纲')
+      patchWork(project.id, { plot: await draftPlot(cur, signal), prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '重新生成情节大纲：总纲与各段粗纲')
       for (const [a, b] of projectPhases(cur)) {
         cur = latestProject(project.id)
         if (!cur) return false
@@ -422,12 +467,18 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                 variant={hasOverview ? 'secondary' : 'primary'}
                 loading={running === 'overview'}
                 disabled={blocked || !!running}
-                title="只生成全剧总览（总纲），各段粗纲不动"
+                title={`只生成全剧总览（总纲），各段粗纲不动。生成逻辑：${basisLine(downBasis(project, 'overview'))}`}
                 onClick={() => (hasOverview ? setConfirm('overview') : generateOverview())}
               >
                 {hasOverview ? '重新生成总纲' : '生成总纲'}
               </AiButton>
+              <BasisInfo title="全剧总览" row={downBasis(project, 'overview')} align="right" />
             </div>
+            {hasOverview && (
+              <div className="mb-2 empty:hidden">
+                <StaleNote project={project} printKey={PRINT_KEY.overview} deps={downBasis(project, 'overview').deps} action="点「重新生成总纲」，或直接改" />
+              </div>
+            )}
             <div className="rounded-lg bg-canvas p-1">
               <AutoTextarea
                 inline
@@ -436,7 +487,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                 minRows={6}
                 value={plot?.overview ?? ''}
                 onChange={(e) => setPlot({ overview: e.target.value })}
-                placeholder="先总览整部剧：一句话故事、叙事线架构（主线 / 感情线 / 反派线）、视角规则、爽点与付费节奏、结局走向"
+                placeholder="先用【故事简介】一段话讲完这个故事（主角处境 → 谁怎么逼主角 → 转机 → 高潮 → 结局），再写叙事线架构（主线 / 感情线 / 反派线）、视角规则、爽点与付费节奏"
                 className="font-mono text-[12.5px] leading-6"
               />
             </div>
@@ -473,7 +524,13 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                     >
                       {has ? '重新生成集纲' : '一键集纲'}
                     </AiButton>
+                    <BasisInfo title="阶段粗纲 / 集纲" row={{ ...downBasis(project, 'phase'), must: [...downBasis(project, 'phase').must, ...downBasis(project, 'episode').must.map((x) => `集纲：${x}`)] }} align="right" />
                   </div>
+                  {rough && (
+                    <div className="mt-2 empty:hidden">
+                      <StaleNote project={project} printKey={PRINT_KEY.phase(i)} deps={downBasis(project, 'phase').deps} action="点「重新生成粗纲」，或直接改" />
+                    </div>
+                  )}
                   <div className="mt-2">
                     <div className="mb-1 text-xs font-medium text-ink-500">阶段粗纲</div>
                     <AutoTextarea
@@ -483,7 +540,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                       minRows={2}
                       value={plot?.phases[i] ?? ''}
                       onChange={(e) => setPlot({ phases: ranges.map((_, k) => (k === i ? e.target.value : (plot?.phases[k] ?? ''))) })}
-                      placeholder="这一阶段的剧情走向、关键节点与伏笔推进"
+                      placeholder="先写这一段的剧情概况，再写冲突主线、关键节点、金手指"
                       className="bg-white"
                     />
                   </div>

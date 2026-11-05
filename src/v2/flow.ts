@@ -2,11 +2,11 @@
  * 版本二：把散在各环节的状态汇总成「环节进度 / 单集流程 / 待办 / 下一步」。
  * 只读计算，不新增数据——版本一与版本二用的是同一份项目数据。
  */
-import { MODE_STAGES, STAGES } from '../domain/pipeline'
+import { MODE_STAGES, SHOW_FORESHADOW, STAGES } from '../domain/pipeline'
 import { isStuck } from '../domain/review'
 import { overallSnapshot } from '../domain/snapshot'
 import type { EpisodeDraft, Project, StageKey } from '../domain/types'
-import { blueprintOf, draftLabel, draftsOf, eventCandidates, finalCount, foreshadowName, outlineCount, pendingPaywalls, projectPhases, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
+import { blueprintOf, draftLabel, draftsOf, eventCandidates, finalCount, foreshadowName, foreshadowPlans, outlineCount, pendingPaywalls, projectPhases, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
 import { MAX_REVISE_ROUNDS, draftPath, finalPath, linesSig, nextUnwritten, openBlocks, reviseRounds, scriptStagePath } from '../pages/workspace/script/ops'
 
 export const stageTo = (p: Project, key: StageKey) => (key === 'overview' ? `/projects/${p.id}` : `/projects/${p.id}/stage/${key}`)
@@ -26,7 +26,7 @@ export function stageDetail(p: Project, key: StageKey): string | null {
     }
     case 'breakdown': {
       const bd = w.breakdown
-      if (bd) return bd.referencedAt ? '已引用' : `审核 ${Object.values(bd.review).filter((r) => r === 'approved').length}/4`
+      if (bd) return bd.referencedAt ? '已引用' : '待引用'
       return w.source ? '待拆解' : null
     }
     case 'architecture':
@@ -173,15 +173,11 @@ export function projectTodos(p: Project): Todo[] {
   if (stages.includes('breakdown')) {
     const bd = w.breakdown
     if (w.source && !bd) push('breakdown-run', 'info', '对标剧剧本已导入，待 AI 拆解', 'breakdown', '去拆解')
-    else if (bd && !bd.referencedAt) {
-      const left = Object.values(bd.review).filter((r) => r !== 'approved').length
-      if (left) push('breakdown-review', 'warn', `对标剧拆解还有 ${left} 个板块待审核`, 'breakdown', '去审核')
-      else push('breakdown-ref', 'info', '拆解的四个板块已确认，待一键引用到故事架构', 'breakdown', '去引用')
-    }
+    else if (bd && !bd.referencedAt) push('breakdown-ref', 'info', '对标剧已拆完，看过、改好后一键引用到故事架构', 'breakdown', '去引用')
   }
 
   if (w.architecture && w.architecture.status !== 'approved' && !stageGate(p, 'architecture')) {
-    push('arch', 'warn', '故事架构还是草稿：确认后才能生成人物、大纲与伏笔', 'architecture', '去确认')
+    push('arch', 'warn', `故事架构还是草稿：确认后才能生成人物、大纲${SHOW_FORESHADOW ? '与伏笔' : ''}`, 'architecture', '去确认')
   }
 
   const paywalls = pendingPaywalls(p)
@@ -194,7 +190,7 @@ export function projectTodos(p: Project): Todo[] {
 
   for (const a of overallSnapshot(p).alerts) push(`fs-${a.item.id}`, 'warn', `「${foreshadowName(a.item)}」${a.overdue}`, 'foreshadow', '去处理')
 
-  const candidates = w.foreshadows.reduce((n, f) => n + eventCandidates(f, w.scripts).length, 0)
+  const candidates = foreshadowPlans(w).reduce((n, f) => n + eventCandidates(f, w.scripts).length, 0)
   if (candidates) push('fs-events', 'info', `定稿正文里有 ${candidates} 处伏笔推进待确认，确认后才计入状态库`, 'foreshadow', '去确认')
 
   if (w.qa && p.status !== 'delivered') {
@@ -271,7 +267,7 @@ export function nextTask(p: Project): NextTask | null {
     if (w.outline.some((o) => o.ep === next)) {
       return {
         title: `写第 ${next} 集`,
-        desc: blueprintOf(w, next) ? '蓝图已就绪：看一眼作者微操指导就可以开写' : '先生成本集蓝图，再开写',
+        desc: blueprintOf(w, next) ? '蓝图已就绪：看一眼冲突与钩子就可以开写' : '先生成本集蓝图，再开写',
         to: `${scriptStagePath(p)}?ep=${next}`,
         cta: '去写作',
       }

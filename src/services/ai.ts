@@ -7,6 +7,7 @@
 import type {
   Audience,
   Breakdown,
+  Character,
   Foreshadow,
   EpisodeBlueprint,
   EpisodeScript,
@@ -14,9 +15,9 @@ import type {
   ModelId,
   OutlineEpisode,
   Plot,
-  PlotBeat,
+  ArchItem,
   Project,
-  ProofItem,
+  ProjectMode,
   QaIssue,
   QaReport,
   ScriptLine,
@@ -29,28 +30,42 @@ import type {
 } from '../domain/types'
 import { PLAN_EVENT_META } from '../domain/constants'
 import { modelOf } from '../domain/models'
+import { hasInnovations } from '../domain/pipeline'
 import { eventCandidates, foreshadowName, plainText } from '../domain/work'
 import type { EventCandidate } from '../domain/work'
 import { analyzeSource } from './mock/breakdown'
-import * as proof from './mock/proofread'
+import * as lab from './mock/archLab'
+import * as chat from './mock/rewriteChat'
+import type { PlanField, RewritePlan } from './mock/rewriteChat'
+import type { LabKey, LabValue } from './mock/archLab'
 import * as qa from './mock/qa'
 import * as video from './mock/video'
+import * as chain from './mock/chain'
+import type { ArchDraft } from './mock/chain'
 import * as writer from './mock/writer'
-import type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, QaFix, ReviewBase, ReviseMode } from './mock/writer'
+import type { BioField, Direction, DraftContent, ExtendMode, ForeshadowIdea, QaFix, ReviewBase, ReviseMode } from './mock/writer'
 
 export { parseSource } from './mock/breakdown'
 export { SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME } from './mock/sampleScript'
 export { DEMO_SHOW, episodesFromFiles, isOffTemplate, linkError, platformOf } from './mock/video'
-export { applyProofread } from './mock/proofread'
+
+/** 一集转写结果按通用剧本格式排好的剧本（和合并后的剧本同一种写法），转写列表里点「剧本」查看 */
+export const episodeScript = (e: VideoEpisode) => video.mergeEpisodes([e]).text
 export { architectureIssues, positionOf, viewpointRule } from './mock/writer'
+export { splitLogline } from './mock/chain'
+export type { ArchDraft, LoglineParts } from './mock/chain'
 export { innovationLanding } from './mock/qa'
+export { LAB_META, LAB_ORDER, formulaText, labExport, labReference, valueText } from './mock/archLab'
+export type { LabFormula, LabKey, LabSkeleton, LabValue } from './mock/archLab'
+export { PLAN_META, PLAN_ORDER, chatContext, fieldTitle, planText } from './mock/rewriteChat'
+export type { ChatAction, ChatChange, ChatOption, ChatReply, PlanField, RewritePlan } from './mock/rewriteChat'
 export type { InnovationLanding } from './mock/qa'
-export type { ArchitectureDraft, ArchitectureSection, Direction, DraftContent, ExtendMode, ForeshadowIdea, IdeaReview, QaFix, ReviewBase, ReviseMode }
+export type { BioField, Direction, DraftContent, ExtendMode, ForeshadowIdea, QaFix, ReviewBase, ReviseMode }
 
 export interface LoglineRequest {
   idea: string
   genres: string[]
-  audience: Audience
+  audience: Audience | ''
   tones: string[]
 }
 
@@ -154,11 +169,14 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     })
   })
 
+/** 表里哪些题材词出现在已选题材里（题材类型是「狼人传说」这种长词，含「狼人」就算） */
+const keysIn = (table: Record<string, unknown>, genres: string[]) => Object.keys(table).filter((k) => genres.some((g) => g.includes(k)))
+
 /** 根据一句话灵感 + 题材生成 3 个高概念候选（对应需求文档第三步“定高概念”） */
 export async function generateLoglines(req: LoglineRequest, signal?: AbortSignal): Promise<LoglineCandidate[]> {
   await sleep(900 + Math.random() * 600, signal)
 
-  const pool = req.genres.flatMap((g) => SEEDS[g] ?? [])
+  const pool = keysIn(SEEDS, req.genres).flatMap((k) => SEEDS[k])
   const seeds = [...pool, ...FALLBACK]
   const shuffled = seeds.sort(() => Math.random() - 0.5).slice(0, 3)
   const idea = req.idea.trim().replace(/[。.!！]+$/, '')
@@ -227,7 +245,7 @@ export async function translateTitle(title: string, genres: string[], signal?: A
   await sleep(500 + Math.random() * 400, signal)
   const text = title.trim()
   const inTitle = Object.keys(GENRE_TITLES).filter((g) => text.includes(g))
-  const pool = [...new Set([...inTitle, ...genres].flatMap((g) => GENRE_TITLES[g] ?? []))]
+  const pool = [...new Set([...inTitle, ...keysIn(GENRE_TITLES, genres)].flatMap((g) => GENRE_TITLES[g]))]
   const list = pool.length ? pool : FALLBACK_TITLES
   const code = [...text].reduce((n, ch) => n + ch.charCodeAt(0), 0)
   return list[code % list.length]
@@ -251,12 +269,12 @@ export const nextSeed = () => Math.floor(Math.random() * 1e9)
 export const ANALYZE_STEPS = ['按分集切分剧本', '梳理故事梗概', '识别人物与关系网', '提取冲突主线与节奏', '逐集拆解 12 个字段'] as const
 
 /** 对标剧拆解：逐步回报进度，返回四大板块（全部待审核） */
-export async function analyzeBenchmark(source: SourceScript, onStep: (index: number) => void, signal?: AbortSignal): Promise<Breakdown> {
+export async function analyzeBenchmark(source: SourceScript, mode: ProjectMode, onStep: (index: number) => void, signal?: AbortSignal): Promise<Breakdown> {
   for (let i = 0; i < ANALYZE_STEPS.length; i++) {
     onStep(i)
     await sleep(500 + Math.random() * 300, signal)
   }
-  return analyzeSource(source)
+  return analyzeSource(source, mode)
 }
 
 /** 没有改写想法时：基于拆解结果（或立项设定）提出 3 个方向 */
@@ -265,32 +283,72 @@ export async function proposeDirections(project: Project, seed: number, signal?:
   return writer.proposeDirections(project, seed)
 }
 
-/** 有改写想法时：评估可行性并整理成改写方案 */
-export async function evaluateIdea(project: Project, idea: string, signal?: AbortSignal): Promise<IdeaReview> {
+/** 故事架构的一项：按依据链取数（只读编剧写的和排在前面的项） */
+export async function draftArchItem(project: Project, item: ArchItem, seed = 0, signal?: AbortSignal): Promise<ArchDraft> {
   await think(signal)
-  return writer.evaluateIdea(project, idea)
+  return chain.draftArchItem(project, item, seed)
 }
 
-export async function draftArchitecture(project: Project, seed: number, signal?: AbortSignal): Promise<ArchitectureDraft> {
-  await think(signal, 1100)
-  return writer.draftArchitecture(project, seed)
-}
 
 /** 只重写冲突主线：保留段落名与分段 */
-export async function draftMainLine(project: Project, seed: number, signal?: AbortSignal): Promise<PlotBeat[]> {
+
+/** 故事架构新版 Demo：从起点一次给出 1 版或 3 版整剧骨架 */
+export async function draftLabSkeletons(project: Project, seedText: string, count: 1 | 3, seed: number, signal?: AbortSignal) {
+  await think(signal, count === 3 ? 1300 : 900)
+  return lab.labSkeletons(project, seedText, count, seed)
+}
+
+/** 故事架构新版 Demo：按修改意见只重写一项，已定的项不动 */
+export async function rewriteLabItem(project: Project, key: LabKey, current: LabValue, comment: string, locked: Partial<Record<LabKey, string>>, seed: number, signal?: AbortSignal) {
+  await think(signal, 700)
+  return lab.labRewrite(project, key, current, comment, locked, seed)
+}
+
+/*
+ * 改写方案 · 多轮对话 Demo。每一轮带给模型：对标剧拆解的总纲层结果、当前方案、锁定的项和最近几轮对话；
+ * 模拟版按规则改，接真实模型时在这里换成一个带上下文的对话接口。
+ */
+export async function chatDirections(project: Project, seed: number, signal?: AbortSignal) {
+  await think(signal, 1000)
+  return chat.directionsReply(project, seed)
+}
+
+export async function chatPick(project: Project, direction: Direction, prev: RewritePlan | null, locks: PlanField[], signal?: AbortSignal) {
+  await think(signal, 700)
+  return chat.pickReply(project, direction, prev, locks)
+}
+
+export async function chatIdea(project: Project, idea: string, signal?: AbortSignal) {
+  await think(signal, 900)
+  return chat.ideaReply(project, idea)
+}
+
+export async function chatReply(project: Project, plan: RewritePlan, locks: PlanField[], topic: PlanField | null, text: string, seed: number, signal?: AbortSignal) {
   await think(signal, 800)
-  return writer.draftMainLine(project, seed)
+  return chat.reply(project, plan, locks, topic, text, seed)
+}
+
+export async function chatNext(project: Project, plan: RewritePlan, locks: PlanField[], from: PlanField, how: 'lock' | 'skip', signal?: AbortSignal) {
+  await think(signal, 300)
+  return chat.nextReply(project, plan, locks, from, how)
+}
+
+export async function chatAsk(project: Project, plan: RewritePlan, field: PlanField, signal?: AbortSignal) {
+  await think(signal, 300)
+  return chat.askReply(project, plan, field)
 }
 
 /** 故事架构里单独一段：世界观 / 金手指 / 主角人设 / 全局写作要求 */
-export async function draftSection(project: Project, section: ArchitectureSection, signal?: AbortSignal): Promise<string> {
-  await think(signal, 700)
-  return writer.draftSection(project, section)
-}
 
 export async function draftCharacters(project: Project, seed: number, signal?: AbortSignal) {
   await think(signal, 1100)
   return writer.draftCharacters(project, seed)
+}
+
+/** 人物小传里单独一项：按人物的定位和故事架构生成 */
+export async function draftCharacterField(project: Project, c: Character, field: BioField, seed: number, signal?: AbortSignal) {
+  await think(signal, 600)
+  return writer.draftCharacterField(project, c, field, seed)
 }
 
 export async function draftForeshadows(project: Project, signal?: AbortSignal): Promise<ForeshadowIdea[]> {
@@ -340,7 +398,7 @@ export async function draftBlueprints(project: Project, from: number, to: number
   return writer.draftBlueprints(project, from, to, seed)
 }
 
-/** 逐集剧本：输入 = 本集蓝图（含作者微操指导）+ 最新状态库（人物、伏笔与前集正文） */
+/** 逐集剧本：输入 = 本集蓝图 + 最新状态库（人物、伏笔与前集正文） */
 export async function writeEpisode(project: Project, ep: number, seed: number, signal?: AbortSignal, model = modelOf(project, 'text')): Promise<DraftContent & { model: ModelId }> {
   await think(signal, 1400)
   return { ...writer.writeEpisode(project, ep, seed), model }
@@ -367,6 +425,18 @@ export async function reviseText(project: Project, text: string, mode: ReviseMod
   return writer.reviseText(project, text, mode, kind, seed)
 }
 
+/** AI 润色一段设定文字：只润色措辞，结构与意思不变 */
+export async function polishText(text: string, signal?: AbortSignal) {
+  await think(signal, 500)
+  return writer.polishText(text)
+}
+
+/** AI 润色整集正文：逐行去 AI 味词、理顺标点，场次与钩子不动；接真实模型时按项目的文风与人物润色，模拟版用不到项目 */
+export async function polishLines(_project: Project, lines: ScriptLine[], signal?: AbortSignal) {
+  await think(signal, 900)
+  return writer.polishLines(lines)
+}
+
 /** 选中一句续写 / 补对话：返回插在其后的新行 */
 export async function extendText(project: Project, line: ScriptLine, mode: ExtendMode, seed: number, signal?: AbortSignal): Promise<ScriptLine[]> {
   await think(signal, 600)
@@ -381,7 +451,8 @@ export async function translateEpisode(project: Project, lines: ScriptLine[], si
 
 /* ---------------------------------- 质检交付 ---------------------------------- */
 
-export const QA_STEPS = ['一致性终检', '节奏曲线对比', '付费点专项', '创新点落地', '格式合规'] as const
+/** 质检进度的几步：创新点落地只有仿写有 */
+export const qaSteps = (p: Pick<Project, 'mode'>) => ['一致性终检', '节奏曲线对比', '付费点专项', ...(hasInnovations(p) ? ['创新点落地'] : []), '格式合规']
 
 /** 质检里的 AI 修稿：按一条问题改定稿，补写只取已有设定，不合设定的改动留给编剧；返回预览，确认后才写进正文 */
 export async function fixQaIssue(project: Project, script: EpisodeScript, issue: QaIssue, seed: number, signal?: AbortSignal): Promise<QaFix & { model: ModelId }> {
@@ -441,24 +512,10 @@ export async function transcribeEpisode(
       if (i < ticks) await sleep(total / ticks, signal)
     }
   }
-  return video.transcribe(ep.ep, video.offTemplateOf(job, ep))
+  return video.transcribe(ep.ep)
 }
 
 export const MERGE_STEPS = ['按集数排序拼接', '接回被镜头切开的台词', '统一标点与场景格式', '去掉时间码，输出标准剧本'] as const
-
-export const PROOF_STEPS = ['逐集核对是否按模板输出', '统一人物名字的写法', '查同音错别字'] as const
-
-/**
- * AI 校对合并好的剧本（项目的文本模型）：查出没按模板输出的集、人名写法不一、同音错别字，
- * 只列出改法，编剧勾选确认后才用 applyProofread 写进剧本。
- */
-export async function proofreadScript(project: Project, text: string, onStep: (index: number) => void, signal?: AbortSignal): Promise<{ items: ProofItem[]; model: ModelId }> {
-  for (let i = 0; i < PROOF_STEPS.length; i++) {
-    onStep(i)
-    await sleep(400 + Math.random() * 300, signal)
-  }
-  return { items: proof.proofread(text), model: modelOf(project, 'text') }
-}
 
 /** 合并全集转写稿，并自动修正格式 */
 export async function mergeTranscripts(episodes: VideoEpisode[], onStep: (index: number) => void, signal?: AbortSignal): Promise<MergedScript> {

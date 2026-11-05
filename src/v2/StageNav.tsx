@@ -44,6 +44,7 @@ export function StageNav({ project }: { project: Project }) {
 
   return (
     <nav
+      data-stage-nav
       data-collapsed={collapsed || undefined}
       className="scrollbar-thin rounded-xl border border-line bg-white p-2 shadow-card lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto"
       aria-label="创作流程"

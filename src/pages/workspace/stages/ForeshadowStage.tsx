@@ -12,6 +12,8 @@ import type { Foreshadow, ForeshadowType, PlanEventKind, Project } from '../../.
 import { foreshadowIssue, foreshadowName, newForeshadow, phaseNames, projectPhases, sortEvents } from '../../../domain/work'
 import type { ForeshadowStatus } from '../../../domain/work'
 import { newId } from '../../../lib/id'
+import { BasisInfo } from '../../../components/project/BasisInfo'
+import { downBasis } from '../../../domain/basis'
 import { draftForeshadows, identifyEvents } from '../../../services/ai'
 import type { EventFinding, ForeshadowIdea } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
@@ -555,6 +557,7 @@ export default function ForeshadowStage({ project, blocked }: { project: Project
           <AiButton size="md" loading={running === 'foreshadow'} disabled={blocked || !!running} onClick={suggest}>
             AI 建议伏笔与线索
           </AiButton>
+          <BasisInfo title="伏笔建议" row={downBasis(project, 'foreshadow')} align="right" />
           <AiButton
             size="md"
             variant="secondary"

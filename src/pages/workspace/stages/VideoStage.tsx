@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { ArrowRight, CircleCheck, Download, Eye, Film, Loader2, Pause, Play, RotateCcw } from 'lucide-react'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router'
 import { ConfirmDialog, Menu, Modal } from '../../../components/overlay'
 import { ModelPicker } from '../../../components/project/ModelBits'
@@ -8,14 +9,16 @@ import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../.
 import { Badge, Button, Card, CardHeader, Input, Segmented } from '../../../components/ui'
 import { modelLabel, modelOf } from '../../../domain/models'
 import { episodeHeading, formatScene, speakerLabel } from '../../../domain/scriptFormat'
-import type { ModelId, Project, ProofItem, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
+import type { Project, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
 import { downloadText } from '../../../lib/download'
 import { formatDateTime } from '../../../lib/format'
-import { DEMO_SHOW, MERGE_STEPS, PROOF_STEPS, RESOLVE_STEPS, applyProofread, episodesFromFiles, isOffTemplate, linkError, mergeTranscripts, parseSource, platformOf, proofreadScript, resolveVideoLink } from '../../../services/ai'
+import { DEMO_SHOW, MERGE_STEPS, RESOLVE_STEPS, episodeScript, episodesFromFiles, linkError, mergeTranscripts, parseSource, platformOf, resolveVideoLink } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
-import { CONCURRENCY, isTranscribing, progressKey, recoverStale, retranscribe, retryFailed, startQueue, stopQueue, useVideoQueue } from '../../../store/videoQueue'
-import { ProofRecordBox, ProofreadDialog } from './VideoProofread'
+import { useVideoFiles } from '../../../store/videoFiles'
+import { CONCURRENCY, isTranscribing, progressKey, recoverStale, retryFailed, startQueue, stopQueue, useVideoQueue } from '../../../store/videoQueue'
+import { VideoCheck } from './VideoCheck'
+import { useStageSlot } from '../../../v2/bottomSlot'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -126,6 +129,8 @@ function SourcePicker({ project }: { project: Project }) {
     if (!files.length) return setError('请选择视频文件（.mp4 / .mov / .webm），可一次多选')
     const episodes = episodesFromFiles(files.map((f) => f.name))
     create({ origin: 'upload', url: '', platform: '', episodes }, `上传对标剧视频 ${episodes.length} 集，开始逐集转写`)
+    // 本地视频留在内存里，人工校对时左侧播放
+    useVideoFiles.getState().attach(project.id, episodes.flatMap((e) => files.filter((f) => f.name === e.file).map((file) => ({ ep: e.ep, file }))))
   }
 
   return (
@@ -285,7 +290,8 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
   const eps = job.episodes
   const done = eps.filter((e) => e.status === 'done')
   const failed = eps.filter((e) => e.status === 'failed').length
-  const active = eps.filter((e) => isTranscribing(e.status)).length
+  const activeEps = eps.filter((e) => isTranscribing(e.status))
+  const active = activeEps.length
   const queued = eps.filter((e) => e.status === 'queued').length
   const totalSec = eps.reduce((n, e) => n + e.duration, 0)
   const allDone = done.length === eps.length
@@ -294,7 +300,7 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
   const state = allDone
     ? '全部转写完成'
     : running
-      ? `正在转写 ${active} 集，排队 ${queued} 集`
+      ? `${active === 1 ? `正在转写第 ${activeEps[0].ep} 集` : `正在转写 ${active} 集`}，排队 ${queued} 集`
       : stuck
         ? `${failed} 集失败，重试成功后才能合并`
         : `已暂停，还有 ${queued + active} 集没有转写`
@@ -303,7 +309,7 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
     <Card className="overflow-hidden">
       <CardHeader
         title="逐集转写"
-        desc={`${job.origin === 'link' ? job.platform || '剧集链接' : '本地上传'} · ${eps.length} 集 · 总时长 ${clock(totalSec)} · 同时转写 ${CONCURRENCY} 集 · ${modelLabel(modelOf(project, 'video'))} 解析`}
+        desc={`${job.origin === 'link' ? job.platform || '剧集链接' : '本地上传'} · ${eps.length} 集 · 总时长 ${clock(totalSec)} · ${CONCURRENCY === 1 ? '一集一集依次转写' : `同时转写 ${CONCURRENCY} 集`} · ${modelLabel(modelOf(project, 'video'))} 解析`}
         action={
           <div className="flex gap-2">
             {running ? (
@@ -343,11 +349,9 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
             <div className={clsx('h-full rounded-full transition-[width] duration-500', allDone ? 'bg-emerald-500' : 'bg-brand-500')} style={{ width: `${(done.length / eps.length) * 100}%` }} />
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2">
           <Stat label="已完成" value={`${done.length} / ${eps.length} 集`} tone={allDone ? 'green' : undefined} />
           <Stat label="失败" value={`${failed} 集`} tone={failed ? 'red' : undefined} />
-          <Stat label="镜头" value={done.reduce((n, e) => n + e.shots.length, 0)} />
-          <Stat label="对白字数" value={done.reduce((n, e) => n + dialogueWords(e.shots), 0).toLocaleString()} />
         </div>
       </div>
       <div className="border-t border-line">
@@ -369,21 +373,18 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
               </td>
               <td className="px-4 py-2.5 tabular-nums">{e.status === 'done' ? e.shots.length : '—'}</td>
               <td className="px-4 py-2.5 tabular-nums">
-                {e.status !== 'done' ? (
-                  '—'
-                ) : isOffTemplate(e.shots) ? (
-                  <span data-off-template className="text-amber-600" title="这一集没按模板输出：台词写进了画面描述。合并后用 AI 校对按模板重整，或重新转写">
-                    0 · 没按模板
-                  </span>
-                ) : (
-                  dialogueWords(e.shots)
+                {e.status !== 'done' ? '—' : dialogueWords(e.shots)}
+                {e.editedAt && (
+                  <Badge tone="amber" className="ml-1.5">
+                    校对改过
+                  </Badge>
                 )}
               </td>
               <td className="px-4 py-1.5 text-right">
                 {e.status === 'done' && (
-                  <Button variant="ghost" size="sm" onClick={() => onView(e.ep)}>
+                  <Button variant="ghost" size="sm" onClick={() => onView(e.ep)} data-view-script>
                     <Eye size={14} />
-                    分镜
+                    剧本
                   </Button>
                 )}
                 {e.status === 'failed' && (
@@ -413,7 +414,7 @@ function QueueCard({ project, job, onView }: { project: Project; job: VideoJob; 
   )
 }
 
-/* ---------------------------------- 分镜查看 ---------------------------------- */
+/* ---------------------------------- 剧本查看 ---------------------------------- */
 
 /** 换场镜头的场次号「集-场」，按出现顺序编 */
 function sceneNos(ep: number, shots: Shot[]) {
@@ -421,45 +422,9 @@ function sceneNos(ep: number, shots: Shot[]) {
   return shots.map((s) => (s.scene ? `${ep}-${++k}` : undefined))
 }
 
-function ShotTable({ ep, shots }: { ep: number; shots: Shot[] }) {
-  const no = sceneNos(ep, shots)
-  return (
-    <Table columns={['时间码', '景别', '画面', '台词', '音效']} minWidth={760}>
-      {shots.map((s, i) => (
-        <Fragment key={i}>
-          {s.scene && (
-            <tr>
-              <td colSpan={5} className="bg-canvas px-4 py-1.5 text-xs font-medium text-ink-700">
-                {no[i]}：{formatScene(s.scene)}
-              </td>
-            </tr>
-          )}
-          <tr className="align-top">
-            <td className="px-4 py-2 font-mono text-xs whitespace-nowrap text-ink-500">
-              {timecode(s.start)}–{timecode(s.end)}
-            </td>
-            <td className="px-4 py-2 whitespace-nowrap">{s.size}</td>
-            <td className="px-4 py-2 text-ink-700">{s.action}</td>
-            <td className="px-4 py-2">
-              {s.speaker ? (
-                <>
-                  <span className="font-medium">{speakerLabel(s)}：</span>
-                  {s.line}
-                </>
-              ) : (
-                <span className="text-ink-300">—</span>
-              )}
-            </td>
-            <td className="px-4 py-2 text-xs whitespace-nowrap text-ink-500">{s.sound}</td>
-          </tr>
-        </Fragment>
-      ))}
-    </Table>
-  )
-}
-
-function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number | null; onClose: () => void; onNavigate: (ep: number) => void }) {
-  const [view, setView] = useState<'shots' | 'lines'>('shots')
+/** 一集的转写结果：按通用剧本格式看剧本（11/4 标注：原来看的是分镜），或只看对白 */
+function ScriptModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number | null; onClose: () => void; onNavigate: (ep: number) => void }) {
+  const [view, setView] = useState<'script' | 'lines'>('script')
   const done = job.episodes.filter((e) => e.status === 'done')
   const index = done.findIndex((e) => e.ep === ep)
   const episode = done[index]
@@ -472,8 +437,8 @@ function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number
       open
       onClose={onClose}
       width={920}
-      title={`第 ${episode.ep} 集 · ${view === 'shots' ? '分镜剧本' : '对白文本'}`}
-      desc={`时长 ${clock(episode.duration)} · ${episode.shots.length} 个镜头 · 对白 ${dialogueWords(episode.shots)} 字${episode.model ? ` · ${modelLabel(episode.model)} 解析` : ''}`}
+      title={`第 ${episode.ep} 集 · ${view === 'script' ? '剧本' : '对白文本'}`}
+      desc={`时长 ${clock(episode.duration)} · ${episode.shots.filter((s) => s.scene).length} 场 · 对白 ${dialogueWords(episode.shots)} 字${episode.model ? ` · ${modelLabel(episode.model)} 解析` : ''}`}
       footer={
         <>
           <Button variant="secondary" disabled={!prev} onClick={() => prev && onNavigate(prev.ep)}>
@@ -489,15 +454,17 @@ function ShotModal({ job, ep, onClose, onNavigate }: { job: VideoJob; ep: number
         <Segmented
           value={view}
           options={[
-            { value: 'shots', label: '分镜剧本' },
+            { value: 'script', label: '剧本' },
             { value: 'lines', label: '对白文本' },
           ]}
           onChange={setView}
         />
       </div>
       <div className="scrollbar-thin max-h-[58vh] overflow-y-auto rounded-lg border border-line">
-        {view === 'shots' ? (
-          <ShotTable ep={episode.ep} shots={episode.shots} />
+        {view === 'script' ? (
+          <pre data-episode-script className="px-4 py-3 font-mono text-xs leading-6 whitespace-pre-wrap text-ink-700">
+            {episodeScript(episode)}
+          </pre>
         ) : (
           <ol className="space-y-1.5 px-4 py-3 text-[13px] leading-6">
             {episode.shots
@@ -526,15 +493,13 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
   const { running, run } = useAiTask()
   const [step, setStep] = useState<number | null>(null)
   const [confirmReplace, setConfirmReplace] = useState(false)
-  const [proofStep, setProofStep] = useState<number | null>(null)
-  const [proof, setProof] = useState<{ items: ProofItem[]; model: ModelId; base: string } | null>(null)
-  const [redo, setRedo] = useState<number | null>(null)
   const merged = job.merged
   const left = job.episodes.filter((e) => e.status !== 'done').length
   const source = project.work.source
   // 拆解里的剧本是不是这次合并送过去的
   const sent = !!merged?.importedAt && source?.importedAt === merged.importedAt
-  const fixed = merged?.fixes.reduce((n, f) => n + f.count, 0) ?? 0
+  // 合并之后又在人工校对里改过的集
+  const stale = merged ? job.episodes.filter((e) => e.editedAt && e.editedAt > merged.mergedAt).map((e) => e.ep) : []
 
   const merge = async () => {
     const episodes = latestProject(project.id)?.work.video?.episodes
@@ -548,37 +513,6 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
     toast('已合并成完整剧本')
   }
 
-  // AI 校对：查出的问题先列出来，勾选确认后才改剧本；没查出问题直接记一笔
-  const proofread = async () => {
-    const text = latestProject(project.id)?.work.video?.merged?.text
-    if (!text) return
-    const result = await run('proofread', (signal) => proofreadScript(project, text, setProofStep, signal))
-    setProofStep(null)
-    const cur = latestProject(project.id)?.work.video
-    if (!result || !cur?.merged) return
-    if (result.items.length) {
-      setProof({ ...result, base: text })
-      return
-    }
-    patchWork(project.id, { video: { ...cur, merged: { ...cur.merged, proofread: { at: new Date().toISOString(), model: result.model, found: 0, applied: [] } } } }, 'AI 校对合并剧本：没发现问题')
-    toast('AI 校对没发现问题')
-  }
-
-  const applyProof = (picked: ProofItem[]) => {
-    const cur = latestProject(project.id)?.work.video
-    if (!proof || !cur?.merged) return
-    setProof(null)
-    if (cur.merged.text !== proof.base) {
-      toast('剧本在校对期间有改动，请重新 AI 校对', 'error')
-      return
-    }
-    const wasSent = !!cur.merged.importedAt && latestProject(project.id)?.work.source?.importedAt === cur.merged.importedAt
-    const record = { at: new Date().toISOString(), model: proof.model, found: proof.items.length, applied: picked.map((i) => ({ kind: i.kind, text: i.kind === 'template' ? `第 ${i.ep} 集按模板重整` : i.text, count: i.count })) }
-    // 剧本改了：已送入拆解的是校对前的，要重新送入
-    patchWork(project.id, { video: { ...cur, merged: { ...cur.merged, text: applyProofread(cur.merged.text, picked), proofread: record, importedAt: null } } }, `AI 校对合并剧本：应用 ${picked.length} 项`)
-    toast(`已应用 ${picked.length} 项校对${wasSent ? '；拆解里还是校对前的剧本，重新送入后生效' : ''}`)
-  }
-
   const send = () => {
     const cur = latestProject(project.id)?.work.video
     if (!cur?.merged) return
@@ -586,15 +520,17 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
     const name = `${project.benchmark?.title || '对标剧'}（视频转写 · ${cur.episodes.length} 集）.txt`
     const next = { ...parseSource(name, cur.merged.text), importedAt: at }
     patchWork(project.id, { source: next, breakdown: null, video: { ...cur, merged: { ...cur.merged, importedAt: at } } }, `转写剧本送入对标剧拆解：${next.episodes.length} 集`)
-    toast('已送入对标剧拆解，可以开始拆解了')
+    toast('已送入对标剧拆解，正在拆解')
     navigate(stagePath(project, 'breakdown'))
   }
 
   const action = merged ? (
     <div className="flex gap-2">
-      <AiButton variant="secondary" loading={running === 'proofread'} disabled={!!running} onClick={proofread} title="用文本模型查没按模板输出的集、人名写法不一、同音错字；先列出改法，确认后才改">
-        {merged.proofread ? '重新校对' : 'AI 校对'}
-      </AiButton>
+      {stale.length > 0 && (
+        <AiButton variant="secondary" loading={running === 'merge'} disabled={left > 0} onClick={merge} title={`第 ${stale.join('、')} 集校对后改过，重新合并后才会带进剧本`}>
+          重新合并
+        </AiButton>
+      )}
       <Menu
         trigger={(props) => (
           <Button variant="secondary" size="sm" {...props}>
@@ -608,17 +544,6 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
           { label: '全集对白（.txt）', onSelect: () => downloadText(`${project.title}-全集对白.txt`, dialogueText(job)) },
         ]}
       />
-      {sent ? (
-        <Link to={stagePath(project, 'breakdown')} className="flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-3 text-[13px] font-medium text-emerald-700 hover:bg-emerald-100">
-          已送入，去拆解
-          <ArrowRight size={14} />
-        </Link>
-      ) : (
-        <Button size="sm" onClick={() => (source ? setConfirmReplace(true) : send())} title={merged.proofread ? undefined : '还没 AI 校对：人名写法、同音错字和没按模板输出的集会原样带进拆解'}>
-          送入对标剧拆解
-          <ArrowRight size={14} />
-        </Button>
-      )}
     </div>
   ) : (
     <AiButton loading={running === 'merge'} disabled={left > 0} onClick={merge}>
@@ -626,11 +551,32 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
     </AiButton>
   )
 
+  // 送去拆解放在页面底部的环节条（11/4 标注 #74，状态靠左、按钮靠右 #83）；送过去之后由环节条给「去对标剧拆解」，进去直接拆（#72）
+  const slot = useStageSlot(!!merged && !sent)
+  const sendBar = slot && (
+    <>
+      {createPortal(
+        <span className="text-[13px] text-ink-500">
+          剧本已合并{stale.length > 0 && <span className="text-amber-800">，第 {stale.join('、')} 集校对后的改动还没合并进来</span>}
+        </span>,
+        slot.info,
+      )}
+      {createPortal(
+        <Button data-to-breakdown onClick={() => (source ? setConfirmReplace(true) : send())}>
+          送入对标剧拆解
+          <ArrowRight size={15} />
+        </Button>,
+        slot.actions,
+      )}
+    </>
+  )
+
   return (
     <Card>
+      {sendBar}
       <CardHeader
         title="合并剧本"
-        desc={merged ? `合并于 ${formatDateTime(merged.mergedAt)}，已自动修正 ${fixed} 处格式问题` : '全部转写完成后，按集数合并成一部剧本，自动修正格式，再送入对标剧拆解'}
+        desc={merged ? `合并于 ${formatDateTime(merged.mergedAt)} · 全剧 ${merged.text.length.toLocaleString()} 字` : '全部转写完成后，按集数合并成一部剧本，自动修正格式，再送入对标剧拆解'}
         action={action}
       />
       {!merged && step === null && (
@@ -641,28 +587,24 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
           <StepList steps={MERGE_STEPS} step={step} label="合并进度" />
         </div>
       )}
-      {proofStep !== null && (
-        <div className="border-b border-line px-5 py-4">
-          <StepList steps={PROOF_STEPS} step={proofStep} label={`AI 校对 · ${modelLabel(modelOf(project, 'text'))}`} />
-        </div>
+      {stale.length > 0 && (
+        <p data-merge-stale className="border-b border-line bg-amber-50 px-5 py-2.5 text-[13px] text-amber-800">
+          第 {stale.join('、')} 集在人工校对里改过，点「重新合并」后才会带进剧本
+        </p>
       )}
       {merged && (
         <div className="grid gap-5 p-5 lg:grid-cols-[240px_minmax(0,1fr)]">
-          <div className="space-y-3">
-            <Stat label="字数" value={merged.text.length.toLocaleString()} />
-            <div className="rounded-lg bg-canvas px-3.5 py-2.5">
-              <div className="mb-1.5 text-xs text-ink-500">自动修正</div>
-              <ul className="space-y-1.5">
-                {merged.fixes.map((f) => (
-                  <li key={f.label} className="flex items-start gap-1.5 text-[13px]">
-                    <CircleCheck size={13} className="mt-[3px] shrink-0 text-emerald-500" />
-                    <span className="flex-1">{f.label}</span>
-                    <span className="text-ink-500 tabular-nums">{f.count}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <ProofRecordBox merged={merged} />
+          <div className="self-start rounded-lg bg-canvas px-3.5 py-2.5">
+            <div className="mb-1.5 text-xs text-ink-500">自动修正</div>
+            <ul className="space-y-1.5">
+              {merged.fixes.map((f) => (
+                <li key={f.label} className="flex items-start gap-1.5 text-[13px]">
+                  <CircleCheck size={13} className="mt-[3px] shrink-0 text-emerald-500" />
+                  <span className="flex-1">{f.label}</span>
+                  <span className="text-ink-500 tabular-nums">{f.count}</span>
+                </li>
+              ))}
+            </ul>
           </div>
           <pre className="scrollbar-thin max-h-96 overflow-y-auto rounded-lg bg-canvas px-4 py-3 font-mono text-xs leading-6 whitespace-pre-wrap text-ink-700">{merged.text}</pre>
         </div>
@@ -675,26 +617,6 @@ function MergeCard({ project, job }: { project: Project; job: VideoJob }) {
         title="替换对标剧剧本？"
         desc={`「对标剧拆解」里已有剧本《${source?.name ?? ''}》${project.work.breakdown ? '和拆解结果，送入后会一并替换，需要重新拆解' : '，送入后会被替换'}。`}
         confirmText="替换并送入"
-      />
-      {proof && (
-        <ProofreadDialog
-          items={proof.items}
-          model={proof.model}
-          onClose={() => setProof(null)}
-          onApply={applyProof}
-          onRetranscribe={(ep) => {
-            setProof(null)
-            setRedo(ep)
-          }}
-        />
-      )}
-      <ConfirmDialog
-        open={redo !== null}
-        onClose={() => setRedo(null)}
-        onConfirm={() => redo !== null && retranscribe(project.id, redo, '没按模板输出')}
-        title={`重新转写第 ${redo ?? ''} 集？`}
-        desc={`用视频解析模型（${modelLabel(modelOf(project, 'video'))}）重新转写这一集。合并好的剧本会作废（包括已应用的校对），转写完成后重新合并、再 AI 校对${sent ? '；已送入拆解的剧本不受影响' : ''}。`}
-        confirmText="重新转写"
       />
     </Card>
   )
@@ -713,8 +635,9 @@ export default function VideoStage({ project }: { project: Project }) {
   return (
     <>
       <QueueCard project={project} job={job} onView={setViewing} />
+      {job.episodes.some((e) => e.status === 'done') && <VideoCheck project={project} job={job} />}
       <MergeCard project={project} job={job} />
-      <ShotModal job={job} ep={viewing} onClose={() => setViewing(null)} onNavigate={setViewing} />
+      <ScriptModal job={job} ep={viewing} onClose={() => setViewing(null)} onNavigate={setViewing} />
     </>
   )
 }

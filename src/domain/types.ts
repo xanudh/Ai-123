@@ -9,8 +9,6 @@ export type ModelGroup = 'video' | 'text'
 /** 可选的大模型（按厂商，具体版本接入真实接口时再定） */
 export type ModelId = 'deepseek' | 'qwen' | 'doubao' | 'kimi' | 'gpt' | 'gemini'
 
-export type AspectRatio = '9:16' | '16:9' | '1:1'
-
 export type ProjectStatus = 'draft' | 'writing' | 'reviewing' | 'delivered'
 
 /** 流水线阶段，对应需求文档中的板块 */
@@ -40,8 +38,9 @@ export interface ScriptSpec {
   totalEpisodes: number
   /** 单集时长（秒）；逐集剧本的字数按时长换算 */
   episodeSeconds: number
-  aspectRatio: AspectRatio
   language: ScriptLanguage
+  /** 完全按对标剧的集数与单集时长：勾选后两项跟着对标剧走，拆解 / 转写后自动填上（旧数据没有） */
+  followBenchmark?: boolean
 }
 
 /** 节奏框架：付费卡点（第一个即首付费集）、大反转、结局高潮区间 */
@@ -75,17 +74,32 @@ export interface Synopsis {
   genre: string
   coreSetup: string
   style: string
+  /** 世界观：总分写法，先写整个世界是什么样的，再分阵营设定、主要地点（私设的专有名词要写细） */
   world: string
+  /** 核心亮点，也就是期待值：核心爽点、主线任务（前十集）、情感双线、子类型特征 */
   highlights: string
+  /** 金手指：不分类型（11/4 第二轮），首次出现、核心能力（每项讲清是什么、来历、能做到什么）、表现方式、与主线强相关 */
+  goldenFinger: string
+  /** 故事简介：一段话把整个故事从头讲到尾：主角处境 → 谁为了什么用什么手段逼主角 → 转机 → 高潮 → 结局 */
   summary: string
   paywalls: string
 }
 
-/** 拆解板块二：对标剧人物 */
-export interface BenchmarkCharacter {
+/**
+ * 主角另拆的几项（11/4 标注：主角要拆细），名字和人物设定的小传对得上。
+ * 11/4 第五轮标注（#69）页面上只留简介（intro）、身份、金手指、动机（表面追求 / 终极渴望 / 潜意识恐惧）；背景、缺陷、弧光、代表台词照样拆，不显示
+ */
+export type HeroDetailKey = 'intro' | 'profile' | 'background' | 'ability' | 'goal' | 'desire' | 'fear' | 'flaw' | 'arc' | 'quotes'
+
+/** 拆解板块二：对标剧人物；主角拆简介、身份、金手指、动机，其余人物拆在这部剧里的作用和定位（11/4 第五轮标注）；性格、事件照样拆，不显示 */
+export interface BenchmarkCharacter extends Partial<Record<HeroDetailKey, string>> {
   name: string
+  /** 定位：主角 / 感情线核心 / 反派 / 配角 · 盟友 */
   role: string
+  /** 配角在这部剧里的作用（旧数据没有） */
+  purpose?: string
   personality: string
+  /** 角色事件；主角按冲突主线分段写 */
   events: string
 }
 
@@ -103,25 +117,65 @@ export interface PlotBeat {
   beat: string
   range: string
   content: string
+  /** 仿写：这一段对应对标剧冲突主线的第几段（0 起）；-1 为我们新加的段、不对位；不写时按默认规则对（段数相同一一对，不同按内容配）（旧数据没有） */
+  bench?: number
 }
 
-/** 逐集明细表的 12 个字段 */
+/** 逐句细拆的一句（或连着的一段）：原文、这时的情绪；turn 表示这一句带来情绪转折，也就是核心台词 */
+export interface LineBeat {
+  /** 原文：「说话人：台词」或「△ 动作」 */
+  text: string
+  /** 这一句时观众的情绪，如：期待、屈辱 */
+  emotion: string
+  turn: boolean
+}
+
+/** 细拆的一场：只拆第 1 集到一卡（第一个付费卡点）那一集，和之后的付费卡点集（11/4 标注 #84） */
+export interface SceneBeat {
+  /** 场次与地点：1-1 议事厅 */
+  scene: string
+  /** 关键动作 / 画面：这一场通过什么表现了什么 */
+  action: string
+  /** 逐句 / 逐段（11/4 标注）：情绪在哪里转、哪句台词带来转折；这一场的情绪转折和核心台词都从这里读 */
+  lines: LineBeat[]
+}
+
+/**
+ * 拆解「冲突主线 · 内容简介」里的一集：页面上只有走向和细拆（一卡前和付费卡点集）。
+ * 其余是 AI 拆解时一并产出的系统字段，页面不显示、不编辑：节奏曲线对比、集纲对位、审稿查照抄和结构偏离时用。
+ */
 export interface EpisodeBreakdown {
   ep: number
+  /** 本集走向：一段话，哪部分剧情、通过什么、表现了什么 */
+  flow: string
+  /** 细拆：第 1 集到一卡那一集逐场、逐句拆到情绪转折和核心台词；一卡之后只有付费卡点集有（11/4 标注 #84），其余为空 */
+  scenes: SceneBeat[]
+  /** 首集（11/4 第五轮标注 #68）：前 3 秒怎么抓人；钩子用 endHook（旧数据没有） */
+  open3s?: string
+  /** 首集：前 30 秒的主要动作和画面，一行一个 */
+  open30s?: string
+  /** 付费卡点集（一卡和之后的每个付费卡点，11/4 标注 #84 起）：卡点拆解——卡在哪一刻、卡前情绪怎么推上去、留下什么问题（旧数据只有一卡有，或都没有） */
+  cardPoint?: string
+  /** 系统字段：开场钩子（类型：内容） */
   openHook: string
+  /** 系统字段：本集一句话事件（审稿查照抄用） */
   event: string
+  /** 系统字段：冲突强度 1–5 */
   conflict: number
-  newCharacters: string
-  relationChange: string
+  /** 系统字段：伏笔埋设 */
   plant: string
+  /** 系统字段：伏笔回收 */
   payoff: string
+  /** 系统字段：结尾钩子（类型：内容） */
   endHook: string
+  /** 系统字段：是否付费卡点 */
   paywall: boolean
-  paywallMoment: string
+  /** 系统字段：情绪强度 1–5 */
   emotion: number
 }
 
-export type BreakdownBlock = 'synopsis' | 'characters' | 'mainline' | 'episodes'
+/** 审核板块：故事梗概、冲突主线 · 内容简介（11/4 合并成一块）、人物设定 */
+export type BreakdownBlock = 'synopsis' | 'mainline' | 'characters'
 
 export interface Breakdown {
   synopsis: Synopsis
@@ -147,12 +201,44 @@ export interface Innovation {
 
 export type StoryStructure = '单线叙事' | '双线叙事' | '多线叙事'
 
+/** 故事架构里单独生成的一项 */
+export type ArchItem =
+  | 'idea'
+  | 'logline'
+  | 'plan'
+  | 'innovations'
+  | 'goldenFinger'
+  | 'heroSetup'
+  | 'world'
+  | 'background'
+  | 'highlights'
+  | 'factions'
+  | 'formula'
+  | 'mainLine'
+  | 'rhythm'
+  | 'writingRules'
+  | 'references'
+
+/** AI 生成结果里一句话的来源：原文（编剧写明的）/ 推断（从依据里推出来的）/ 补充（依据里没有，用题材常识补的） */
+export type MarkSource = 'given' | 'inferred' | 'filled'
+
+export interface ArchMark {
+  /** 生成结果里的一行（或一句） */
+  text: string
+  src: MarkSource
+  /** 从哪一项来：核心设定 / 金手指 / 核心卖点 / 题材常识 …… */
+  from: string
+}
+
+/** 生成依据指纹：依据名 → 当时内容的指纹 */
+export type BasisPrint = Record<string, string>
+
 export interface Architecture {
   /** 编剧自己的改写想法 / 故事方向（可空，空时由 AI 提方向） */
   idea: string
-  /** 定稿的改写方案 */
+  /** 原创的整体框架（开局、转折、结局）：11/4 第五轮从页面上删掉，生成不再读（开局、结局改按故事背景）；字段留着，旧数据不动。仿写不用（11/3 去掉改写方案，旧数据并进改写想法） */
   plan: string
-  /** 爽点公式：每 X 集一次什么爽感 */
+  /** 爽点公式：每 X 集一次什么爽感（11/4 页面上删掉，生成不再读；字段留着，旧数据不动） */
   formula: string
   /** 冲突主线各段（默认五段，可增删）；段落名可改 */
   mainLine: PlotBeat[]
@@ -160,10 +246,11 @@ export interface Architecture {
   phaseEnds: number[] | null
   innovations: Innovation[]
   status: ReviewStatus
+  /** 故事结构（11/4 页面上删掉，生成不再读；字段留着，旧数据不动） */
   structure: StoryStructure
-  /** 叙事视角 */
+  /** 叙事视角（同上） */
   viewpoint: string
-  /** 伏笔 / 叙事线索连续多少集没有推进就提醒 */
+  /** 伏笔 / 叙事线索连续多少集没有推进就提醒（同上；页面上删掉后按默认 0：不做沉寂提醒） */
   silenceThreshold: number
   /** 世界观设定 */
   world: string
@@ -171,14 +258,20 @@ export interface Architecture {
   factions: string
   /** 故事背景：开场前发生了什么、主角被逼到什么处境（旧数据没有） */
   background: string
+  /** 核心亮点（11/4 标注 #71，排在故事背景后面）：期待值（观众为什么追下去）和情绪（主打什么情绪、怎么起伏）（旧数据没有，升级时补空） */
+  highlights: string
   /** 金手指 / 核心卖点 */
   goldenFinger: string
   /** 主角人设（一句话版，人物设定里再展开） */
   heroSetup: string
   /** 全局写作要求：每集写作都会带上 */
   writingRules: string
-  /** 参考作品 */
+  /** 参考作品（11/4 页面上删掉，生成不再读；字段留着，旧数据不动） */
   references: string
+  /** AI 生成时每行的来源：原文 / 推断 / 补充；编剧改过的行不再标（旧数据没有） */
+  marks?: Partial<Record<ArchItem, ArchMark[]>>
+  /** 主角人设拆到人物设定的时间：拆过后主角以人物设定为准，这里只读（旧数据没有） */
+  heroSplitAt?: string
 }
 
 export type CharacterRole = '主角' | '暧昧对象' | '反派' | '配角'
@@ -187,7 +280,10 @@ export interface Character {
   id: string
   name: string
   nameEn: string
+  /** 按哪类定位检查与写作；自定义定位也要归到这四类之一 */
   role: CharacterRole
+  /** 自定义定位，如「女主闺蜜」「男主母亲」；填了就代替 role 显示 */
+  roleLabel?: string
   gender: string
   age: string
   /** 身份：外在标签 */
@@ -263,6 +359,15 @@ export interface OutlineEpisode {
   approved: boolean
 }
 
+/** 人物在某一场的服化道：拆资产用（哪一场进来、穿什么、什么妆造） */
+export interface CastLook {
+  name: string
+  /** 场景地点，对应场景标题里的地点 */
+  scene: string
+  /** 服化道重点：服装、妆发、道具 */
+  look: string
+}
+
 /** 分集蓝图：写作前的预览设定 */
 export interface EpisodeBlueprint {
   ep: number
@@ -279,6 +384,8 @@ export interface EpisodeBlueprint {
   carry?: string
   /** 末尾悬念钩子 */
   hook: string
+  /** 人物本集状态：每个人在哪一场进来、服化道重点（旧数据没有） */
+  looks?: CastLook[]
   /** 作者微操指导 */
   guidance: string
   /** 集要点：定稿后自动提炼 */
@@ -327,9 +434,14 @@ export type ReviewCode =
   | 'rule'
   | 'voice'
   | 'event'
+  | 'drift'
+  | 'benchName'
+  | 'benchLine'
+  | 'benchEvent'
+  | 'benchShape'
 
-/** 审稿意见对照的依据：核心设定 / 人物设定 / 状态库 / 集纲 / 蓝图 / 伏笔计划 / 格式与篇幅 / 文风；写作也按这几项写 */
-export type ReviewBasis = 'core' | 'character' | 'state' | 'outline' | 'blueprint' | 'foreshadow' | 'format' | 'style'
+/** 审稿意见对照的依据：核心设定 / 人物设定 / 状态库 / 集纲 / 蓝图 / 伏笔计划 / 格式与篇幅 / 文风 / 对标剧拆解（只有仿写）；写作也按这几项写 */
+export type ReviewBasis = 'core' | 'character' | 'state' | 'outline' | 'blueprint' | 'foreshadow' | 'format' | 'style' | 'bench'
 
 /** 意见在修稿后的走向：new 新发现 / still 修稿后仍在 / stuck 两轮没改掉 / back 改好又出现 / fixed 已改掉；stuck 与 back 不再交给 AI 修稿 */
 export type ReviewItemStatus = 'new' | 'still' | 'stuck' | 'back' | 'fixed'
@@ -487,6 +599,8 @@ export interface VideoEpisode {
   doneAt?: string
   /** 解析这一集的视频模型 */
   model?: ModelId
+  /** 校对时改过转写稿的时间：晚于合并时间就要重新合并 */
+  editedAt?: string
 }
 
 /** 合并后的完整剧本 */
@@ -497,42 +611,6 @@ export interface MergedScript {
   mergedAt: string
   /** 送入对标剧拆解的时间 */
   importedAt: string | null
-  /** 最近一次 AI 校对 */
-  proofread?: ProofRecord
-}
-
-/** AI 校对的三类问题：某一集没按模板输出、同一人物名字写法不一、同音错别字 */
-export type ProofKind = 'template' | 'name' | 'typo'
-
-export interface ProofItem {
-  id: string
-  kind: ProofKind
-  /** 一句话说明 */
-  text: string
-  /** template：哪一集 */
-  ep?: number
-  /** name / typo：把 from 改成 to */
-  from?: string
-  to?: string
-  /** 改动处数 */
-  count: number
-  /** 出现在哪几集 */
-  eps: number[]
-  /** template：偏离模板的地方 */
-  problems?: { label: string; count: number }[]
-  /** 改前改后的例句（最多几条） */
-  samples: { before: string; after: string }[]
-  /** template：被概括掉的台词，重整补不回来，要重新转写这一集 */
-  lost?: { count: number; sample: string }
-}
-
-export interface ProofRecord {
-  at: string
-  model?: ModelId
-  /** 查出几项 */
-  found: number
-  /** 应用了哪些 */
-  applied: { kind: ProofKind; text: string; count: number }[]
 }
 
 /** 视频转剧本任务：一部对标剧的全集视频 */
@@ -603,6 +681,8 @@ export interface ProjectWork {
   qa: QaReport | null
   /** 编剧保留不改的审稿意见（旧数据没有） */
   keeps?: ReviewKeep[]
+  /** 生成依据指纹：每份 AI 产物（故事架构各项、人物设定、全剧总览、阶段粗纲）生成时用到的依据；上游改了就提示「依据已改」，不自动重写（旧数据没有） */
+  prints?: Record<string, BasisPrint>
 }
 
 export interface Project {
@@ -614,10 +694,13 @@ export interface Project {
   idea: string
   /** 核心设定（高概念 / Logline）：主角是谁 + 核心困境 + 反常规设定 */
   logline: string
-  /** 类型：都市 / 玄幻 / 仙侠 / 科幻 … */
-  category: string
+  /** 类型：都市 / 玄幻 …（11/4 页面上删掉，生成不再读；字段留着，旧数据不动，新项目没有） */
+  category?: string
+  /** 题材类型（11/4 起选项取自 StoryPlay，跟着目标市场走；之前叫题材元素） */
   genres: string[]
-  audience: Audience
+  /** 目标受众：故事架构里必选；11/4 标注 #85 起新项目先空着（''），旧项目原值不动 */
+  audience: Audience | ''
+  /** 风格元素：风格 + 元素（11/4 起；之前叫风格基调） */
   tones: string[]
   markets: string[]
   platforms: string[]

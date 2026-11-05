@@ -2,7 +2,7 @@
  * 视频转剧本的本地模拟。演示环境不访问外部链接、不读取视频内容：
  * 分集与转写内容取自示例剧，镜头切分、时间码、景别与转写时常见的格式问题按规则生成，结果可复现。
  */
-import { cnToNumber, episodeHeading, formatScene, isSceneHeading, parseDialogue, parseScene, speakerLabel, withCast } from '../../domain/scriptFormat'
+import { cnToNumber, episodeHeading, formatScene, isSceneHeading, parseDialogue, speakerLabel, withCast } from '../../domain/scriptFormat'
 import type { Shot, VideoEpisode, VideoJob } from '../../domain/types'
 import { parseSource } from './breakdown'
 import { hash, pick, rng } from './rng'
@@ -53,7 +53,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10
 
 const contentOf = (ep: number) => SAMPLE[(ep - 1) % SAMPLE.length].text.split('\n')
 
-/** 转写时听错的人名与词（同音字）：演示里按规则混进转写稿，合并后由 AI 校对找出来 */
+/** 转写时听错的人名与词（同音字）：演示里按规则混进转写稿，人工对照视频校对时改 */
 const NAME_SLIPS: Record<string, string> = { 艾拉: '爱拉', 凯恩: '恺恩', 薇薇安: '微微安', 卢卡斯: '路卡斯', 马库斯: '玛库斯', 莉娜: '丽娜' }
 const WORD_SLIPS: Record<string, string> = { 项链: '项练', 联盟: '连盟', 伴侣: '伴旅', 废物: '费物', 竟然: '竞然', 胎记: '台记' }
 
@@ -82,57 +82,11 @@ function noisy(r: Rng, rawSpeaker: string, cue: string | undefined, rawText: str
   return [{ speaker, cue, line: half }]
 }
 
-/** 换场的口头叙述：夜，内，宴会厅 → 宴会厅（夜晚，室内） */
-function sceneProse(scene: string) {
-  const h = parseScene(scene)
-  const time = { 日: '白天', 夜: '夜晚', 晨: '清晨', 黄昏: '傍晚' }[h.time]
-  const space = { 内: '室内', 外: '室外', 内外: '室内外' }[h.space]
-  return time && space ? `${h.place}（${time}，${space}）` : scene
-}
-
-const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
-
-/**
- * 没按模板输出的一集：时间码写进正文、台词写成「某某说：“……”」、换场写成一句叙述，
- * 还有两处来回的对白被概括成一句（按模板重整也补不回来，要重新转写）。
- */
-function offTemplate(shots: Shot[]): Shot[] {
-  const out: Shot[] = []
-  let summed = 0
-  let last = -99
-  for (let i = 0; i < shots.length; i++) {
-    const s = shots[i]
-    const at = `[${mmss(s.start)}] `
-    const base = { start: s.start, end: s.end, size: s.size, ...(s.sound ? { sound: s.sound } : {}) }
-    if (s.scene) out.push({ start: s.start, end: s.start, size: '全景', action: `${at}镜头切到${sceneProse(s.scene)}` })
-    const next = shots[i + 1]
-    if (s.speaker && next?.speaker && next.speaker !== s.speaker && !next.scene && summed < 2 && i - last > 6) {
-      out.push({ ...base, end: next.end, action: `${at}${s.speaker}和${next.speaker}争执了几句` })
-      summed++
-      last = i
-      i++
-      continue
-    }
-    // 内心独白、画外音也一律写成「说」——没按模板时分不出声音类型
-    if (s.speaker && s.line !== undefined) out.push({ ...base, action: `${at}${s.speaker}${s.cue ? `（${s.cue}）` : ''}说：“${s.line}”` })
-    else out.push({ ...base, action: at + s.action })
-  }
-  return out
-}
-
-/** 这一集没按模板输出：结构化的台词一句也没有，台词都写进了画面描述 */
+/** 旧数据：这一集没按模板输出（结构化的台词一句也没有，台词都写进了画面描述）；现在后台按模板约束输出，不再出现 */
 export const isOffTemplate = (shots: Shot[]) => shots.length > 0 && !shots.some((s) => s.speaker) && shots.some((s) => /说：“/.test(s.action))
 
-/** 模拟视频解析模型偶尔不按模板输出：每个任务固定一集（不和会失败的那集重合）首次转写这样输出，重新转写即恢复 */
-export function offTemplateOf(job: VideoJob, ep: VideoEpisode) {
-  const n = job.episodes.length
-  if (n < 3 || ep.attempts > 1) return false
-  const fail = 1 + (hash(job.createdAt) % (n - 1))
-  return job.episodes[(fail + Math.floor(n / 2)) % n].ep === ep.ep
-}
-
-/** 第 ep 集逐镜头转写：场景标题（日，外，地点）挂在换场后的第一个镜头上；动作开头的【特写】等记成景别；off：这次没按模板输出 */
-export function transcribe(ep: number, off = false): Shot[] {
+/** 第 ep 集逐镜头转写：场景标题（日，外，地点）挂在换场后的第一个镜头上；动作开头的【特写】等记成景别。后台按模板约束输出，格式不会走样 */
+export function transcribe(ep: number): Shot[] {
   const r = rng(hash(`video-${ep}`))
   const shots: Shot[] = []
   let t = 0
@@ -170,7 +124,7 @@ export function transcribe(ep: number, off = false): Shot[] {
     push({ size, action, ...(sound ? { sound } : {}) }, Math.min(6, Math.max(2, action.length / 8 + 1.5)))
   }
   if (shots.length) shots[shots.length - 1].sound = '悬念音效 · 定格'
-  return off ? offTemplate(shots) : shots
+  return shots
 }
 
 export const durationOf = (ep: number) => {
@@ -247,7 +201,7 @@ export function mergeEpisodes(episodes: VideoEpisode[]) {
     .sort((a, b) => a.ep - b.ep)
     .map((e) => {
       const lines: string[] = []
-      // 没按模板输出的集保持原样，留给 AI 校对重整
+      // 旧数据里没按模板输出的集保持原样
       const off = isOffTemplate(e.shots)
       let prev: Shot | null = null
       let k = 0

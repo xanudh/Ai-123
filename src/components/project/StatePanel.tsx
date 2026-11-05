@@ -3,10 +3,12 @@ import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsRight, Database, Exte
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
+import { episodeLooks } from '../../domain/looks'
 import { episodeSnapshot, overallSnapshot, phaseSnapshot } from '../../domain/snapshot'
 import type { CastEntry, ForeshadowAt, StateFocus } from '../../domain/snapshot'
 import type { PlanEventKind, Project } from '../../domain/types'
 import { PLAN_EVENT_META } from '../../domain/constants'
+import { SHOW_FORESHADOW } from '../../domain/pipeline'
 import { foreshadowName, phaseNames, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
 import type { ForeshadowStatus } from '../../domain/work'
 import { STATE_TAB, activeTab, useStatePanel } from '../../store/statePanel'
@@ -55,6 +57,79 @@ function CastList({ cast, phase }: { cast: CastEntry[]; phase?: boolean }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+/** 服化道一列：连续几场没换装就合成一格；被合并的行返回 0 */
+const lookSpan = (rows: ({ look: string } | null)[], i: number) => {
+  const look = rows[i]?.look ?? ''
+  if (i > 0 && (rows[i - 1]?.look ?? '') === look) return 0
+  let n = 1
+  while (i + n < rows.length && (rows[i + n]?.look ?? '') === look) n++
+  return n
+}
+
+/**
+ * 本集人物：名称、定位与「首次出场」「妆造变 N 次」标签；下面按场次列出进场的场景和这一场的服化道重点。
+ * 侧栏窄，用一张紧凑的表：名称一列合并单元格，一场一行，没换装的几场服化道只写一次。
+ */
+function CastTable({ project, ep, draftId, cast }: { project: Project; ep: number; draftId?: string; cast: CastEntry[] }) {
+  if (!cast.length) return <Empty>本集还没有可识别的出场人物</Empty>
+  const looks = new Map(episodeLooks(project, ep, cast.map((c) => c.name), draftId).map((l) => [l.name, l]))
+  return (
+    <table data-cast-table className="w-full table-fixed border-collapse text-[12px] leading-[18px]">
+      <colgroup>
+        <col className="w-[34%]" />
+        <col className="w-[30%]" />
+        <col />
+      </colgroup>
+      <thead>
+        <tr className="text-left text-[11px] text-ink-400">
+          <th className="pb-1 font-normal">人物</th>
+          <th className="pb-1 font-normal">进场</th>
+          <th className="pb-1 font-normal">服化道重点</th>
+        </tr>
+      </thead>
+      {cast.map((c) => {
+        const l = looks.get(c.name)
+        const rows = l?.scenes.length ? l.scenes : [null]
+        return (
+          <tbody key={c.name} data-cast={c.name} className="border-t border-line">
+            {rows.map((sc, i) => (
+              <tr key={i} className="align-top">
+                {i === 0 && (
+                  <td rowSpan={rows.length} className="py-1 pr-1.5">
+                    <div className="truncate font-medium text-ink-900" title={c.name}>
+                      {c.name}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      <Badge tone={ROLE_TONE(c.role)}>{c.role ?? '未登记'}</Badge>
+                      {c.first && <Badge tone="violet">首次出场</Badge>}
+                      {!!l?.changes && <Badge tone="amber">妆造变 {l.changes} 次</Badge>}
+                    </div>
+                  </td>
+                )}
+                <td className="py-1 pr-1.5 text-ink-700">
+                  {sc ? (
+                    <>
+                      {sc.no && <span className="mr-1 text-ink-400 tabular-nums">{sc.no}</span>}
+                      {sc.place || '—'}
+                    </>
+                  ) : (
+                    <span className="text-ink-300">—</span>
+                  )}
+                </td>
+                {lookSpan(rows, i) > 0 && (
+                  <td data-look rowSpan={lookSpan(rows, i)} className="py-1 text-ink-700">
+                    {sc?.look || <span className="text-ink-300">待登记</span>}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        )
+      })}
+    </table>
   )
 }
 
@@ -215,12 +290,14 @@ function EpisodeView({ project, ep, draftId }: { project: Project; ep: number; d
         </dl>
       </div>
 
-      <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
-        <ForeshadowList list={s.foreshadows} empty="本集没有要埋、要收或进行中的伏笔" project={project} ep={ep} />
-      </Section>
+      {SHOW_FORESHADOW && (
+        <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
+          <ForeshadowList list={s.foreshadows} empty="本集没有要埋、要收或进行中的伏笔" project={project} ep={ep} />
+        </Section>
+      )}
 
-      <Section icon={<Users size={14} />} title="人物 · 截至本集" count={s.cast.length}>
-        <CastList cast={s.cast} />
+      <Section icon={<Users size={14} />} title="人物 · 本集进场与服化道" count={s.cast.length}>
+        <CastTable project={project} ep={ep} draftId={draftId} cast={s.cast} />
       </Section>
 
       {s.relations.length > 0 && (
@@ -288,9 +365,11 @@ function PhaseView({ project, index }: { project: Project; index: number }) {
         {s.rough ? <p className="line-clamp-6 text-[12.5px] leading-5 whitespace-pre-wrap text-ink-700">{s.rough}</p> : <Empty>还没有阶段粗纲</Empty>}
       </div>
 
-      <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
-        <ForeshadowList list={s.foreshadows} empty="本段没有计划中的伏笔" />
-      </Section>
+      {SHOW_FORESHADOW && (
+        <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
+          <ForeshadowList list={s.foreshadows} empty="本段没有计划中的伏笔" />
+        </Section>
+      )}
 
       <Section icon={<Users size={14} />} title="人物 · 截至段末" count={s.cast.length}>
         <CastList cast={s.cast} phase />
@@ -381,22 +460,27 @@ function OverallView({ project }: { project: Project }) {
         {s.drafting > 0 && <p className="text-xs text-ink-500">另有 {s.drafting} 集草稿未定稿，不计入全剧状态</p>}
       </div>
 
-      <Section icon={<AlertTriangle size={14} />} title="需处理" count={s.alerts.length}>
-        {s.alerts.length ? (
-          <AlertList project={project} alerts={s.alerts} />
-        ) : (
-          <Empty>没有逾期或沉寂的伏笔</Empty>
-        )}
-      </Section>
+      {/* 需处理只有伏笔的逾期 / 沉寂：伏笔这一步拿掉时和伏笔一起不显示 */}
+      {SHOW_FORESHADOW && (
+        <>
+          <Section icon={<AlertTriangle size={14} />} title="需处理" count={s.alerts.length}>
+            {s.alerts.length ? (
+              <AlertList project={project} alerts={s.alerts} />
+            ) : (
+              <Empty>没有逾期或沉寂的伏笔</Empty>
+            )}
+          </Section>
 
-      <Section icon={<Flag size={14} />} title="伏笔与线索" count={lib.foreshadows.length}>
-        <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
-          <Badge>已计划 {count('已计划')}</Badge>
-          <Badge tone="amber">已埋设 · 待回收 {count('已埋设')}</Badge>
-          <Badge tone="green">已回收 {count('已回收')}</Badge>
-        </div>
-        <ForeshadowList list={lib.foreshadows.filter((f) => f.status === '已埋设').map((f) => ({ ...f, task: null, alert: null }))} empty="没有进行中的伏笔" />
-      </Section>
+          <Section icon={<Flag size={14} />} title="伏笔与线索" count={lib.foreshadows.length}>
+            <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
+              <Badge>已计划 {count('已计划')}</Badge>
+              <Badge tone="amber">已埋设 · 待回收 {count('已埋设')}</Badge>
+              <Badge tone="green">已回收 {count('已回收')}</Badge>
+            </div>
+            <ForeshadowList list={lib.foreshadows.filter((f) => f.status === '已埋设').map((f) => ({ ...f, task: null, alert: null }))} empty="没有进行中的伏笔" />
+          </Section>
+        </>
+      )}
 
       <Section icon={<Users size={14} />} title="人物 · 最新状态" count={chars.length}>
         {chars.length ? (
@@ -450,7 +534,7 @@ function OverallView({ project }: { project: Project }) {
 const tabsOf = (f: StateFocus): Tab[] => (f.kind === 'ep' ? ['ep', 'phase', 'all'] : f.kind === 'phase' ? ['phase', 'all'] : ['all'])
 const TAB_LABEL: Record<Tab, string> = { ep: '本集', phase: '本阶段', all: '全剧' }
 
-/** 剧本状态库侧栏：情节大纲、伏笔与线索、逐集剧本页面可随时展开核对；页面登记了标签页时（如草稿页）与之并列 */
+/** 剧本状态库侧栏：情节大纲、伏笔与线索（这一步拿掉时没有）、逐集剧本页面可随时展开核对；页面登记了标签页时（如草稿页）与之并列 */
 export function StatePanel({ project }: { project: Project }) {
   const { open, focus, setOpen, tabs: pageTabs, tab: pageTab, setTab: setPageTab, setSlot } = useStatePanel()
   const shown = activeTab(pageTabs, pageTab)
@@ -503,7 +587,7 @@ export function StatePanel({ project }: { project: Project }) {
   const names = phaseNames(project)
 
   return (
-    <aside aria-label="剧本状态库" className="fixed top-16 right-0 bottom-12 z-30 flex w-[380px] max-w-[92vw] animate-fade-in flex-col border-l border-line bg-white shadow-pop xl:shadow-none">
+    <aside aria-label="剧本状态库" className="fixed top-16 right-0 bottom-(--bottom-bar) z-30 flex w-[380px] max-w-[92vw] animate-fade-in flex-col border-l border-line bg-white shadow-pop xl:shadow-none">
       <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-1.5 text-[14px] font-semibold text-ink-900">
           <Database size={15} className="text-brand-600" />

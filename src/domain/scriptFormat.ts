@@ -161,6 +161,7 @@ export const EPISODE_LINE = /^第\s*([0-9零〇一二两三四五六七八九十
 
 /** 小传标题里的定位：主角与感情线按性别写男主 / 女主，其余写反派 / 配角 */
 export function roleTag(c: Character) {
+  if (c.roleLabel?.trim()) return c.roleLabel.trim()
   if (c.role !== '主角' && c.role !== '暧昧对象') return c.role
   return c.gender === '女' ? '女主' : c.gender === '男' ? '男主' : c.role
 }

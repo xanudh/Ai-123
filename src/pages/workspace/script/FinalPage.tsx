@@ -7,9 +7,10 @@ import { AiButton, InlineInput, latestProject, stagePath, useAiTask } from '../.
 import { PointsView } from '../../../components/project/PointsView'
 import { Badge, Card, EmptyState, Segmented, buttonClass, dotBefore } from '../../../components/ui'
 import { PLAN_EVENT_META } from '../../../domain/constants'
+import { SHOW_FORESHADOW } from '../../../domain/pipeline'
 import type { EpisodeScript, LineNote } from '../../../domain/types'
 import { modelLabel } from '../../../domain/models'
-import { blueprintOf, draftLabel, draftsOf, eventCandidates, foreshadowName, scriptOf, wordCount } from '../../../domain/work'
+import { blueprintOf, draftLabel, draftsOf, eventCandidates, foreshadowName, foreshadowPlans, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { extractPoints, translateEpisode } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
@@ -84,7 +85,7 @@ export default function FinalPage() {
   const eps = w.scripts.map((s) => s.ep)
   const prev = Math.max(0, ...eps.filter((e) => e < ep))
   const next = Math.min(Infinity, ...eps.filter((e) => e > ep))
-  const candidates = w.foreshadows.flatMap((f) => eventCandidates(f, [script]).map((c) => ({ f, c })))
+  const candidates = foreshadowPlans(w).flatMap((f) => eventCandidates(f, [script]).map((c) => ({ f, c })))
   // 版本二：从质检「去改正文」过来时带着问题
   const fromQa = v2 && params.get('from') === 'qa'
   const qaIssue = fromQa ? w.qa?.issues.find((i) => i.id === params.get('issue') && i.ep === ep) : undefined
@@ -218,7 +219,7 @@ export default function FinalPage() {
         ]}
       />
 
-      {/* 本集要点（含伏笔推进候选）/ 标注：填进状态库侧栏对应的标签页；人物状态在要点的「角色动态」与状态库标签页里 */}
+      {/* 本集要点（含伏笔推进候选，伏笔这一步拿掉时不显示）/ 标注：填进状态库侧栏对应的标签页；人物状态在要点的「角色动态」与状态库标签页里 */}
       {slot &&
         createPortal(
           sideTab === 'points' ? (
@@ -247,35 +248,37 @@ export default function FinalPage() {
                 )}
               </div>
 
-              <div className="border-t border-line pt-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink-900">
-                    <Flag size={13} className="text-ink-400" />
-                    伏笔推进候选
-                  </span>
-                  {candidates.length > 0 && (
-                    <Link to={stagePath(project, 'foreshadow')} className="text-xs text-brand-600 hover:text-brand-700">
-                      去确认
-                    </Link>
+              {SHOW_FORESHADOW && (
+                <div className="border-t border-line pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink-900">
+                      <Flag size={13} className="text-ink-400" />
+                      伏笔推进候选
+                    </span>
+                    {candidates.length > 0 && (
+                      <Link to={stagePath(project, 'foreshadow')} className="text-xs text-brand-600 hover:text-brand-700">
+                        去确认
+                      </Link>
+                    )}
+                  </div>
+                  {candidates.length ? (
+                    <ul className="space-y-2.5">
+                      {candidates.map(({ f, c }) => (
+                        <li key={f.id} className="text-[12.5px] leading-5">
+                          <div className="flex items-center gap-1.5">
+                            <Badge tone={PLAN_EVENT_META[c.kind].tone}>{PLAN_EVENT_META[c.kind].label}</Badge>
+                            <span className="truncate font-medium text-ink-900">{foreshadowName(f)}</span>
+                          </div>
+                          <p className="mt-0.5 line-clamp-2 text-ink-500">{c.text}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-ink-400">没有待确认的推进</p>
                   )}
+                  <p className="mt-2 text-xs text-ink-400">正文里命中伏笔检索词的行，确认后才计入状态库</p>
                 </div>
-                {candidates.length ? (
-                  <ul className="space-y-2.5">
-                    {candidates.map(({ f, c }) => (
-                      <li key={f.id} className="text-[12.5px] leading-5">
-                        <div className="flex items-center gap-1.5">
-                          <Badge tone={PLAN_EVENT_META[c.kind].tone}>{PLAN_EVENT_META[c.kind].label}</Badge>
-                          <span className="truncate font-medium text-ink-900">{foreshadowName(f)}</span>
-                        </div>
-                        <p className="mt-0.5 line-clamp-2 text-ink-500">{c.text}</p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-ink-400">没有待确认的推进</p>
-                )}
-                <p className="mt-2 text-xs text-ink-400">正文里命中伏笔检索词的行，确认后才计入状态库</p>
-              </div>
+              )}
 
             </div>
           ) : sideTab === 'notes' ? (

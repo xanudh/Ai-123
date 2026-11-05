@@ -1,15 +1,13 @@
-import { ArrowRight, CheckCircle2, ChevronDown, Info, Lock } from 'lucide-react'
+import { ChevronDown, Info, Lock } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router'
-import { Badge, buttonClass } from '../components/ui'
+import { StageNeed, StageNeedText } from '../components/stage/StageNeed'
+import { Badge } from '../components/ui'
 import type { StageMeta } from '../domain/pipeline'
 import type { Project } from '../domain/types'
 import { stageState } from '../domain/work'
-import { stageDetail, stageTo } from './flow'
+import { stageDetail } from './flow'
 
-const firstClause = (text: string) => text.split(/[，；：。]/)[0]
-
-/** 版本二的环节页头：说明默认折叠；本环节完成后出现「下一步」条 */
+/** 版本二的环节页头：说明默认折叠；「去下一步」在页面底部的环节条里（StageBar） */
 export function StageHeadV2({ project, meta, index, next }: { project: Project; meta: StageMeta; index: number; next: StageMeta | null }) {
   const [showSummary, setShowSummary] = useState(false)
   const done = stageState(project, meta.key) === 'done'
@@ -31,7 +29,10 @@ export function StageHeadV2({ project, meta, index, next }: { project: Project; 
                 {meta.phase}
               </Badge>
             ) : (
-              detail && <Badge tone={done ? 'green' : 'violet'}>{detail}</Badge>
+              <>
+                {detail && <Badge tone={done ? 'green' : 'violet'}>{detail}</Badge>}
+                <StageNeed project={project} meta={meta} next={next} />
+              </>
             )}
           </h2>
         </div>
@@ -49,24 +50,7 @@ export function StageHeadV2({ project, meta, index, next }: { project: Project; 
         )}
       </div>
       {!meta.phase && showSummary && <p className="-mt-2 max-w-3xl animate-fade-in text-[13px] leading-6 text-ink-500">{meta.summary}</p>}
-
-      {done && next && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3" data-v2="next-stage">
-          <CheckCircle2 size={18} className="shrink-0 text-emerald-600" />
-          <div className="min-w-0 flex-1 text-[13px]">
-            <span className="font-medium text-emerald-900">{meta.label}已完成</span>
-            <span className="mx-1.5 text-emerald-300">·</span>
-            <span className="text-emerald-800">
-              下一步：{next.label}
-              <span className="text-emerald-700/70"> —— {firstClause(next.summary)}</span>
-            </span>
-          </div>
-          <Link to={stageTo(project, next.key)} className={buttonClass('primary', 'sm')}>
-            去{next.label}
-            <ArrowRight size={14} />
-          </Link>
-        </div>
-      )}
+      {!meta.phase && <StageNeedText meta={meta} />}
     </>
   )
 }

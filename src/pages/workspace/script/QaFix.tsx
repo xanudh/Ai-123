@@ -21,7 +21,7 @@ import { patchScript } from './ops'
 /** 落在正文上的问题才能 AI 修稿；付费卡点集纲未审核这类要回到对应环节 */
 export const fixableIssue = (p: Project, i: QaIssue) => i.ep !== null && !(i.check === 'paywall' && i.level === 'info') && !!scriptOf(p.work, i.ep)
 
-interface Diff {
+export interface Diff {
   kind: 'edit' | 'add' | 'del'
   no: number
   before?: ScriptLine
@@ -35,7 +35,7 @@ const DIFF = {
 }
 
 /** 按行 id 比对：同一行改了内容、新插入的行、删掉的行 */
-function diffLines(before: ScriptLine[], after: ScriptLine[]): Diff[] {
+export function diffLines(before: ScriptLine[], after: ScriptLine[]): Diff[] {
   const old = new Map(before.map((l) => [l.id, l]))
   const kept = new Set(after.map((l) => l.id))
   const out: Diff[] = []
@@ -54,7 +54,7 @@ function lineLabel(l: ScriptLine, en = false) {
   return l.kind === 'hook' ? `【集末钩子】${text}` : text
 }
 
-function DiffRow({ d }: { d: Diff }) {
+export function DiffRow({ d }: { d: Diff }) {
   // 只补了英文的行，前后都显示英文
   const enOnly = d.kind === 'edit' && d.before!.zh === d.after!.zh && d.before!.speaker === d.after!.speaker
   return (
