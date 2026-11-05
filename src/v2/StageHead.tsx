@@ -7,8 +7,8 @@ import type { Project } from '../domain/types'
 import { stageState } from '../domain/work'
 import { stageDetail } from './flow'
 
-/** 版本二的环节页头：说明默认折叠；「去下一步」在页面底部的环节条里（StageBar） */
-export function StageHeadV2({ project, meta, index, next }: { project: Project; meta: StageMeta; index: number; next: StageMeta | null }) {
+/** 环节页头：说明默认折叠；「去下一步」在页面底部的环节条里（StageBar） */
+export function StageHead({ project, meta, index, next }: { project: Project; meta: StageMeta; index: number; next: StageMeta | null }) {
   const [showSummary, setShowSummary] = useState(false)
   const done = stageState(project, meta.key) === 'done'
   const detail = stageDetail(project, meta.key)

@@ -91,7 +91,6 @@ function toV3(p: Project): Project {
       ...w,
       architecture: w.architecture && { ...emptyArchitecture(total), ...w.architecture },
       characters: w.characters.map((c) => newCharacter(c)),
-      foreshadows: w.foreshadows.map((f) => ({ ...f, title: f.title ?? '', events: f.events ?? [] })),
       outline: w.outline.map((o) => ({ ...o, title: o.title ?? '' })),
       drafts: [
         ...w.drafts,
@@ -174,10 +173,10 @@ function toV9(p: Project): Project {
 
 /** 仿写去掉改写方案：已有的改写方案并进改写想法（改写想法里已经有的不重复），原创的整体框架不动 */
 function toV10(p: Project): Project {
-  const a = p.work.architecture
+  const a = p.work.architecture as (ProjectWork['architecture'] & { idea: string }) | null
   if (p.mode === 'original' || !a?.plan.trim()) return p
   const idea = a.idea.includes(a.plan.trim()) ? a.idea : [a.idea.trim(), a.plan.trim()].filter(Boolean).join('\n')
-  return { ...p, work: { ...p.work, architecture: { ...a, idea, plan: '' } } }
+  return { ...p, work: { ...p.work, architecture: { ...a, idea, plan: '' } as NonNullable<ProjectWork['architecture']> } }
 }
 
 /**
@@ -285,6 +284,31 @@ function toV16(p: Project): Project {
   return { ...p, work: { ...p.work, breakdown: { ...b, episodes } } }
 }
 
+/** 伏笔与叙事线索整步删掉（11/4）：去掉伏笔计划、沉寂提醒阈值，审稿报告与保留不改里的伏笔意见（伏笔没写进正文、已回收的伏笔又出现），依据指纹里的伏笔计划 */
+function toV17(p: Project): Project {
+  const { foreshadows: _, ...rest } = p.work as ProjectWork & { foreshadows?: unknown }
+  const work: ProjectWork = { ...rest }
+  if (work.architecture) {
+    const { silenceThreshold: _, ...a } = work.architecture as ProjectWork['architecture'] & { silenceThreshold?: number }
+    work.architecture = a as NonNullable<ProjectWork['architecture']>
+  }
+  const plan = (key?: string, code?: string) => code === 'plan' || code === 'paid' || !!key?.match(/^(plan|paid):/)
+  work.drafts = work.drafts.map((d) => ({ ...d, reviews: d.reviews.map((r) => ({ ...r, items: r.items.filter((i) => !plan(i.key, i.code)) })) }))
+  if (work.keeps) work.keeps = work.keeps.filter((k) => !plan(k.key))
+  if (work.prints) work.prints = Object.fromEntries(Object.entries(work.prints).map(([k, print]) => [k, Object.fromEntries(Object.entries(print).filter(([d]) => d !== 'foreshadows'))]))
+  return { ...p, work }
+}
+
+/** 改写想法删掉（11/5 标注 #87）：编剧的想法直接写进核心设定；核心设定还空着就把改写想法搬过去，依据指纹里的改写想法去掉 */
+function toV18(p: Project): Project {
+  const old = p.work.architecture as (ProjectWork['architecture'] & { idea?: string }) | null
+  if (!old) return p
+  const { idea = '', ...architecture } = old
+  const prints = p.work.prints && Object.fromEntries(Object.entries(p.work.prints).map(([k, print]) => [k, Object.fromEntries(Object.entries(print).filter(([d]) => d !== 'idea'))]))
+  const logline = p.logline.trim() || p.mode === 'original' ? p.logline : idea.trim()
+  return { ...p, logline, work: { ...p.work, architecture, ...(prints && { prints }) } }
+}
+
 interface ProjectsState {
   projects: Project[]
   createProject: (draft: ProjectDraft) => Project
@@ -382,7 +406,7 @@ export const useProjects = create<ProjectsState>()(
     }),
     {
       name: 'zhiying.projects.v1',
-      version: 16,
+      version: 18,
       // v0 → v1：规格新增每集字数；v1 → v2：新增环节产出 work；v2 → v3：二期字段（类型、情节、蓝图、草稿箱）；v3 → v4：三期视频转写任务；
       // v4 → v5：每集字数改由单集时长换算，冲突主线可调整分段；v5 → v6：人物关系类型、质检报告；v6 → v7：平台分类词、样稿剧本格式
       migrate: (persisted, version) => {
@@ -404,6 +428,8 @@ export const useProjects = create<ProjectsState>()(
         if (version < 14) state.projects = state.projects.map(toV14)
         if (version < 15) state.projects = state.projects.map(toV15)
         if (version < 16) state.projects = state.projects.map(toV16)
+        if (version < 17) state.projects = state.projects.map(toV17)
+        if (version < 18) state.projects = state.projects.map(toV18)
         return state as ProjectsState
       },
     },

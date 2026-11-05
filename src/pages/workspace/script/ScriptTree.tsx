@@ -128,7 +128,7 @@ export function ScriptTree({ project }: { project: Project }) {
                         return (
                           <li key={d.id}>
                             <div className="group relative">
-                              <NavLink to={draftPath(project, d.id)} end title={d.model ? `${draftLabel(d)} · ${modelLabel(d.model)} ${d.revision ? '修稿' : '生成'}` : undefined} className={(s) => clsx(leaf(s), 'pl-8')}>
+                              <NavLink to={draftPath(project, d.id)} end title={d.model ? `${draftLabel(d)} · ${modelLabel(d.model)} ${d.revision ? '修稿' : '生成'}` : d.manual ? `${draftLabel(d)} · 自己写` : undefined} className={(s) => clsx(leaf(s), 'pl-8')}>
                                 <span className={clsx('size-1.5 shrink-0 rounded-full', DOT_TONE[meta.tone])} />
                                 <span className="truncate">{draftLabel(d)}</span>
                                 <span className="shrink-0 text-[11px] font-normal text-ink-400">{meta.label}</span>

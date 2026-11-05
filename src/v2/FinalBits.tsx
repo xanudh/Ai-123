@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, CircleCheck, Lock, ShieldCheck } from 'lucide-re
 import { Link, useNavigate } from 'react-router'
 import { AiButton, latestProject, stagePath, useAiTask } from '../components/stage/StageKit'
 import { Badge, buttonClass } from '../components/ui'
-import { QA_CHECKS, SHOW_FORESHADOW } from '../domain/pipeline'
+import { QA_CHECKS } from '../domain/pipeline'
 import { preWriteCheck } from '../domain/state'
 import type { Project, QaIssue } from '../domain/types'
 import { draftLabel, draftsOf, finalCount, scriptOf } from '../domain/work'
@@ -54,7 +54,7 @@ export function RelayBar({ project, ep }: { project: Project; ep: number }) {
             ? ` —— 已有 ${draftLabel(newest)}，打开继续审稿与定稿`
             : block
               ? ` —— ${block.text}`
-              : ` —— 写作前检查已通过：本集要点、${SHOW_FORESHADOW ? '伏笔与' : ''}人物状态会注入下一集`}
+              : ` —— 写作前检查已通过：本集要点、人物状态会注入下一集`}
         </span>
       </span>
       {newest ? (
@@ -65,7 +65,7 @@ export function RelayBar({ project, ep }: { project: Project; ep: number }) {
       ) : block ? (
         <Link to={`${scriptStagePath(project)}?ep=${next}`} className={buttonClass('secondary', 'sm')}>
           <Lock size={13} />
-          去分集蓝图处理
+          去逐集蓝图处理
         </Link>
       ) : (
         <AiButton loading={running === 'write'} disabled={!!running} onClick={write}>

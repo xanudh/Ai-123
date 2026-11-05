@@ -14,7 +14,7 @@ export const MODELS: { id: ModelId; label: string; region: '国产' | '海外'; 
 /** 两类模型：视频解析只管逐集转写；文本管拆解之后的全部文本环节（原创、仿写、视频转剧本都一样） */
 export const MODEL_GROUPS: { key: ModelGroup; label: string; covers: string }[] = [
   { key: 'video', label: '视频解析', covers: '只用于视频转剧本的逐集转写，只列能直接看视频、听音频的模型' },
-  { key: 'text', label: '文本', covers: '拆解、故事架构、人物、伏笔、大纲、蓝图、正文、审稿、修稿、质检、翻译都用它；写作时可在 ▾ 里临时换一个' },
+  { key: 'text', label: '文本', covers: '拆解、故事架构、人物、大纲、蓝图、正文、审稿、修稿、质检、翻译都用它；写作时可在 ▾ 里临时换一个' },
 ]
 
 /** 没选过时用的默认模型 */

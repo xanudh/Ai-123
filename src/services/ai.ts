@@ -8,7 +8,6 @@ import type {
   Audience,
   Breakdown,
   Character,
-  Foreshadow,
   EpisodeBlueprint,
   EpisodeScript,
   MergedScript,
@@ -28,22 +27,15 @@ import type {
   VideoEpisode,
   VideoJob,
 } from '../domain/types'
-import { PLAN_EVENT_META } from '../domain/constants'
 import { modelOf } from '../domain/models'
 import { hasInnovations } from '../domain/pipeline'
-import { eventCandidates, foreshadowName, plainText } from '../domain/work'
-import type { EventCandidate } from '../domain/work'
 import { analyzeSource } from './mock/breakdown'
-import * as lab from './mock/archLab'
-import * as chat from './mock/rewriteChat'
-import type { PlanField, RewritePlan } from './mock/rewriteChat'
-import type { LabKey, LabValue } from './mock/archLab'
 import * as qa from './mock/qa'
 import * as video from './mock/video'
 import * as chain from './mock/chain'
 import type { ArchDraft } from './mock/chain'
 import * as writer from './mock/writer'
-import type { BioField, Direction, DraftContent, ExtendMode, ForeshadowIdea, QaFix, ReviewBase, ReviseMode } from './mock/writer'
+import type { BioField, Direction, DraftContent, ExtendMode, QaFix, ReviewBase, ReviseMode } from './mock/writer'
 
 export { parseSource } from './mock/breakdown'
 export { SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME } from './mock/sampleScript'
@@ -55,12 +47,8 @@ export { architectureIssues, positionOf, viewpointRule } from './mock/writer'
 export { splitLogline } from './mock/chain'
 export type { ArchDraft, LoglineParts } from './mock/chain'
 export { innovationLanding } from './mock/qa'
-export { LAB_META, LAB_ORDER, formulaText, labExport, labReference, valueText } from './mock/archLab'
-export type { LabFormula, LabKey, LabSkeleton, LabValue } from './mock/archLab'
-export { PLAN_META, PLAN_ORDER, chatContext, fieldTitle, planText } from './mock/rewriteChat'
-export type { ChatAction, ChatChange, ChatOption, ChatReply, PlanField, RewritePlan } from './mock/rewriteChat'
 export type { InnovationLanding } from './mock/qa'
-export type { BioField, Direction, DraftContent, ExtendMode, ForeshadowIdea, QaFix, ReviewBase, ReviseMode }
+export type { BioField, Direction, DraftContent, ExtendMode, QaFix, ReviewBase, ReviseMode }
 
 export interface LoglineRequest {
   idea: string
@@ -277,6 +265,16 @@ export async function analyzeBenchmark(source: SourceScript, mode: ProjectMode, 
   return analyzeSource(source, mode)
 }
 
+/** 出方向时带上对标剧拆解的哪些结果（故事架构页上写明）；没有拆解时为 null */
+export function directionReference(p: Project) {
+  const bd = p.work.breakdown
+  if (!bd) return null
+  return {
+    used: ['故事梗概', '人物与关系', '冲突主线（各段）', `付费节奏（第 ${bd.rhythm.paywalls.join('、') || '—'} 集）`],
+    skipped: [`逐集明细（${bd.episodes.length} 集，集纲级内容太多）`],
+  }
+}
+
 /** 没有改写想法时：基于拆解结果（或立项设定）提出 3 个方向 */
 export async function proposeDirections(project: Project, seed: number, signal?: AbortSignal): Promise<Direction[]> {
   await think(signal)
@@ -289,57 +287,6 @@ export async function draftArchItem(project: Project, item: ArchItem, seed = 0, 
   return chain.draftArchItem(project, item, seed)
 }
 
-
-/** 只重写冲突主线：保留段落名与分段 */
-
-/** 故事架构新版 Demo：从起点一次给出 1 版或 3 版整剧骨架 */
-export async function draftLabSkeletons(project: Project, seedText: string, count: 1 | 3, seed: number, signal?: AbortSignal) {
-  await think(signal, count === 3 ? 1300 : 900)
-  return lab.labSkeletons(project, seedText, count, seed)
-}
-
-/** 故事架构新版 Demo：按修改意见只重写一项，已定的项不动 */
-export async function rewriteLabItem(project: Project, key: LabKey, current: LabValue, comment: string, locked: Partial<Record<LabKey, string>>, seed: number, signal?: AbortSignal) {
-  await think(signal, 700)
-  return lab.labRewrite(project, key, current, comment, locked, seed)
-}
-
-/*
- * 改写方案 · 多轮对话 Demo。每一轮带给模型：对标剧拆解的总纲层结果、当前方案、锁定的项和最近几轮对话；
- * 模拟版按规则改，接真实模型时在这里换成一个带上下文的对话接口。
- */
-export async function chatDirections(project: Project, seed: number, signal?: AbortSignal) {
-  await think(signal, 1000)
-  return chat.directionsReply(project, seed)
-}
-
-export async function chatPick(project: Project, direction: Direction, prev: RewritePlan | null, locks: PlanField[], signal?: AbortSignal) {
-  await think(signal, 700)
-  return chat.pickReply(project, direction, prev, locks)
-}
-
-export async function chatIdea(project: Project, idea: string, signal?: AbortSignal) {
-  await think(signal, 900)
-  return chat.ideaReply(project, idea)
-}
-
-export async function chatReply(project: Project, plan: RewritePlan, locks: PlanField[], topic: PlanField | null, text: string, seed: number, signal?: AbortSignal) {
-  await think(signal, 800)
-  return chat.reply(project, plan, locks, topic, text, seed)
-}
-
-export async function chatNext(project: Project, plan: RewritePlan, locks: PlanField[], from: PlanField, how: 'lock' | 'skip', signal?: AbortSignal) {
-  await think(signal, 300)
-  return chat.nextReply(project, plan, locks, from, how)
-}
-
-export async function chatAsk(project: Project, plan: RewritePlan, field: PlanField, signal?: AbortSignal) {
-  await think(signal, 300)
-  return chat.askReply(project, plan, field)
-}
-
-/** 故事架构里单独一段：世界观 / 金手指 / 主角人设 / 全局写作要求 */
-
 export async function draftCharacters(project: Project, seed: number, signal?: AbortSignal) {
   await think(signal, 1100)
   return writer.draftCharacters(project, seed)
@@ -351,36 +298,7 @@ export async function draftCharacterField(project: Project, c: Character, field:
   return writer.draftCharacterField(project, c, field, seed)
 }
 
-export async function draftForeshadows(project: Project, signal?: AbortSignal): Promise<ForeshadowIdea[]> {
-  await think(signal)
-  return writer.draftForeshadows(project)
-}
-
-export interface EventFinding extends EventCandidate {
-  foreshadowId: string
-  reason: string
-}
-
-/**
- * AI 识别定稿事件：在定稿正文里找计划的推进，给出逐字原文与理由。只是建议，编剧确认后才记为已发生。
- * 传 ep 时只看这一集定稿。
- */
-export async function identifyEvents(project: Project, list: Foreshadow[], ep?: number, signal?: AbortSignal): Promise<EventFinding[]> {
-  await think(signal, 900)
-  const finals = project.work.scripts.filter((s) => s.ep <= project.spec.totalEpisodes && (ep === undefined || s.ep === ep))
-  return list.flatMap((f) =>
-    eventCandidates(f, finals).map((c) => {
-      const name = foreshadowName(f)
-      const reason =
-        c.kind === 'plant' ? `第 ${c.ep} 集首次写到与「${name}」相关的细节，对应计划的${PLAN_EVENT_META.plant.label}`
-        : c.kind === 'payoff' ? `已到计划的第 ${f.payoffEp} 集，这句正文把「${name}」交代清楚，可视为${PLAN_EVENT_META.payoff.label}`
-        : `第 ${c.ep} 集再次提到「${name}」，让这条${f.type}保持在观众视线里`
-      return { ...c, text: plainText(c.text), foreshadowId: f.id, reason }
-    }),
-  )
-}
-
-/** 情节大纲：全剧总览 + 五段式各段粗纲 */
+/** 情节大纲：全剧总览 + 五段式各阶段总览 */
 export async function draftPlot(project: Project, signal?: AbortSignal): Promise<Plot> {
   await think(signal, 900)
   return writer.draftPlot(project)
@@ -392,13 +310,13 @@ export async function draftOutline(project: Project, from: number, to: number, s
   return writer.draftOutline(project, from, to, seed)
 }
 
-/** 分集蓝图：按集纲展开成写作前的预览设定 */
+/** 逐集蓝图：按集纲展开成写作前的预览设定 */
 export async function draftBlueprints(project: Project, from: number, to: number, seed: number, signal?: AbortSignal): Promise<EpisodeBlueprint[]> {
   await think(signal, 600 + (to - from) * 40)
   return writer.draftBlueprints(project, from, to, seed)
 }
 
-/** 逐集剧本：输入 = 本集蓝图 + 最新状态库（人物、伏笔与前集正文） */
+/** 逐集剧本：输入 = 本集蓝图 + 最新状态库（人物与前集正文） */
 export async function writeEpisode(project: Project, ep: number, seed: number, signal?: AbortSignal, model = modelOf(project, 'text')): Promise<DraftContent & { model: ModelId }> {
   await think(signal, 1400)
   return { ...writer.writeEpisode(project, ep, seed), model }

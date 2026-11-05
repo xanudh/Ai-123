@@ -25,7 +25,6 @@ import { downBasis } from '../../../domain/basis'
 import { innovationLanding, qaSteps, runQa } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
-import { useV2 } from '../../../store/uiVersion'
 import { finalPath } from '../script/ops'
 import { QaFixButton } from '../script/QaFix'
 
@@ -69,9 +68,9 @@ function Meter({ score }: { score: number }) {
   )
 }
 
-/** 去修改：有集数的问题回到正文章节；付费卡点集纲与全剧问题回到对应环节。版本二去正文时带上问题，改完可直接返回 */
-function fixOf(p: Project, i: QaIssue, v2 = false) {
-  if (i.ep !== null && !(i.check === 'paywall' && i.level === 'info')) return { to: `${finalPath(p, i.ep)}${v2 ? `?from=qa&issue=${i.id}` : ''}`, label: '去改正文' }
+/** 去修改：有集数的问题回到正文章节；付费卡点集纲与全剧问题回到对应环节。去正文时带上问题，改完可直接返回 */
+function fixOf(p: Project, i: QaIssue) {
+  if (i.ep !== null && !(i.check === 'paywall' && i.level === 'info')) return { to: `${finalPath(p, i.ep)}?from=qa&issue=${i.id}`, label: '去改正文' }
   const key = QA_CHECKS.find((c) => c.key === i.check)?.to ?? 'script'
   return { to: stagePath(p, key), label: `去${STAGES[key].label}` }
 }
@@ -247,7 +246,7 @@ function Summary({
 
 /** 全部问题里的一行：整行宽，问题与建议一行读完，右侧是处理动作 */
 function IssueRow({ project, issue, active, done, fixed, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; fixed: boolean; onPick: () => void; onToggle: () => void }) {
-  const fix = fixOf(project, issue, useV2())
+  const fix = fixOf(project, issue)
   return (
     <li data-qa-row={issue.id} className={clsx('flex flex-wrap items-start gap-x-4 gap-y-1 px-5 py-2 transition-colors', active ? 'bg-brand-50/60' : 'hover:bg-canvas/60', done && 'opacity-60')}>
       <button className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={onPick}>
@@ -395,7 +394,6 @@ function ScriptView({
   activeId: string | null
   onPick: (i: QaIssue) => void
 }) {
-  const v2 = useV2()
   const byLine = new Map<string, QaIssue[]>()
   for (const i of issues) if (i.lineId) byLine.set(i.lineId, [...(byLine.get(i.lineId) ?? []), i].sort(byLevel))
   // 整集问题：没定位到行，或定位的行已经不在正文里
@@ -412,7 +410,7 @@ function ScriptView({
           </h3>
           <p className="mt-0.5 text-xs text-ink-500">{checked ? `定稿正文 · ${issues.length ? `${issues.length} 个待处理问题，问题行与字段已标色` : '没有待处理的问题'}` : '这一集在质检后才定稿，重新质检后才会标出问题'}</p>
         </div>
-        <Link to={`${finalPath(project, script.ep)}${v2 ? '?from=qa' : ''}`} className="flex shrink-0 items-center gap-0.5 text-[13px] text-brand-600 hover:text-brand-700">
+        <Link to={`${finalPath(project, script.ep)}?from=qa`} className="flex shrink-0 items-center gap-0.5 text-[13px] text-brand-600 hover:text-brand-700">
           去改正文
           <ArrowUpRight size={14} />
         </Link>
@@ -559,7 +557,7 @@ function GlobalView({ project, issues, activeId, onPick }: { project: Project; i
 /* ---------------------------------- 右栏：本集问题 ---------------------------------- */
 
 function IssueItem({ project, issue, active, done, fixed, onPick, onToggle }: { project: Project; issue: QaIssue; active: boolean; done: boolean; fixed: boolean; onPick: () => void; onToggle: () => void }) {
-  const fix = fixOf(project, issue, useV2())
+  const fix = fixOf(project, issue)
   return (
     <li id={`qa-issue-${issue.id}`} className={clsx('scroll-mt-4 rounded-lg border px-3 py-2.5 transition-colors', active ? 'border-brand-300 bg-brand-50/50' : 'border-line bg-white', done && 'opacity-60')}>
       <button className="flex w-full items-start gap-2 text-left" onClick={onPick}>
@@ -616,7 +614,7 @@ export default function QaStage({ project, blocked }: { project: Project; blocke
   const { patchWork, updateProject } = useProjects()
   const { running, run } = useAiTask()
   const checks = qaChecks(project)
-  // 版本二：从正文页「返回质检」回来时，回到原来那条问题（已处理就接着看同一集的下一条）
+  // 从正文页「返回质检」回来时，回到原来那条问题（已处理就接着看同一集的下一条）
   const [params] = useSearchParams()
   const [back] = useState(() => {
     const issues = project.work.qa?.issues ?? []

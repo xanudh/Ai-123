@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 
 interface BottomSlotState {
-  /** 页面最底部那一条（VersionBar）：环节页把环节条放进来，没东西时整条不显示 */
+  /** 页面最底部那一条（BottomBar）：环节页把环节条放进来，没东西时整条不显示 */
   el: HTMLElement | null
   setEl: (el: HTMLElement | null) => void
   /** 环节条里留给环节自己的两块（StagePage 的 StageBar 提供）：左边放本环节的状态，右边放本环节的按钮（11/4 标注 #83：按钮一律靠右），如拆解的一键引用、故事架构的确认 */

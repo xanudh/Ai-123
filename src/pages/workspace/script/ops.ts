@@ -1,7 +1,7 @@
 /** 草稿箱与正文章节的数据操作：都返回要写回的 work 片段，由页面调用 patchWork */
 import { itemKey, keptOf } from '../../../domain/review'
-import type { DraftReview, DraftRevision, EpisodeBlueprint, EpisodeDraft, EpisodeScript, ModelId, Project, ProjectWork, ReviewItem } from '../../../domain/types'
-import { blueprintOf, draftsOf, scriptOf } from '../../../domain/work'
+import type { DraftReview, DraftRevision, EpisodeBlueprint, EpisodeDraft, EpisodeScript, ModelId, Project, ProjectWork, ReviewItem, ScriptLine } from '../../../domain/types'
+import { blueprintOf, carryOf, draftsOf, scriptOf } from '../../../domain/work'
 import { newId } from '../../../lib/id'
 import { extractPoints, positionOf } from '../../../services/ai'
 import type { DraftContent, ReviewBase } from '../../../services/ai'
@@ -14,6 +14,46 @@ export const draftPath = (p: Project, draftId: string, review?: string) =>
   `/projects/${p.id}/stage/script/draft/${draftId}${review ? `?review=${review}` : ''}`
 
 export const finalPath = (p: Project, ep: number) => `/projects/${p.id}/stage/script/final/${ep}`
+
+/**
+ * 逐集蓝图预填（11/5 标注 #89）：每一集都先列出来，按情节大纲的集纲和人物设定填好。
+ * 标题、冲突与转折、末尾钩子照集纲；出场关键人是主角加上集纲里提到的人物；人物本集状态先按人物设定的服装列，进场的场景由编剧补；
+ * 承接不填，默认接上集结尾的钩子。编剧改了这一集、或写作这一集时才存进数据，没存的跟着情节大纲和人物设定变。
+ */
+export function prefillBlueprint(p: Project, ep: number): EpisodeBlueprint {
+  const o = p.work.outline.find((x) => x.ep === ep)
+  const text = o ? [o.title, o.event, o.hookLine].join('\n') : ''
+  const cast = p.work.characters
+    .filter((c) => c.name.trim() && (c.role === '主角' || text.includes(c.name)))
+    .sort((a, b) => Number(b.role === '主角') - Number(a.role === '主角'))
+  const looks = cast.flatMap((c) => {
+    const look = c.costume.split(/[；;\n]/)[0].replace(/^[^：:]{1,8}[：:]/, '').trim()
+    return look ? [{ name: c.name, scene: '', look }] : []
+  })
+  return { ep, title: o?.title ?? '', position: positionOf(p, ep), cast: cast.map((c) => c.name).join('、'), goal: '', conflict: o?.event ?? '', hook: o?.hookLine ?? '', looks, guidance: '', points: '' }
+}
+
+/**
+ * 自己写（11/5 标注 #91）：不用 AI，新建一版草稿让编剧直接在编辑器里写。
+ * 按本集蓝图先列好架子——一个空的场景标题、开头的承接（和 AI 写的一样标「△（接上集）」）、末尾的悬念钩子，中间自己写。
+ */
+export function manualContent(p: Project, ep: number): DraftContent {
+  const bp = blueprintOf(p.work, ep) ?? prefillBlueprint(p, ep)
+  const carry = carryOf(p.work, ep)
+  const lines: ScriptLine[] = [
+    { id: newId(), kind: 'scene', zh: '' },
+    { id: newId(), kind: 'action', zh: carry ? `△（${carry.auto ? '接上集' : '承接'}）${carry.text}` : '' },
+    ...(carry ? [{ id: newId(), kind: 'action' as const, zh: '' }] : []),
+    ...(bp.hook.trim() ? [{ id: newId(), kind: 'hook' as const, zh: bp.hook.trim() }] : []),
+  ]
+  return { title: bp.title, lines, states: {} }
+}
+
+/** 写作前把预填的蓝图存下来，写作、审稿、状态库都按存下来的这份；已经存过、或者没有集纲时返回 null */
+export function withPrefill(p: Project, ep: number): EpisodeBlueprint[] | null {
+  if (blueprintOf(p.work, ep) || !p.work.outline.some((o) => o.ep === ep)) return null
+  return [...p.work.blueprints, prefillBlueprint(p, ep)].sort((a, b) => a.ep - b.ep)
+}
 
 /** 审查报告里的严重 / 建议条数；传入 work 时不算编剧已保留不改的 */
 export const reviewCounts = (r: DraftReview, work?: ProjectWork, ep?: number) => {
@@ -53,7 +93,7 @@ export function reviewBase(work: ProjectWork, d: EpisodeDraft): ReviewBase | und
 }
 
 /** 草稿箱里新增一个版本；同集其他还在“草稿”状态的旧版本标为已修稿。content.model：写出这一版的模型 */
-export function addDraft(work: ProjectWork, ep: number, content: DraftContent & { model?: ModelId }, from?: string, revision?: DraftRevision): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
+export function addDraft(work: ProjectWork, ep: number, content: DraftContent & { model?: ModelId; manual?: boolean }, from?: string, revision?: DraftRevision): { draft: EpisodeDraft; drafts: EpisodeDraft[] } {
   const ts = now()
   const version = Math.max(0, ...draftsOf(work, ep).map((d) => d.version)) + 1
   const draft: EpisodeDraft = {
@@ -70,6 +110,7 @@ export function addDraft(work: ProjectWork, ep: number, content: DraftContent & 
     ...(from ? { from } : {}),
     ...(revision ? { revision } : {}),
     ...(content.model ? { model: content.model } : {}),
+    ...(content.manual ? { manual: true } : {}),
     ...(content.basis?.length ? { basis: content.basis } : {}),
     createdAt: ts,
     updatedAt: ts,
@@ -104,7 +145,7 @@ export const patchScript = (work: ProjectWork, ep: number, patch: Partial<Episod
 
 /**
  * 定稿：草稿归入正文章节（替换本集原有正文），同集原来定稿的版本改为已修稿；
- * 提炼本集要点回填到分集蓝图，没有蓝图时按集纲补一份。
+ * 提炼本集要点回填到逐集蓝图，没有蓝图时按集纲补一份。
  */
 export function finalizeDraft(p: Project, draftId: string): Pick<ProjectWork, 'drafts' | 'scripts' | 'blueprints'> | null {
   const w = p.work
@@ -118,10 +159,8 @@ export function finalizeDraft(p: Project, draftId: string): Pick<ProjectWork, 'd
   })
   const points = extractPoints(p, d)
   const prev = blueprintOf(w, d.ep)
-  const o = w.outline.find((x) => x.ep === d.ep)
-  const blueprint: EpisodeBlueprint = prev
-    ? { ...prev, points }
-    : { ep: d.ep, title: d.title || o?.title || '', position: positionOf(p, d.ep), cast: '', goal: '', conflict: o?.event ?? '', hook: o?.hookLine ?? '', guidance: '', points }
+  const fill = prefillBlueprint(p, d.ep)
+  const blueprint: EpisodeBlueprint = prev ? { ...prev, points } : { ...fill, title: d.title || fill.title, points }
   return {
     drafts,
     scripts: [...w.scripts.filter((s) => s.ep !== d.ep), script].sort((a, b) => a.ep - b.ep),

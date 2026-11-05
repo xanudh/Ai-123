@@ -174,7 +174,7 @@ export function ScriptEditor({
   onNotes?: Updater<LineNote>
   /** 选中段落变化时通知页面（侧栏据此给这段加标注） */
   onPick?: (pick: LinePick | null) => void
-  /** 需要特别提示的行（版本二：从质检问题跳过来时），高亮并滚到眼前 */
+  /** 需要特别提示的行（从质检问题跳过来时），高亮并滚到眼前 */
   focusLineId?: string | null
   /** 本页特有的操作提示，放进格式栏的「编辑说明」 */
   tips?: ReactNode[]

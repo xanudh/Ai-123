@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowRight, Check, ChevronRight, CircleCheck, Eraser, Eye, FlaskConical, Info, MessagesSquare, Pencil, Plus, RotateCcw, Save, Square, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
+import { ArrowRight, Check, ChevronRight, CircleCheck, Eraser, Eye, Info, Pencil, Plus, RotateCcw, Save, Square, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
@@ -21,11 +21,10 @@ import type { ArchItem, Architecture, PlotBeat, Project, RhythmFrame, ScriptLang
 import { PHASE_LIMIT, benchmarkSpec, defaultPhaseName, emptyArchitecture, phaseRanges, rangeLabel } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { newId } from '../../../lib/id'
-import { draftArchItem, generateLoglines, labReference, nextSeed, proposeDirections } from '../../../services/ai'
+import { directionReference, draftArchItem, generateLoglines, nextSeed, proposeDirections } from '../../../services/ai'
 import type { ArchDraft, Direction, LoglineCandidate } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
-import { useV2 } from '../../../store/uiVersion'
 import { useStageSlot } from '../../../v2/bottomSlot'
 
 /** 带说明图标的字段名，悬停显示说明 */
@@ -281,10 +280,10 @@ function PlanLines({ text }: { text: string }) {
   )
 }
 
-/** AI 给出的 3 个方向：弹窗里并排对比，选一个确定后再录入；每个方向写全核心设定、世界观、金手指、故事背景（仿写另有改写想法），主角人设往后按顺序往下推 */
+/** AI 框架方向：3 个方向在弹窗里并排对比，选一个确定后再录入；每个方向写全核心设定、世界观、金手指、故事背景，主角人设往后按顺序往下推 */
 function DirectionDialog({
   directions,
-  planLabel,
+  adaptation,
   overwrite,
   refreshing,
   onRefresh,
@@ -292,8 +291,8 @@ function DirectionDialog({
   onClose,
 }: {
   directions: Direction[]
-  /** 仿写另录改写想法；原创没有（整体框架 11/4 删掉） */
-  planLabel: string | null
+  /** 仿写在主角人设后面还有创新点 */
+  adaptation: boolean
   overwrite: boolean
   refreshing: boolean
   onRefresh: () => void
@@ -303,15 +302,15 @@ function DirectionDialog({
   const [picked, setPicked] = useState<string | null>(null)
   const chosen = directions.find((d) => d.id === picked)
   const h = 'mb-1 text-[11px] font-semibold tracking-wide text-ink-400'
-  const what = ['核心设定、世界观、金手指、故事背景', planLabel].filter(Boolean).join('、')
+  const what = '核心设定、世界观、金手指、故事背景'
 
   return (
     <Modal
       open
       onClose={onClose}
       width={1080}
-      title="AI 给出的 3 个方向"
-      desc={`对比${what}，选一个方向后点「确定录入」；主角人设${planLabel ? '、创新点' : ''}、冲突主线在下面按顺序往下推`}
+      title="AI 框架方向"
+      desc={`3 个方向对比${what}，选一个后点「确定录入」；主角人设${adaptation ? '、创新点' : ''}、冲突主线在下面按顺序往下推`}
       footer={
         <>
           <span className="mr-auto self-center text-xs text-ink-500">{overwrite ? `录入后会覆盖当前的${what}` : `录入后可继续逐项修改`}</span>
@@ -358,7 +357,6 @@ function DirectionDialog({
                   ['world', '世界观', d.world],
                   ['goldenFinger', '金手指', d.goldenFinger],
                   ['background', '故事背景', d.background],
-                  ...(planLabel ? [['plan', planLabel, d.plan] as const] : []),
                 ] as const
               ).map(([key, label, text]) => (
                 <section key={key} data-dir-part={key}>
@@ -374,13 +372,9 @@ function DirectionDialog({
   )
 }
 
-/** 两个 Demo 页（新版故事架构、多轮改写对话）的入口：讨论故事架构期间先隐藏，页面本身仍可按地址打开 */
-const SHOW_LABS = false
-
-type TextItem = 'idea' | 'goldenFinger' | 'heroSetup' | 'world' | 'background' | 'highlights' | 'writingRules'
+type TextItem = 'goldenFinger' | 'heroSetup' | 'world' | 'background' | 'highlights' | 'writingRules'
 
 const ITEM_TITLE: Record<ArchItem, string> = {
-  idea: '你的改写想法',
   logline: '核心设定',
   plan: '整体框架',
   innovations: '创新点',
@@ -435,10 +429,8 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const [pending, setPending] = useState<Pending | null>(null)
   // 逐项生成：刚生成的那一项，停在这里等编剧看过再继续
   const [justMade, setJustMade] = useState<ArchItem | null>(null)
-  const v2 = useV2()
-  // 版本二：状态条放进页面底部的环节条
-  const slot = useStageSlot(v2)
-  const docked = !!slot
+  // 状态条放进页面底部的环节条
+  const slot = useStageSlot()
 
   const total = project.spec.totalEpisodes
   const arch = project.work.architecture ?? emptyArchitecture(total)
@@ -447,21 +439,17 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const bd = project.work.breakdown
   const adaptation = project.mode !== 'original'
   const approved = arch.status === 'approved'
-  // 3 个方向里的走向写到哪：仿写写改写想法；原创不录（整体框架 11/4 删掉，开局到结局写在故事背景里）
-  const planLabel = adaptation ? '改写想法' : null
   const titleOf = (item: ArchItem) => ITEM_TITLE[item]
   // 仿写冲突主线：先看对标剧拆解出来的，再到「修改冲突主线」里定我们的
   const [lineTab, setLineTab] = useState<'ours' | 'bench'>('bench')
-  // 仿写项目还没开始时，用立项灵感作为改写想法的起点
-  const idea = project.work.architecture ? arch.idea : project.idea
-  const reference = labReference(project)
+  const reference = directionReference(project)
   // 页面从上往下的顺序就是生成顺序：每一项只读排在它前面的项
   const order = archOrder(project)
 
   const save = (patch: Partial<Architecture>, note?: string) => {
     const cur = latestProject(project.id)
     if (!cur) return
-    const base = cur.work.architecture ?? { ...emptyArchitecture(cur.spec.totalEpisodes), idea }
+    const base = cur.work.architecture ?? emptyArchitecture(cur.spec.totalEpisodes)
     patchWork(cur.id, { architecture: { ...base, ...patch } }, note)
   }
 
@@ -469,7 +457,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   const applyDraft = (item: ArchItem, d: ArchDraft, note: string) => {
     const cur = latestProject(project.id)
     if (!cur) return
-    const base = cur.work.architecture ?? { ...emptyArchitecture(cur.spec.totalEpisodes), idea }
+    const base = cur.work.architecture ?? emptyArchitecture(cur.spec.totalEpisodes)
     const row = archBasis(cur, item)
     const patch: Partial<Architecture> =
       item === 'innovations' ? { innovations: d.innovations ?? [] } : item === 'mainLine' ? { mainLine: d.mainLine ?? base.mainLine } : item === 'logline' || item === 'rhythm' ? {} : { [item]: d.text }
@@ -514,12 +502,12 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
 
   /** 方向里的世界观、金手指、故事背景一起录入；依据指纹按录入后的样子记，之后核心设定再改会标「依据已改」 */
   const pickDirection = (d: Direction) => {
-    save({ ...(adaptation && { idea: d.plan }), world: d.world, goldenFinger: d.goldenFinger, background: d.background }, `采用 AI 方向：${d.title}`)
+    save({ world: d.world, goldenFinger: d.goldenFinger, background: d.background }, `采用 AI 方向：${d.title}`)
     updateProject(project.id, { logline: d.logline })
     for (const item of ['world', 'goldenFinger', 'background'] as const) stamp(item)
     setDirections(null)
     setIssues([])
-    toast(`已录入「${d.title}」：${['核心设定、世界观、金手指、故事背景', planLabel].filter(Boolean).join('、')}都已更新`)
+    toast(`已录入「${d.title}」：核心设定、世界观、金手指、故事背景都已更新`)
   }
 
   /** 这一项有没有内容 */
@@ -532,8 +520,8 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     return !!(a[item] as string).trim()
   }
 
-  /** 逐项生成会生成的项：改写想法由编剧写，原创的核心设定由编剧写；节奏框架折在冲突主线里，排在它后面 */
-  const autoItems = order.filter((i) => i !== 'idea' && !(i === 'logline' && !adaptation)).flatMap((i): ArchItem[] => (i === 'mainLine' ? ['mainLine', 'rhythm'] : [i]))
+  /** 逐项生成会生成的项：原创的核心设定由编剧写；节奏框架折在冲突主线里，排在它后面 */
+  const autoItems = order.filter((i) => !(i === 'logline' && !adaptation)).flatMap((i): ArchItem[] => (i === 'mainLine' ? ['mainLine', 'rhythm'] : [i]))
   /** 下一个空着的项；节奏框架要等冲突主线填完 */
   const nextOf = (p: Project) => autoItems.find((i) => !filledOf(p, i) && !(i === 'rhythm' && !filledOf(p, 'mainLine')))
   const nextEmpty = nextOf(project)
@@ -602,8 +590,8 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     const list = await run('loglines', (signal) => generateLoglines({ idea: loglineSeed.current, genres: cur.genres, audience: cur.audience, tones: cur.tones }, signal))
     if (list) setLoglines(list)
   }
-  // 版本二：确认前就实时列出还差什么
-  const live = v2 && !approved && !blocked ? missing() : null
+  // 确认前就实时列出还差什么
+  const live = !approved && !blocked ? missing() : null
 
   const setBeat = (i: number, patch: Partial<PlotBeat>) => save({ mainLine: arch.mainLine.map((b, j) => (j === i ? { ...b, ...patch } : b)) })
   const setInnovation = (id: string, patch: { theirs?: string; ours?: string }) => save({ innovations: arch.innovations.map((x) => (x.id === id ? { ...x, ...patch } : x)) })
@@ -623,12 +611,12 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     save({ phaseEnds: null, mainLine: arch.mainLine.map((b, k) => ({ ...b, range: rangeLabel(next[k]) })) }, '冲突主线恢复默认分段')
   }
 
-  /** 增删一段后的分段：ends 为各段结束集；情节大纲的粗纲随段落一起增删 */
+  /** 增删一段后的分段：ends 为各段结束集；情节大纲的阶段总览随段落一起增删 */
   const reshape = (mainLine: PlotBeat[], ends: number[], plotPhases: (phases: string[]) => string[], note: string) => {
     const cur = latestProject(project.id)
     if (!cur) return
     const next = phaseRanges(total, ends, mainLine.length)
-    const base = cur.work.architecture ?? { ...emptyArchitecture(total), idea }
+    const base = cur.work.architecture ?? emptyArchitecture(total)
     const plot = cur.work.plot && { ...cur.work.plot, phases: plotPhases(ranges.map((_, k) => cur.work.plot?.phases[k] ?? '')) }
     patchWork(cur.id, { architecture: { ...base, phaseEnds: ends, mainLine: mainLine.map((b, k) => ({ ...b, range: rangeLabel(next[k]) })) }, plot }, note)
   }
@@ -713,9 +701,9 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     const split = item === 'heroSetup' && arch.heroSplitAt
     const actions = (
       <>
-        {item !== 'idea' && !split && generateButton(item)}
+        {!split && generateButton(item)}
         {!split && <PolishButton value={value} label={titleOf(item)} disabled={blocked} onApply={(text) => save({ [item]: text }, `AI 润色${titleOf(item)}`)} />}
-        {item !== 'idea' && !split && (
+        {!split && (
           <Button
             variant="ghost"
             size="sm"
@@ -773,7 +761,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     <>
       <div className="flex flex-wrap gap-2">
         <AiButton variant="secondary" loading={running === 'directions' && !directions} disabled={blocked || !!running} onClick={propose}>
-          {adaptation ? '没有想法？AI 给出 3 个方向' : 'AI 给出 3 个方向'}
+          AI 框架方向
         </AiButton>
       </div>
       {reference && (
@@ -790,7 +778,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
       {head(
         'logline',
         <>
-          {!adaptation && !project.logline.trim() && project.idea.trim() && (
+          {!project.logline.trim() && project.idea.trim() && (
             <button className="px-1 text-xs text-ink-500 hover:text-brand-600" onClick={() => updateProject(project.id, { logline: project.idea })}>
               填入立项灵感
             </button>
@@ -811,7 +799,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
           )}
           <PolishButton value={project.logline} label="核心设定" onApply={(text) => updateProject(project.id, { logline: text }, 'AI 润色核心设定')} />
         </>,
-        { hint: '一句话、一段话都可以：至少讲清主角是谁、核心困境、反常规点；后面每一项都从这里取材' },
+        { hint: `一句话、一段话都可以：至少讲清主角是谁、核心困境、反常规点${adaptation ? '，在对标剧上改了什么' : ''}；后面每一项都从这里取材，没有想法就点下面的「AI 框架方向」` },
       )}
       <AutoTextarea
         aria-label="核心设定"
@@ -852,20 +840,6 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
           </li>
         </ul>
       )}
-    </div>
-  )
-
-  const ideaItem = (
-    <div data-item="idea" key="idea">
-      {head('idea', <PolishButton value={idea} label="改写想法" onApply={(text) => save({ idea: text }, 'AI 润色改写想法')} />, { hint: '可空：没有想法就让 AI 给出 3 个方向；写清保留什么、改动什么，下面的设定按「改动」改' })}
-      <AutoTextarea
-        aria-label="改写想法"
-        minRows={3}
-        value={idea}
-        disabled={approved}
-        onChange={(e) => save({ idea: e.target.value })}
-        placeholder="如：保留拒婚—归来结构，把狼人换成黑手党家族，女主是对立家族遗落的继承人"
-      />
     </div>
   )
 
@@ -1028,7 +1002,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
                         onClick={() =>
                           guard(!!b.content.trim(), {
                             title: `删除「${b.beat}」？`,
-                            desc: '这段的剧情与情节大纲里对应的粗纲会一起删除，集数并入相邻一段。',
+                            desc: '这段的剧情与情节大纲里对应的阶段总览会一起删除，集数并入相邻一段。',
                             confirmText: '删除',
                             action: () => removePhase(i),
                           })
@@ -1083,10 +1057,8 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
       </div>
     )
     switch (item) {
-      case 'idea':
-        return [ideaItem, dir]
       case 'logline':
-        return adaptation ? loglineItem : [loglineItem, dir]
+        return [loglineItem, dir]
       case 'innovations':
         return innovationsItem
       case 'mainLine':
@@ -1145,17 +1117,16 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     )
   }
 
-  /** 状态条：状态、还差什么、AI 生成下一项、确认；版本二放进页面底部的环节条（11/4 标注 #74；状态靠左、按钮靠右 #83，确认后最右接「去人物设定」），版本一悬浮在页面底部 */
-  const size = docked ? 'md' : 'sm'
+  /** 状态条：状态、还差什么、AI 生成下一项、确认；放进页面底部的环节条（11/4 标注 #74；状态靠左、按钮靠右 #83，确认后最右接「去人物设定」） */
   const issueList = !live && issues.length > 0 && (
-    <ul className={clsx('max-h-28 space-y-1 overflow-y-auto rounded-lg bg-red-50 px-4 py-2.5 text-[13px] text-red-700', !docked && 'mb-2.5')}>
+    <ul className="max-h-28 space-y-1 overflow-y-auto rounded-lg bg-red-50 px-4 py-2.5 text-[13px] text-red-700">
       {issues.map((t) => (
         <li key={t}>· {t}</li>
       ))}
     </ul>
   )
   const status = (
-    <div className={clsx('flex min-w-0 items-center gap-2 text-[13px] text-ink-500', !docked && 'flex-1')}>
+    <div className="flex min-w-0 items-center gap-2 text-[13px] text-ink-500">
       <ReviewBadge approved={approved} pendingText="草稿" />
       {approved ? (
         '已确认，各项只读；要改就点「修改故事架构」，改完重新确认'
@@ -1181,27 +1152,15 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
   )
   const actions = (
     <>
-      {SHOW_LABS && (
-        <>
-          <Link to={`/projects/${project.id}/lab/architecture`} data-lab-entry className="inline-flex items-center gap-1 text-[13px] text-brand-700 hover:underline">
-            <FlaskConical size={13} />
-            试用新版故事架构（Demo）
-          </Link>
-          <Link to={`/projects/${project.id}/lab/rewrite`} data-chat-entry className="inline-flex items-center gap-1 text-[13px] text-brand-700 hover:underline">
-            <MessagesSquare size={13} />
-            多轮改写对话（Demo）
-          </Link>
-        </>
-      )}
       {approved ? (
-        <Button variant="secondary" size={size} disabled={blocked} onClick={reopen}>
+        <Button variant="secondary" size="md" disabled={blocked} onClick={reopen}>
           <Pencil size={13} />
           修改故事架构
         </Button>
       ) : (
         <div className="flex gap-2">
           {running === 'fill' && (
-            <Button variant="ghost" size={size} onClick={cancel} title="停下这一项，已生成的保留">
+            <Button variant="ghost" size="md" onClick={cancel} title="停下这一项，已生成的保留">
               <Square size={12} />
               停止
             </Button>
@@ -1209,7 +1168,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
           {(nextEmpty || running === 'fill') && (
             <AiButton
               variant="secondary"
-              size={size}
+              size="md"
               loading={running === 'fill'}
               disabled={blocked || !!running}
               data-fill-next
@@ -1219,7 +1178,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
               {nextEmpty ? `${justMade ? '继续生成' : 'AI 生成'}「${titleOf(nextEmpty)}」` : 'AI 生成'}
             </AiButton>
           )}
-          <Button size={size} disabled={blocked} onClick={confirm} title="逐项检查必填后确认">
+          <Button size="md" disabled={blocked} onClick={confirm} title="逐项检查必填后确认">
             <Check size={14} />
             确认故事架构
           </Button>
@@ -1328,7 +1287,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
         <div className="p-5">{order.map(render)}</div>
       </Card>
 
-      {slot ? (
+      {slot && (
         <>
           {createPortal(
             <div data-arch-bar className="flex min-w-0 flex-col gap-2">
@@ -1339,23 +1298,13 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
           )}
           {createPortal(<div className="flex flex-wrap items-center gap-2">{actions}</div>, slot.actions)}
         </>
-      ) : (
-        !v2 && (
-          <div data-arch-bar className={clsx('sticky bottom-4 z-20 rounded-xl border bg-white/95 px-5 py-3 shadow-pop backdrop-blur', approved || live?.length === 0 ? 'border-emerald-200' : 'border-line')}>
-            {issueList}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              {status}
-              {actions}
-            </div>
-          </div>
-        )
       )}
 
       {directions && (
         <DirectionDialog
           directions={directions}
-          planLabel={planLabel}
-          overwrite={[adaptation ? idea : '', project.logline, arch.world, arch.goldenFinger, arch.background].some((t) => !!t.trim())}
+          adaptation={adaptation}
+          overwrite={[project.logline, arch.world, arch.goldenFinger, arch.background].some((t) => !!t.trim())}
           refreshing={running === 'directions'}
           onRefresh={propose}
           onPick={pickDirection}

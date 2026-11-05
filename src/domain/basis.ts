@@ -7,7 +7,6 @@
  * - 不违背即可：给一两句摘要；不要求写进去，但不能写反；查出来算建议
  * - 题材常识不算一档，只补依据里没有的内容，补的部分要标出来
  */
-import { SHOW_FORESHADOW } from './pipeline'
 import type { ArchItem, BasisPrint, Project } from './types'
 import { emptyArchitecture } from './work'
 
@@ -33,10 +32,8 @@ export type BasisKey =
   | 'overview'
   | 'phases'
   | 'outline'
-  | 'foreshadows'
 
 export const BASIS_LABEL: Record<BasisKey, string> = {
-  idea: '改写想法',
   logline: '核心设定',
   plan: '整体框架',
   innovations: '创新点',
@@ -60,9 +57,8 @@ export const BASIS_LABEL: Record<BasisKey, string> = {
   breakdown: '对标剧拆解',
   characters: '人物设定',
   overview: '全剧总览',
-  phases: '阶段粗纲',
+  phases: '阶段总览',
   outline: '集纲',
-  foreshadows: '伏笔计划',
 }
 
 export interface BasisRow {
@@ -86,12 +82,12 @@ export interface BasisRow {
  * 整体框架（原创）11/4 第五轮标注删掉：故事背景已经写成从开局讲到结局的故事简介，开局、结局改按故事背景；`Architecture.plan` 留着，旧数据不动。
  * 主要势力 11/4 第五轮标注（#63）删掉，生成不再读；创新点（#62）原创删掉，剧本仿写、视频仿写留着（设定写完后和对标剧比）。
  * `Architecture.factions` 和原创项目的 `innovations` 留着，旧数据不动。
- * 仿写没有改写方案：改写想法之后直接是核心设定。
+ * 仿写没有改写方案；改写想法 11/5 标注（#87）也删掉：编剧的想法直接写进核心设定，核心设定排第一，下面就是「AI 框架方向」。
  * 核心亮点 11/4 标注（#71）加在故事背景后面：期待值（观众为什么追下去）和情绪（主打什么情绪、怎么起伏），原创、仿写都有，后面的项依次往后排。
  */
 export const ARCH_ORDER: { original: ArchItem[]; adaptation: ArchItem[] } = {
   original: ['logline', 'world', 'goldenFinger', 'background', 'highlights', 'heroSetup', 'mainLine', 'writingRules'],
-  adaptation: ['idea', 'logline', 'world', 'goldenFinger', 'background', 'highlights', 'heroSetup', 'innovations', 'mainLine', 'writingRules'],
+  adaptation: ['logline', 'world', 'goldenFinger', 'background', 'highlights', 'heroSetup', 'innovations', 'mainLine', 'writingRules'],
 }
 
 export const archOrder = (p: Pick<Project, 'mode'>) => (p.mode === 'original' ? ARCH_ORDER.original : ARCH_ORDER.adaptation)
@@ -168,57 +164,56 @@ const ARCH_ORIGINAL: Partial<Record<ArchItem, BasisRow>> = {
   },
 }
 
-/** 仿写 · 故事架构：设定每一项 = 对标剧的同一项 + 改写想法和核心设定；创新点在设定写完之后，对比我们改了什么 */
-const CHANGE = '改写想法里涉及本项的改动'
+/** 仿写 · 故事架构：设定每一项 = 对标剧的同一项 + 核心设定（编剧的想法写在核心设定里）；创新点在设定写完之后，对比我们改了什么 */
 const ARCH_ADAPTATION: Partial<Record<ArchItem, BasisRow>> = {
   logline: {
-    must: ['改写想法（编剧写了的话）'],
+    must: ['编剧写的草稿；没写就用立项灵感'],
     focus: ['对标剧拆解的总纲层：故事梗概、冲突主线的节奏和每段梗概、人物设定（不带每集走向）'],
     light: ['基本信息'],
-    fill: '没写改写想法时，同题材里换零部件（人物、道具、背景）',
-    deps: ['idea', 'breakdown', 'basics'],
+    fill: '都没写时，同题材里换零部件（人物、道具、背景）',
+    deps: ['breakdown', 'basics'],
   },
   world: {
-    must: ['核心设定', CHANGE],
+    must: ['核心设定'],
     focus: ['故事梗概 · 世界观'],
     light: ['风格元素'],
-    deps: ['logline', 'idea', 'breakdown', 'basics'],
+    deps: ['logline', 'breakdown', 'basics'],
   },
   goldenFinger: {
-    must: ['核心设定', CHANGE],
+    must: ['核心设定'],
     focus: ['世界观设定（金手指要在世界观的规则里成立）', '故事梗概 · 金手指（能力和力度）、核心亮点'],
     light: ['题材类型、目标受众'],
-    deps: ['logline', 'idea', 'world', 'breakdown', 'basics'],
+    deps: ['logline', 'world', 'breakdown', 'basics'],
   },
   background: {
-    must: ['核心设定', CHANGE],
+    must: ['核心设定'],
     focus: ['故事梗概 · 故事简介（写法和力度）', '对标剧人物设定 · 主角简介', '世界观设定', '金手指 / 核心卖点（揭开的身份）'],
-    light: ['改写想法的其余部分'],
-    deps: ['logline', 'idea', 'breakdown', 'world', 'goldenFinger'],
+    light: [],
+    deps: ['logline', 'breakdown', 'world', 'goldenFinger'],
   },
   highlights: {
-    must: ['核心设定', CHANGE],
+    must: ['核心设定'],
     focus: ['故事梗概 · 核心亮点（期待值：核心爽点、主线任务、情感双线；学写法和力度）', '对标剧一卡前逐句细拆出的情绪转折', '故事背景', '金手指 / 核心卖点'],
     light: ['风格元素、目标受众'],
-    deps: ['logline', 'idea', 'breakdown', 'background', 'goldenFinger', 'basics'],
+    deps: ['logline', 'breakdown', 'background', 'goldenFinger', 'basics'],
   },
   heroSetup: {
-    must: ['核心设定', CHANGE],
+    must: ['核心设定'],
     focus: ['故事背景（主角从这里推出来）', '对标剧人物设定里主角的简介、身份、动机', '金手指 / 核心卖点'],
     light: ['目标受众、风格元素'],
-    deps: ['logline', 'idea', 'background', 'breakdown', 'goldenFinger', 'basics'],
+    deps: ['logline', 'background', 'breakdown', 'goldenFinger', 'basics'],
   },
   innovations: {
-    must: ['改写想法里要改的地方（编剧写了的话，逐条拆成创新点）'],
-    focus: ['写好的设定（世界观、金手指 / 核心卖点、故事背景、核心亮点、主角人设）和对标剧拆解的同一项对比（「对标剧怎么做」一栏从拆解取）'],
-    light: ['核心设定、基本信息'],
-    deps: ['idea', 'world', 'goldenFinger', 'background', 'highlights', 'heroSetup', 'breakdown', 'logline', 'basics'],
+    must: [],
+    focus: ['写好的设定（核心设定、世界观、金手指 / 核心卖点、故事背景、核心亮点、主角人设）和对标剧拆解的同一项对比（「对标剧怎么做」一栏从拆解取）'],
+    light: ['基本信息'],
+    deps: ['world', 'goldenFinger', 'background', 'highlights', 'heroSetup', 'breakdown', 'logline', 'basics'],
   },
   mainLine: {
     must: ['核心设定', '总集数'],
-    focus: ['对标剧冲突主线的各段（段落结构尽量保持，各段集数可以压缩或拉长）', '改写想法', '创新点', '主角人设、故事背景'],
+    focus: ['对标剧冲突主线的各段（段落结构尽量保持，各段集数可以压缩或拉长）', '创新点', '主角人设、故事背景'],
     light: ['世界观设定', '核心亮点（观众等着看的那几场要落在主线里）'],
-    deps: ['logline', 'idea', 'spec', 'breakdown', 'innovations', 'heroSetup', 'background', 'world', 'highlights'],
+    deps: ['logline', 'spec', 'breakdown', 'innovations', 'heroSetup', 'background', 'world', 'highlights'],
   },
   rhythm: {
     must: ['冲突主线（各段集数）', '总集数'],
@@ -234,7 +229,7 @@ const ARCH_ADAPTATION: Partial<Record<ArchItem, BasisRow>> = {
   },
 }
 
-/** 故事架构某一项的依据；改写想法由编剧手填，没有依据 */
+/** 故事架构某一项的依据 */
 export function archBasis(p: Pick<Project, 'mode'>, item: ArchItem): BasisRow | null {
   if (p.mode === 'original') return ARCH_ORIGINAL[item] ?? null
   const row = ARCH_ADAPTATION[item]
@@ -244,7 +239,7 @@ export function archBasis(p: Pick<Project, 'mode'>, item: ArchItem): BasisRow | 
 
 /* ---------------------------------- 下游各环节 ---------------------------------- */
 
-export type DownStep = 'characters' | 'overview' | 'phase' | 'episode' | 'foreshadow' | 'blueprint' | 'write' | 'review' | 'polish' | 'qa'
+export type DownStep = 'characters' | 'overview' | 'phase' | 'episode' | 'blueprint' | 'write' | 'review' | 'polish' | 'qa'
 
 /** 原创 · 下游各环节（第三部分 3.4）；仿写在此基础上增加 3.5 的条目 */
 const DOWN: Record<DownStep, BasisRow> = {
@@ -267,34 +262,28 @@ const DOWN: Record<DownStep, BasisRow> = {
     deps: ['mainLine', 'rhythm', 'overview', 'background', 'goldenFinger', 'characters', 'logline', 'world'],
   },
   episode: {
-    must: ['所在阶段的粗纲', '节奏框架（本集是不是付费卡点、大反转）'],
-    focus: ['金手指 / 核心卖点（怎么用）', '人物设定', '上一集集纲（承接）', '伏笔计划（已登记的话）'],
+    must: ['本集所在的阶段总览', '节奏框架（本集是不是付费卡点、大反转）'],
+    focus: ['金手指 / 核心卖点（怎么用）', '人物设定', '上一集集纲（承接）'],
     light: ['核心设定', '世界观设定', '故事背景'],
-    deps: ['phases', 'rhythm', 'goldenFinger', 'characters', 'foreshadows', 'logline', 'world', 'background'],
-  },
-  foreshadow: {
-    must: ['集纲（埋设集、回收集要落在有戏的集）', '节奏框架（回收对齐大反转、付费卡点）'],
-    focus: ['故事背景（前情恩怨、隐藏身份）', '金手指 / 核心卖点（来历、代价）', '人物设定（人物秘密）'],
-    light: ['核心设定', '世界观设定'],
-    deps: ['outline', 'rhythm', 'background', 'goldenFinger', 'characters', 'logline', 'world'],
+    deps: ['phases', 'rhythm', 'goldenFinger', 'characters', 'logline', 'world', 'background'],
   },
   blueprint: {
     must: ['本集集纲', '节奏框架（本集定位）'],
-    focus: ['人物设定', '剧本状态库', '伏笔计划', '上一集定稿（承接）'],
+    focus: ['人物设定', '剧本状态库', '上一集定稿（承接）'],
     light: ['核心设定', '金手指 / 核心卖点', '世界观设定'],
-    deps: ['outline', 'rhythm', 'characters', 'foreshadows', 'logline', 'goldenFinger', 'world'],
+    deps: ['outline', 'rhythm', 'characters', 'logline', 'goldenFinger', 'world'],
   },
   write: {
-    must: ['全局写作要求', '人物设定', '本集集纲', '分集蓝图', '剧本状态库（已定稿的事实）'],
-    focus: ['核心设定（不偏离）', '伏笔计划', '金手指 / 核心卖点（用法和边界前后一致）'],
-    light: ['世界观设定', '故事背景', '主角人设（已经通过人物设定带进来）', '后 3–5 集的分集蓝图（只作边界，不提前写）'],
-    deps: ['writingRules', 'characters', 'outline', 'logline', 'foreshadows', 'goldenFinger', 'world', 'background'],
+    must: ['全局写作要求', '人物设定', '本集集纲', '逐集蓝图', '剧本状态库（已定稿的事实）'],
+    focus: ['核心设定（不偏离）', '金手指 / 核心卖点（用法和边界前后一致）'],
+    light: ['世界观设定', '故事背景', '主角人设（已经通过人物设定带进来）', '后 3–5 集的逐集蓝图（只作边界，不提前写）'],
+    deps: ['writingRules', 'characters', 'outline', 'logline', 'goldenFinger', 'world', 'background'],
   },
   review: {
-    must: ['和逐集写作同一份：全局写作要求、人物设定、本集集纲、分集蓝图、剧本状态库'],
-    focus: ['核心设定（不偏离）', '伏笔计划', '金手指 / 核心卖点'],
+    must: ['和逐集写作同一份：全局写作要求、人物设定、本集集纲、逐集蓝图、剧本状态库'],
+    focus: ['核心设定（不偏离）', '金手指 / 核心卖点'],
     light: ['世界观设定', '故事背景'],
-    deps: ['writingRules', 'characters', 'outline', 'logline', 'foreshadows', 'goldenFinger'],
+    deps: ['writingRules', 'characters', 'outline', 'logline', 'goldenFinger'],
   },
   polish: {
     must: ['原文的事实和意思不变', '正文润色还要守全局写作要求'],
@@ -313,33 +302,20 @@ const DOWN: Record<DownStep, BasisRow> = {
 /** 仿写 · 下游各环节在原创基础上增加的（第三部分 3.5） */
 const DOWN_ADAPTATION: Partial<Record<DownStep, Partial<Pick<BasisRow, 'must' | 'focus' | 'light' | 'deps'>>>> = {
   characters: { must: ['不沿用对标剧人名'], focus: ['对标剧人物设定：主角的简介、身份、金手指、动机，配角的作用和定位，全剧人物关系网；每个人物记下对应的对标剧角色'] },
-  overview: { must: ['改写想法'], focus: ['故事梗概 · 故事简介、核心亮点（期待值）', '对标剧冲突主线的节奏和每段梗概', '创新点'], deps: ['idea', 'innovations'] },
+  overview: { focus: ['故事梗概 · 故事简介、核心亮点（期待值）', '对标剧冲突主线的节奏和每段梗概', '创新点'], deps: ['innovations'] },
   phase: { focus: ['对标剧冲突主线的对应段（这一段的梗概）', '这一段对位集的每集走向，压成一段摘要', '该落在这一段的创新点'], deps: ['innovations'] },
   episode: {
     must: ['本集事件不照搬对位集'],
     focus: ['对位那一两集的拆解：冲突强度、情绪强度、是否付费点、付费卡点位置、开场钩子、结尾钩子、伏笔埋设、伏笔回收（学力度和形式，不学事件）'],
   },
-  foreshadow: { focus: ['对位集拆解出的伏笔埋设、伏笔回收'] },
   blueprint: { must: ['不出现对标剧人名', '不照搬对标剧台词'], light: ['不读对标剧：结构已经在集纲那一层继承下来'] },
   write: { must: ['不出现对标剧人名', '不照搬对标剧台词'], light: ['不读对标剧：结构已经在集纲那一层继承下来'] },
   review: { must: ['另查对标剧人名残留、照搬对标剧台词'], focus: ['另查本集事件照抄对位集、结构偏离对标剧'] },
   qa: { focus: ['节奏曲线对比改为对比对标剧', '创新点（创新点落地：查「我们怎么做」有没有真的改）'], deps: ['innovations'] },
 }
 
-/** 伏笔这一步拿掉时，下游依据里不列伏笔计划 */
-const withoutPlans = (row: BasisRow): BasisRow =>
-  SHOW_FORESHADOW
-    ? row
-    : {
-        ...row,
-        must: row.must.filter((x) => !x.startsWith('伏笔计划')),
-        focus: row.focus.filter((x) => !x.startsWith('伏笔计划')),
-        light: row.light.filter((x) => !x.startsWith('伏笔计划')),
-        deps: row.deps.filter((d) => d !== 'foreshadows'),
-      }
-
 export function downBasis(p: Pick<Project, 'mode'>, step: DownStep): BasisRow {
-  const row = withoutPlans(DOWN[step])
+  const row = DOWN[step]
   if (p.mode === 'original') return row
   const add = DOWN_ADAPTATION[step] ?? {}
   return {
@@ -404,8 +380,6 @@ export function basisValue(p: Project, key: BasisKey): string {
       return (p.work.plot?.phases ?? []).join('\n')
     case 'outline':
       return p.work.outline.map((o) => `${o.ep}|${o.event}|${o.hook}`).join('\n')
-    case 'foreshadows':
-      return p.work.foreshadows.map((f) => `${f.title}|${f.plantEp}|${f.payoffEp}`).join('\n')
     default:
       return ((a?.[key] as string | undefined) ?? '').trim()
   }
@@ -421,7 +395,7 @@ export function changedBasis(p: Project, key: string): BasisKey[] {
   return (Object.keys(print) as BasisKey[]).filter((d) => print[d] !== digest(basisValue(p, d)))
 }
 
-/** 指纹在 work.prints 里的键：故事架构各项、人物设定、全剧总览、各段粗纲 */
+/** 指纹在 work.prints 里的键：故事架构各项、人物设定、全剧总览、各阶段总览 */
 export const PRINT_KEY = {
   arch: (item: ArchItem) => `arch.${item}`,
   characters: 'characters',

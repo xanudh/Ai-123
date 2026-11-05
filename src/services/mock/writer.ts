@@ -1,5 +1,5 @@
 /**
- * 仿写与写作环节的本地模拟：按题材套件 + 模板生成架构、人物、伏笔、情节大纲、分集蓝图与逐集剧本。
+ * 仿写与写作环节的本地模拟：按题材套件 + 模板生成架构、人物、情节大纲、逐集蓝图与逐集剧本。
  * 输出结构与真实模型一致，内容只用于演示流程。
  */
 import { alignEp, benchRanges, benchSegment } from '../../domain/align'
@@ -15,13 +15,10 @@ import type {
   DraftReview,
   EpisodeBlueprint,
   EpisodeScript,
-  Foreshadow,
-  ForeshadowType,
   HookType,
   Innovation,
   LineNote,
   OutlineEpisode,
-  PlanEventKind,
   Plot,
   PlotBeat,
   Project,
@@ -36,9 +33,6 @@ import type {
 import {
   blueprintOf,
   carryOf,
-  foreshadowKey,
-  foreshadowName,
-  foreshadowPlans,
   hookOf,
   latestDraft,
   newCharacter,
@@ -51,7 +45,7 @@ import {
   scriptOf,
   wordCount,
 } from '../../domain/work'
-import { SHOW_FORESHADOW, hasInnovations } from '../../domain/pipeline'
+import { hasInnovations } from '../../domain/pipeline'
 import { newId } from '../../lib/id'
 import {
   AI_FILLERS,
@@ -197,14 +191,12 @@ function innovationsOf(p: Project, kit: Kit, ctx: Ctx, plan = ''): Innovation[] 
   return ownInnovations(p, out)
 }
 
-/** AI 提出的一个改写方向：选中后录入核心设定、世界观、金手指、故事背景，仿写另录改写想法（保留 / 改动）；原创的整体框架 11/4 删掉，plan 只给 Demo 页用；冲突主线、创新点也只在 Demo 页用 */
+/** AI 框架方向里的一个：选中后录入核心设定、世界观、金手指、故事背景（改写想法 11/5 删掉，不再录）；冲突主线、创新点只在已删的 Demo 页用过 */
 export interface Direction {
   id: string
   title: string
   /** 一句话说明改了什么 */
   pitch: string
-  /** 仿写：改写想法（保留 / 改动 / 爽点）；原创：开局、转折、结局（故事架构不再录入，多轮改写对话 Demo 用） */
-  plan: string
   /** 核心设定 */
   logline: string
   /** 世界观设定：时代与地点、规则 */
@@ -237,18 +229,12 @@ export function proposeDirections(p: Project, seed: number): Direction[] {
     }
   }
 
-  const make = (title: string, logline: string, keep: string, change: string, k: Kit, beats: string[], extra?: Omit<Innovation, 'id'>, more?: { goldenFinger?: string; background?: string }): Direction => {
+  const make = (title: string, logline: string, change: string, k: Kit, beats: string[], extra?: Omit<Innovation, 'id'>, more?: { goldenFinger?: string; background?: string }): Direction => {
     const ctx = coreCtx(p, k)
-    // 仿写：写进改写想法，保留什么、改动什么；原创：开局、转折、结局（只给 Demo 页用）
-    const plan =
-      p.mode === 'original'
-        ? [`方向：${title}——${change}`, `开局：${fill(k.opening, ctx)}`, `转折：${fill(k.secret, ctx)}`, `结局：${fill(k.ending, ctx)}`].join('\n')
-        : `方向：${title}\n保留：${keep}\n改动：${change}\n爽点：${k.formula}`
     return {
       id: newId(),
       title,
       pitch: change,
-      plan,
       logline,
       ...settings(k, ctx, more),
       formula: k.formula,
@@ -258,13 +244,11 @@ export function proposeDirections(p: Project, seed: number): Direction[] {
   }
 
   if (bench) {
-    const structure = `对标剧的五段式主线与第 ${bench.rhythm.paywalls.join('、')} 集付费节奏`
     return [
-      make('同题材升级', first, `保留${structure}`, `人物全部重塑；关键道具换成「${kit.prop}」；核心秘密改为「${fill(kit.secret, own)}」`, kit, BEATS),
+      make('同题材升级', first, `人物全部重塑；关键道具换成「${kit.prop}」；核心秘密改为「${fill(kit.secret, own)}」`, kit, BEATS),
       make(
         '题材迁移',
         pick(r, other.loglines),
-        `保留${structure}，以及“被看轻 → 反击 → 身份揭晓”的情绪曲线`,
         `故事搬到「${worldOf(other)}」，爽点改为${other.formula.split('，')[0]}`,
         other,
         BEATS,
@@ -273,7 +257,6 @@ export function proposeDirections(p: Project, seed: number): Direction[] {
       make(
         '信息差反转',
         `${second.split('——')[0]}——但这一次，观众从第 1 集就知道${own.lover}的苦衷。`,
-        '保留关键节点与付费卡点位置',
         '悬念从“主角不知道”改为“观众知道、主角不知道”，用虐点和误会撑中段',
         kit,
         IRONY_BEATS,
@@ -284,18 +267,17 @@ export function proposeDirections(p: Project, seed: number): Direction[] {
   }
 
   return [
-    make('强化当前核心设定', p.logline || first, '保留你的核心设定与题材', `补上反常规点：${fill(kit.secret, own)}；爽点：${kit.formula.split('，')[0]}`, kit, BEATS),
+    make('强化当前核心设定', p.logline || first, `补上反常规点：${fill(kit.secret, own)}；爽点：${kit.formula.split('，')[0]}`, kit, BEATS),
     make(
       '同题材另一种开法',
       second,
-      `保留「${kit.label}」题材与目标受众`,
       `开局改为第一集就反杀：${fill(kit.opening, own)}`,
       kit,
       STRIKE_BEATS,
       { theirs: '常规开局：主角先挨打，攒够委屈再反击', ours: '第一集当晚就反将一军，后面层层揭开更大的局' },
       { goldenFinger: `第 1 集当晚就亮出${kit.prop}反将一军`, background: `开场前${own.hero}已经暗中准备了三年，只等这一晚` },
     ),
-    make('跨题材混搭', pick(r, other.loglines), '保留五段式冲突主线', `把「${worldOf(other)}」的世界观混进来，制造新鲜感`, other, BEATS, {
+    make('跨题材混搭', pick(r, other.loglines), `把「${worldOf(other)}」的世界观混进来，制造新鲜感`, other, BEATS, {
       theirs: `单一「${kit.label}」题材`,
       ours: `混搭「${worldOf(other)}」世界观`,
     }),
@@ -540,63 +522,16 @@ function loverTie(p: Project, kit: Kit) {
   return kit.ties[0]
 }
 
-/* ---------------------------------- 伏笔 ---------------------------------- */
-
-/** AI 建议的一条伏笔：附上为什么埋在这里、在哪收，供编剧勾选 */
-export interface ForeshadowIdea {
-  foreshadow: Foreshadow
-  why: string
-}
-
-/** 大纲确定后建议伏笔：埋设与回收落在具体的集纲上，优先踩大反转、付费卡点与高潮 */
-export function draftForeshadows(p: Project): ForeshadowIdea[] {
-  const kit = kitOf(p)
-  const ctx = ctxOf(p, kit)
-  const total = p.spec.totalEpisodes
-  const { twists, paywalls, climaxFrom } = p.rhythm
-  const ranges = projectPhases(p)
-  const names = phaseNames(p)
-  const at = (ratio: number) => Math.min(total, Math.max(1, Math.round(total * ratio)))
-
-  const items: { type: ForeshadowType; title: string; content: string; plantEp: number; payoffEp: number }[] = [
-    { type: '关键道具', title: `${kit.prop}的异光`, content: `${kit.prop}在危急时刻发出异样的光，暗示它与「${kit.identity}」有关`, plantEp: 1, payoffEp: twists[0] ?? at(0.25) },
-    { type: '叙事线索', title: `感情线：${ctx.hero} × ${ctx.lover}`, content: `${ctx.hero}与${ctx.lover}之间的心结一点点解开，每个阶段至少推进一次关系变化`, plantEp: 1, payoffEp: at(0.95) },
-    { type: '人物秘密', title: `${ctx.lover}的苦衷`, content: `${ctx.lover}当年的选择另有苦衷，误会撑起前半程的虐点`, plantEp: Math.min(2, total), payoffEp: twists[1] ?? at(0.5) },
-    { type: '隐藏身份', title: `${ctx.hero}的真实身份`, content: `${ctx.hero}的真实身份是${kit.identity}，高潮时当众公开`, plantEp: at(0.12), payoffEp: climaxFrom },
-    { type: '前情恩怨', title: '当年旧案', content: fill(kit.grudge, ctx), plantEp: at(0.2), payoffEp: twists[2] ?? at(0.8) },
-    { type: '人物秘密', title: `${ctx.villain}的幕后往来`, content: `${ctx.villain}暗中与幕后势力往来，第二幕升级时浮出水面`, plantEp: at(0.35), payoffEp: at(0.78) },
-    { type: '人物秘密', title: `${ctx.ally}的隐瞒`, content: `${ctx.ally}一直瞒着${ctx.hero}一件事：当年事发那晚，${ctx.ally}也在场`, plantEp: at(0.25), payoffEp: paywalls.find((e) => e > at(0.5)) ?? at(0.6) },
-    { type: '叙事线索', title: `${ctx.mentor}的三次出场`, content: `${ctx.mentor}每次出场都带出一条旧线索，最后一次交出全部真相`, plantEp: at(0.1), payoffEp: Math.max(1, climaxFrom - 1) },
-  ]
-
-  const where = (ep: number) => {
-    const title = p.work.outline.find((o) => o.ep === ep)?.title
-    return `第 ${ep} 集${title ? `「${title}」` : ''}（${names[phaseOf(ep, ranges)]}）`
-  }
-  const node = (ep: number) =>
-    twists.includes(ep) ? '，正好落在大反转' : paywalls.includes(ep) ? '，卡在付费点' : ep >= climaxFrom ? '，高潮集揭晓' : ''
-
-  return items.map((f) => {
-    // 回收必须晚于埋设
-    const payoffEp = f.payoffEp > f.plantEp ? f.payoffEp : Math.min(total, f.plantEp + Math.max(3, Math.round(total * 0.1)))
-    const line = f.type === '叙事线索' ? ['开始', '收束'] : ['埋设', '回收']
-    return {
-      foreshadow: { id: newId(), ...f, payoffEp, events: [] },
-      why: `${line[0]}：${where(f.plantEp)}；${line[1]}：${where(payoffEp)}${node(payoffEp)}`,
-    }
-  })
-}
-
 /* ---------------------------------- 情节大纲 ---------------------------------- */
 
 /** 金手指在各段怎么用：前段暗用，中段公开，结局兑现 */
 const FINGER_STEPS = ['埋下', '第一次用', '公开、升级', '被针对、代价加重', '全面兑现']
 
 /**
- * 全剧总览 + 各段粗纲，按依据表取数：
+ * 全剧总览 + 各阶段总览，按依据表取数：
  * 总览必须遵守核心设定、冲突主线、节奏框架；重点参考人物（主角弧光）、金手指、故事背景（开局、结局）、核心亮点（写了就代替题材常识的【爽点】）。
- * 粗纲必须遵守冲突主线的这一段和落在这一段的节点；重点参考秘密在哪一段揭开、金手指的升级节点。
- * 粗纲开头先写这一段的剧情概况（按集串成一段话，11/4 标注 #61），再写「段名（集数）：冲突主线」、节点、金手指。
+ * 阶段总览必须遵守冲突主线的这一段和落在这一段的节点；重点参考秘密在哪一段揭开、金手指的升级节点。
+ * 阶段总览开头先写这一段的剧情概况（按集串成一段话，11/4 标注 #61），再写「段名（集数）：冲突主线」、节点、金手指。
  * 故事结构、叙事视角、爽点公式 11/4 从故事架构删掉，这里不再读：叙事线固定写主线 / 感情线 / 反派线，爽点按题材常识写；主要势力 11/4 第五轮删掉，不再读；创新点只有仿写有，仿写的总览列出、按顺序落到第 2 段起的各段。
  * 仿写另读对标剧冲突主线的对应段，只学结构和力度。
  */
@@ -655,10 +590,6 @@ export function draftPlot(p: Project): Plot {
       ...paywalls.filter(inRange).map((ep) => `第 ${ep} 集付费卡点`),
       ...(inRange(climaxFrom) ? [`第 ${climaxFrom} 集进入高潮`] : []),
     ]
-    const plans = foreshadowPlans(p.work).flatMap((f) => [
-      ...(inRange(f.plantEp) ? [`埋「${foreshadowName(f)}」`] : []),
-      ...(inRange(f.payoffEp) ? [`收「${foreshadowName(f)}」`] : []),
-    ])
     // 创新点按顺序落到第 2 段起的各段
     const idea = ideas.filter((_, k) => (k + 1) % ranges.length === i)
     const j = bd ? benchSegment(p, i) : -1
@@ -670,8 +601,7 @@ export function draftPlot(p: Project): Plot {
       finger ? `金手指：${FINGER_STEPS[t]}。` : '',
       secret && t === 2 ? `揭开：${clip(secret, 30)}。` : '',
       idea.length ? `创新点：${idea.join('；')}。` : '',
-      plans.length ? `伏笔：${plans.join('、')}。` : '',
-      bd && j < 0 ? '新加的段：对标剧没有，只按我们的粗纲和节奏框架写。' : bench,
+      bd && j < 0 ? '新加的段：对标剧没有，只按我们的阶段总览和节奏框架写。' : bench,
     ]
       .filter(Boolean)
       .join('\n')
@@ -728,7 +658,7 @@ function mainEventOf(p: Project, ep: number, seed: number, decks: EventDecks, ki
   return { text: deck[(ep - ranges[phase][0] + seed) % deck.length], node: null }
 }
 
-/** 粗纲开头的剧情概况：把这一段各集的主事件按顺序串成一段话；集数多时均匀取 6 集 */
+/** 阶段总览开头的剧情概况：把这一段各集的主事件按顺序串成一段话；集数多时均匀取 6 集 */
 function phaseStory(p: Project, from: number, to: number, decks: EventDecks, ctx: Ctx, kit: Kit) {
   const n = to - from + 1
   const eps = [...new Set(Array.from({ length: Math.min(n, 6) }, (_, k) => from + Math.round((k * (n - 1)) / Math.max(1, Math.min(n, 6) - 1))))]
@@ -773,10 +703,6 @@ export function draftOutline(p: Project, from: number, to: number, seed: number)
     const react = decks.reacts[t][(i + seed) % decks.reacts[t].length]
     const move = decks.moves[t][(i + seed + 1) % decks.moves[t].length]
     const parts = main.node === 'paywall' ? [react, move, head] : main.node === 'end' ? [move, head] : [head, react, move]
-    for (const f of foreshadowPlans(p.work)) {
-      if (f.plantEp === ep) parts.push(`埋下「${foreshadowName(f)}」`)
-      if (f.payoffEp === ep) parts.push(`回收「${foreshadowName(f)}」`)
-    }
     const event = parts.map((x) => fill(x, c).replace(/[。；]$/, '')).join('。') + '。'
 
     let hook: HookType
@@ -797,7 +723,7 @@ export function draftOutline(p: Project, from: number, to: number, seed: number)
   return out
 }
 
-/* ---------------------------------- 分集蓝图 ---------------------------------- */
+/* ---------------------------------- 逐集蓝图 ---------------------------------- */
 
 /** 本集在节奏框架里的定位 */
 export function positionOf(p: Project, ep: number): string {
@@ -811,7 +737,7 @@ export function positionOf(p: Project, ep: number): string {
   return ['铺垫', '发展', '发展', '升级', '高潮'][templateOf(p, ep)]
 }
 
-/** 按情节大纲生成分集蓝图；已有的集要点保留（作者微操指导、主角小目标 11/4 从页面删掉：小目标不再生成，旧的指导原样带着） */
+/** 按情节大纲生成逐集蓝图；已有的集要点保留（作者微操指导、主角小目标 11/4 从页面删掉：小目标不再生成，旧的指导原样带着） */
 export function draftBlueprints(p: Project, from: number, to: number, seed: number): EpisodeBlueprint[] {
   const kit = kitOf(p)
   const cast = castOf(p)
@@ -822,8 +748,6 @@ export function draftBlueprints(p: Project, from: number, to: number, seed: numb
     const r = rng(hash(`${p.id}-bp${ep}`) + seed)
     const names = [cast.hero.zh, ...SLOTS.slice(1).map((s) => cast[s].zh).filter((n) => o.event.includes(n) || o.hookLine.includes(n))]
     const prev = blueprintOf(p.work, ep)
-    // 承接不只是上集结尾：前几集埋下、计划本集回收的伏笔也在开场接住
-    const due = foreshadowPlans(p.work).filter((f) => f.payoffEp === ep && f.plantEp < ep - 1).map((f) => `第 ${f.plantEp} 集埋下的「${foreshadowName(f)}」在本集响起`)
     out.push({
       ep,
       title: o.title,
@@ -831,8 +755,8 @@ export function draftBlueprints(p: Project, from: number, to: number, seed: numb
       cast: [...new Set(names)].join('、'),
       goal: '',
       conflict: o.event,
-      // 承接上一集的结尾：同批生成的上集蓝图优先，其次上集正文 / 集纲；再接上到期的伏笔
-      carry: [out.find((b) => b.ep === ep - 1)?.hook || prevHookOf(p.work, ep), ...due.slice(0, 1)].filter(Boolean).join('；'),
+      // 承接上一集的结尾：同批生成的上集蓝图优先，其次上集正文 / 集纲
+      carry: out.find((b) => b.ep === ep - 1)?.hook || prevHookOf(p.work, ep),
       hook: o.hookLine,
       looks: looksOf(p, [...new Set(names)], kit, r),
       guidance: prev?.guidance ?? '',
@@ -937,27 +861,6 @@ function shortVoice(zh: string) {
   return clause && clause.length > 4 ? clause.replace(/[，,；;]$/, '。') : first
 }
 
-/** 本集要推进的伏笔：计划本集埋设、本集回收，以及到了该呼应的一条活跃计划 */
-function plansOf(p: Project, ep: number) {
-  // 每 3 集呼应一次（沉寂提醒阈值 11/4 已从故事架构删掉）
-  const every = 3
-  const all = foreshadowPlans(p.work)
-  const echo = all
-    .filter((f) => f.plantEp < ep && ep < f.payoffEp && (ep - f.plantEp) % every === 0)
-    .sort((a, b) => a.plantEp - b.plantEp)[0]
-  return {
-    plant: all.filter((f) => f.plantEp === ep),
-    echo: echo ? [echo] : [],
-    payoff: all.filter((f) => f.payoffEp === ep),
-  } satisfies Record<PlanEventKind, Foreshadow[]>
-}
-
-/** 写进正文的伏笔描写：取意图的第一句，保证能被检索词命中 */
-function clauseOf(f: Foreshadow) {
-  const first = f.content.split(/[，。；]/)[0].trim()
-  return first.length >= 8 ? first : f.content.trim().replace(/[。；]$/, '') || f.title
-}
-
 export function writeEpisode(p: Project, ep: number, seed: number): DraftContent {
   const kit = kitOf(p)
   const cast = castOf(p)
@@ -966,7 +869,7 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
   const r = rng(hash(`${p.id}-ep${ep}`) + seed)
   const outline = p.work.outline.find((o) => o.ep === ep)
   const blueprint = blueprintOf(p.work, ep)
-  // 承接：蓝图里写了用蓝图的（可能是上集遗留，也可能是前几集埋下、本集要响的伏笔），没写时接上集正文（定稿或最新草稿）里的钩子台词
+  // 承接：蓝图里写了用蓝图的，没写时接上集正文（定稿或最新草稿）里的钩子台词
   const carry = carryOf(p.work, ep)
   const conflict = blueprint?.conflict.trim() || outline?.event
   const hook = blueprint?.hook.trim() || outline?.hookLine
@@ -987,7 +890,6 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     lines.push({ id: newId(), ...l })
     size += l.zh.length
   }
-  const plans = plansOf(p, ep)
 
   // 按审稿的那几项依据写：核心设定里不许出现的词、已经不能出场的人、寡言人物的台词、AI 味与长台词
   const terms = ruleTermsOf(p).map((t) => t.term)
@@ -1037,12 +939,6 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
       // 蓝图改过冲突、没写集纲事件时，集纲事件也要写进开场
       if (event && !(conflict ?? '').replace(/\s/g, '').includes(event.key)) push({ kind: 'action', zh: `△ ${event.text}。` })
     }
-    // 伏笔放在第二场（只有一场时放第一场），保证写进正文
-    if (i === Math.min(1, types.length - 1)) {
-      for (const kind of ['plant', 'echo', 'payoff'] as const) {
-        for (const f of plans[kind]) planLines(f, kind).forEach((l) => (l.kind === 'dialogue' ? say(l.speech) : push({ kind: 'action', zh: l.zh })))
-      }
-    }
 
     const pool = SCENES[type]
     const actions = shuffle(r, pool.actions)
@@ -1066,7 +962,6 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
 
   // 记下这一集按什么写的：和审稿同一份清单，草稿页「本集蓝图」里能看到
   const before = buildState(p, ep)
-  const planned = (['plant', 'echo', 'payoff'] as const).flatMap((k) => plans[k].map((f) => `${{ plant: '埋设', echo: '呼应', payoff: '回收' }[k]}「${foreshadowName(f)}」`))
   const basis: (WriteBasisItem | false | '' | 0 | null | undefined)[] = [
     p.logline.trim() && { basis: 'core', text: `扣住核心设定：${clip(p.logline.trim(), 40)}` },
     p.work.architecture?.writingRules.trim() && { basis: 'core', text: `按全局写作要求写${terms.length ? `，避开「${terms.join('、')}」${n.terms ? `（删去 ${n.terms} 处）` : ''}` : ''}` },
@@ -1080,23 +975,11 @@ export function writeEpisode(p: Project, ep: number, seed: number): DraftContent
     },
     event && { basis: 'outline', text: `集纲：${event.text}` },
     (carry || blueprint) && { basis: 'blueprint', text: [carry && `开场承接「${clip(carry.text, 24)}」`, blueprint?.cast.trim() && `出场 ${blueprint.cast.trim()}`, hook && '结尾按蓝图钩子收'].filter(Boolean).join('；') },
-    planned.length && { basis: 'foreshadow', text: planned.join('、') },
     p.mode !== 'original' && p.work.breakdown && { basis: 'bench', text: '不出现对标剧人名，不照搬对标剧台词；不读对标剧，结构已在集纲那一层继承' },
     { basis: 'format', text: `约 ${estimateChars(p.spec.episodeSeconds)} 字、${sceneCount} 场，每场有场景标题${hook ? '，集末留钩子' : ''}` },
     { basis: 'style', text: `不用 AI 味词，台词不超过 30 字${n.fillers || n.split ? `（去掉 AI 味 ${n.fillers} 处、拆短 ${n.split} 句）` : ''}` },
   ]
   return { title: blueprint?.title.trim() || outline?.title || '', lines, states, basis: basis.filter((x): x is WriteBasisItem => !!x) }
-}
-
-type PlanLine = { kind: 'action'; zh: string } | { kind: 'dialogue'; speech: Speech }
-
-/** 伏笔推进写成的正文：叙事线索只写一句动作，其余伏笔配一句台词 */
-function planLines(f: Foreshadow, kind: PlanEventKind): PlanLine[] {
-  const c = clauseOf(f)
-  if (f.type === '叙事线索') return [{ kind: 'action', zh: `△ ${c}${kind === 'payoff' ? '，终于有了结果' : ''}。` }]
-  if (kind === 'plant') return [{ kind: 'action', zh: `△【特写】${c}。` }, { kind: 'dialogue', speech: PLANT_LINE }]
-  if (kind === 'echo') return [{ kind: 'action', zh: `△【闪回】${c}。` }]
-  return [{ kind: 'action', zh: `△ 真相揭晓——${c}。` }, { kind: 'dialogue', speech: PAYOFF_LINE }]
 }
 
 /* ---------------------------------- 审稿 / 修稿 / 要点 ---------------------------------- */
@@ -1111,13 +994,6 @@ const speakers = (lines: ScriptLine[]) => [...new Set(lines.flatMap((l) => (l.ki
 
 const flatText = (lines: ScriptLine[]) => lines.map((l) => l.zh).join('').replace(/\s/g, '')
 
-/** 正文里该出现、却没找到的伏笔推进 */
-function missingPlans(p: Project, d: DraftLike) {
-  const flat = flatText(d.lines)
-  const plans = plansOf(p, d.ep)
-  return (['plant', 'payoff'] as const).flatMap((kind) => plans[kind].filter((f) => foreshadowKey(f) && !flat.includes(foreshadowKey(f))).map((f) => ({ f, kind })))
-}
-
 /** 正文里第一处符合条件的行：审稿意见引用它 */
 function lineAt(lines: ScriptLine[], test: (l: ScriptLine) => boolean): Pick<ReviewItem, 'lineId' | 'quote'> {
   const l = lines.find(test)
@@ -1125,17 +1001,14 @@ function lineAt(lines: ScriptLine[], test: (l: ScriptLine) => boolean): Pick<Rev
 }
 
 /**
- * 连贯性：对照本集之前已定稿的剧情——人物状态、关键道具的归属、已回收的伏笔，
+ * 连贯性：对照本集之前已定稿的剧情——人物状态，
  * 找出和前文矛盾的地方。只认定稿，草稿不算“已发生”。
  */
 function continuityItems(p: Project, d: DraftLike): ReviewItem[] {
   const before = buildState(p, d.ep)
   if (!before.latestEp) return []
   const items: ReviewItem[] = []
-  const flat = flatText(d.lines)
   const who = speakers(d.lines)
-  const plans = plansOf(p, d.ep)
-  const planned = new Set([...plans.plant, ...plans.echo, ...plans.payoff].map((f) => f.id))
 
   const states = before.characters.filter((c) => c.state && c.stateEp)
   for (const c of states) {
@@ -1149,25 +1022,9 @@ function continuityItems(p: Project, d: DraftLike): ReviewItem[] {
         ...lineAt(d.lines, (l) => l.kind === 'dialogue' && l.speaker === c.name),
       })
   }
-  const props = before.foreshadows.filter((f) => f.item.type === '关键道具' && f.plantedIn !== null)
-  for (const f of before.foreshadows) {
-    const key = foreshadowKey(f.item)
-    if (!key || !flat.includes(key) || planned.has(f.item.id)) continue
-    const quote = lineAt(d.lines, (l) => l.zh.replace(/\s/g, '').includes(key))
-    if (f.paidIn !== null)
-      items.push({
-        level: 'warn',
-        code: 'paid',
-        key: `paid:${f.item.id}`,
-        text: `「${foreshadowName(f.item)}」已在第 ${f.paidIn} 集回收，本集又出现：确认${f.item.type === '关键道具' ? '道具归属' : '真相'}与前文一致`,
-        ref: `第 ${f.paidIn} 集定稿回收「${foreshadowName(f.item)}」`,
-        ...quote,
-      })
-    else if (f.item.type === '关键道具') items.push({ level: 'info', basis: 'state', text: `道具「${foreshadowName(f.item)}」本集出现，归属沿用第 ${f.lastEp ?? f.plantedIn} 集`, ...quote })
-  }
   const range = before.latestEp > 1 ? `第 1–${before.latestEp} 集` : '第 1 集'
   if (!items.some((i) => i.level === 'block' || i.level === 'warn')) {
-    items.push({ level: 'info', basis: 'state', text: `连贯：已对照${range}定稿的 ${states.length} 个人物状态、${props.length} 件关键道具与已发生的剧情线，未发现矛盾` })
+    items.push({ level: 'info', basis: 'state', text: `连贯：已对照${range}定稿的 ${states.length} 个人物状态与已发生的剧情线，未发现矛盾` })
   }
   return items
 }
@@ -1249,11 +1106,6 @@ function findIssues(p: Project, d: DraftLike): ReviewItem[] {
   const absent = planned.filter((n) => !text.includes(n))
   if (absent.length) items.push({ level: 'block', code: 'absent', text: `蓝图里的出场人物 ${absent.join('、')} 没有出场`, ref: `蓝图出场关键人：${blueprint!.cast}` })
 
-  // 伏笔计划
-  for (const { f, kind } of missingPlans(p, d)) {
-    items.push({ level: 'warn', code: 'plan', key: `plan:${f.id}:${kind}`, text: `计划本集${kind === 'plant' ? '埋设' : '回收'}「${foreshadowName(f)}」，正文里没找到`, ref: `伏笔计划：第 ${f.plantEp} 集埋设 → 第 ${f.payoffEp} 集回收，${clauseOf(f)}` })
-  }
-
   // 人物设定
   const who = speakers(d.lines)
   if (p.work.characters.length && !who.includes(cast.hero.zh)) items.push({ level: 'warn', code: 'hero', text: `主角${cast.hero.zh}本集没有台词`, ref: `人物设定：主角 ${cast.hero.zh}` })
@@ -1301,7 +1153,7 @@ const LEVEL_RANK = { block: 0, warn: 1, info: 2, ok: 3 }
 
 /**
  * 修稿后的复审：上一轮的意见逐条看改没改掉——没改掉的第一次记「修稿后仍在」，再没改掉记「AI 改不动」；
- * 改掉后又出现的记「改好又出现」，这两种都不再交给 AI 修稿。新问题只认改过的段落和结构性的（缺钩子、缺伏笔这类）；
+ * 改掉后又出现的记「改好又出现」，这两种都不再交给 AI 修稿。新问题只认改过的段落和结构性的（缺钩子这类）；
  * 全量重审时新问题全列，但仍按上一轮跟踪。
  */
 function trackIssues(found: ReviewItem[], base: ReviewBase, kind: 'full' | 'recheck', d: DraftLike, kept: Set<string>): ReviewItem[] {
@@ -1336,7 +1188,7 @@ function trackIssues(found: ReviewItem[], base: ReviewBase, kind: 'full' | 'rech
 }
 
 /**
- * AI 审稿：按核心设定、人物设定、状态库、集纲、蓝图、伏笔计划、格式与篇幅、文风逐项查。
+ * AI 审稿：按核心设定、人物设定、状态库、集纲、蓝图、格式与篇幅、文风逐项查。
  * 编剧保留不改的意见不再提；传入 base 时是修稿后的复审（kind 默认 recheck，只查上一轮意见与改过的段落）。
  */
 export function reviewDraft(p: Project, d: DraftLike, opts: { base?: ReviewBase; kind?: 'full' | 'recheck' } = {}): Pick<DraftReview, 'score' | 'items' | 'kind' | 'baseId'> {
@@ -1347,7 +1199,7 @@ export function reviewDraft(p: Project, d: DraftLike, opts: { base?: ReviewBase;
 
   const blocks = items.filter((i) => i.level === 'block').length
   const warns = items.filter((i) => i.level === 'warn').length
-  if (!blocks && !warns) items.push({ level: 'ok', text: kind === 'recheck' ? '上一轮的意见都已改掉，改过的段落没有新问题，可以定稿' : `结构完整${SHOW_FORESHADOW ? '、伏笔到位' : ''}，可以定稿` })
+  if (!blocks && !warns) items.push({ level: 'ok', text: kind === 'recheck' ? '上一轮的意见都已改掉，改过的段落没有新问题，可以定稿' : '结构完整，可以定稿' })
   return { score: Math.max(1, Math.min(5, Math.round((5 - blocks - warns * 0.5) * 10) / 10)), items, kind, ...(opts.base && { baseId: opts.base.review.id }) }
 }
 
@@ -1405,12 +1257,10 @@ const LEGACY_CODES: [RegExp, ReviewCode][] = [
   [/缺少场景标题/, 'scene'],
   [/结尾没有钩子/, 'hook'],
   [/开场没有(接住|承接)/, 'carry'],
-  [/^计划本集(埋设|回收)/, 'plan'],
   [/^主角.*本集没有台词/, 'hero'],
   [/未在人物设定中登记/, 'unknown'],
   [/^蓝图里的出场人物/, 'absent'],
   [/^人物状态冲突/, 'state'],
-  [/集回收，本集又出现/, 'paid'],
   [/^AI 味词汇/, 'filler'],
   [/台词超过 30 字/, 'longLine'],
   [/条标注待处理/, 'notes'],
@@ -1429,9 +1279,9 @@ function splitLong(zh: string): [string, string] | null {
 
 /**
  * AI 修稿：生成新版本，标注过的行一律按标注改写。
- * - 审过稿：逐条按审稿意见改——能直接改的改掉；人物登记、已回收伏笔的真相这类剧情判断不擅自改，列给编剧
+ * - 审过稿：逐条按审稿意见改——能直接改的改掉；人物登记这类剧情判断不擅自改，列给编剧
  * - 复审里两轮没改掉、改好又出现的意见不再改，交给编剧；编剧保留不改的意见不动
- * - 没审稿（或旧报告没有意见类别）：自检去 AI 味、补伏笔与钩子、字数不足时扩写
+ * - 没审稿（或旧报告没有意见类别）：自检去 AI 味、补钩子、字数不足时扩写
  */
 export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pick<DraftReview, 'items'>): RevisedDraft {
   const kit = kitOf(p)
@@ -1448,7 +1298,7 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
   const live = coded.filter((i) => !isStuck(i.status))
   const skip = new Set(stuck.map(itemKey))
   const liveKeys = new Set(live.map(itemKey))
-  const todo = new Set<ReviewCode>(coded.length ? live.map((i) => i.code) : ['filler', 'plan', 'hook', 'short'])
+  const todo = new Set<ReviewCode>(coded.length ? live.map((i) => i.code) : ['filler', 'hook', 'short'])
   const noted = new Set((d.notes ?? []).map((n) => n.lineId))
   const changes: string[] = []
   const manual: string[] = stuck.map((i) => `${i.text}（${i.status === 'back' ? '改好后又出现' : '两轮没改掉'}，AI 不再改，请人工处理或保留不改）`)
@@ -1541,18 +1391,6 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
     lines.splice(at < 0 ? lines.length : at, 0, ...extra)
   }
 
-  const missing = todo.has('plan') ? missingPlans(p, { ...d, lines: lines as ScriptLine[] }).filter(({ f, kind }) => !skip.has(`plan:${f.id}:${kind}`)) : []
-  if (missing.length) {
-    beforeHook(
-      missing.flatMap(({ f, kind }) =>
-        planLines(f, kind).map((l): Omit<ScriptLine, 'id'> =>
-          l.kind === 'action' ? { kind: 'action', zh: l.zh } : { kind: 'dialogue', speaker: cast[l.speech.who].zh, speakerEn: cast[l.speech.who].en, zh: fill(l.speech.zh, ctx) },
-        ),
-      ),
-    )
-    changes.push(`补写伏笔 ${missing.map(({ f }) => `「${foreshadowName(f)}」`).join('')}`)
-  }
-
   if (todo.has('drift') && coreHits(p, lines) < 2) {
     beforeHook([coreLine(p, d.ep, cast.hero)])
     changes.push('补一句主角内心独白，把本集拉回核心设定')
@@ -1591,9 +1429,8 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
   }
 
   if (todo.has('long')) {
-    // 从后往前删普通动作描写；承接、闪回与伏笔所在的行保留
-    const keys = foreshadowPlans(p.work).map(foreshadowKey).filter(Boolean)
-    const keep = (l: Omit<ScriptLine, 'id'>) => l.kind !== 'action' || /^△（/.test(l.zh) || keys.some((k) => l.zh.replace(/\s/g, '').includes(k))
+    // 从后往前删普通动作描写；承接、闪回所在的行保留
+    const keep = (l: Omit<ScriptLine, 'id'>) => l.kind !== 'action' || /^△（/.test(l.zh)
     let total = size(lines)
     let n = 0
     for (let i = lines.length - 1; i >= 0 && total > target * 1.15; i--) {
@@ -1626,7 +1463,6 @@ export function reviseDraft(p: Project, d: DraftLike, seed: number, review?: Pic
   }
   for (const i of live) {
     if (i.code === 'unknown') manual.push(`${i.text}：去人物设定登记，或改成已登记的名字`)
-    if (i.code === 'paid') manual.push(i.text)
     if (i.code === 'benchName' && !p.work.characters.some((c) => i.key === `benchName:${c.benchmark.trim()}`)) manual.push(`${i.text}：人物设定里没有对应的角色，先填好「对应对标剧角色」`)
     if (i.code === 'benchEvent' || i.code === 'benchShape') manual.push(`${i.text}：要不要改、怎么改需要编剧判断`)
   }
@@ -1683,7 +1519,7 @@ function speakerFor(lines: ScriptLine[], at: number) {
 }
 
 /**
- * 守住原有设定：新写或改过的行逐条对照人物设定、状态库、伏笔计划与对标剧人名，
+ * 守住原有设定：新写或改过的行逐条对照人物设定、状态库与对标剧人名，
  * 不合设定的改动撤回，留给编剧。
  */
 function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLine[]) {
@@ -1691,11 +1527,10 @@ function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLin
   const state = buildState(p, ep)
   const gone = new Map(state.characters.filter((c) => c.state && GONE.test(c.state)).map((c) => [c.name, c]))
   const bench = (p.work.breakdown?.characters ?? []).map((c) => c.name).filter((n) => n.length >= 2 && !known.has(n))
-  const later = foreshadowPlans(p.work).filter((f) => f.plantEp > ep && foreshadowKey(f))
   const old = new Map(before.map((l) => [l.id, l]))
   const dropped: string[] = []
 
-  // 只查这次新写进来的：新开口的人、新出现的人名与伏笔
+  // 只查这次新写进来的：新开口的人、新出现的人名
   const problem = (l: ScriptLine, o?: ScriptLine) => {
     const who = l.kind === 'dialogue' && (!o || o.speaker !== l.speaker) ? l.speaker?.trim() : undefined
     if (who && known.size && !known.has(who)) return `「${who}」不在人物设定里`
@@ -1704,8 +1539,6 @@ function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLin
     const fresh = (frag: string) => !o?.zh.replace(/\s/g, '').includes(frag)
     const b = bench.find((n) => l.zh.includes(n) && fresh(n))
     if (b) return `会带入对标剧人名「${b}」`
-    const f = later.find((x) => l.zh.replace(/\s/g, '').includes(foreshadowKey(x)) && fresh(foreshadowKey(x)))
-    if (f) return `会提前写出第 ${f.plantEp} 集才埋设的伏笔`
   }
 
   const lines = after.flatMap((l): ScriptLine[] => {
@@ -1720,7 +1553,6 @@ function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLin
   const checked = [
     known.size ? `人物设定：新写的台词只给已登记的 ${known.size} 个人物` : '人物设定：还没登记人物，没有新增角色',
     state.latestEp ? `状态库：对照${rangeLabel([1, state.latestEp])}定稿的人物状态${gone.size ? `，${[...gone.keys()].join('、')} 不开口` : ''}` : '状态库：本集之前还没有定稿',
-    ...(SHOW_FORESHADOW ? [`伏笔计划：只写本集计划内的推进${later.length ? `，后面才埋设的 ${later.length} 条不提前写出` : ''}`] : []),
     ...(bench.length ? [`对标剧：不带入 ${bench.length} 个对标剧人名`] : []),
   ]
   return { lines, dropped, checked }
@@ -1728,7 +1560,7 @@ function guardFix(p: Project, ep: number, before: ScriptLine[], after: ScriptLin
 
 /**
  * 质检里的「AI 修稿」：按一条问题改定稿，只动问题涉及的行，其余行（连同 id、标注、英文）原样保留。
- * 补写的内容只取自已有设定——本集蓝图、集纲、伏笔计划、状态库与已登记人物；
+ * 补写的内容只取自已有设定——本集蓝图、集纲、状态库与已登记人物；
  * 设定里找不到依据的（钩子没写、称呼对不上人、换场景这类剧情判断）不擅自编，列给编剧。
  */
 export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: number): QaFix {
@@ -1839,15 +1671,14 @@ export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: n
       break
     }
     case '篇幅超出单集时长': {
-      const keys = foreshadowPlans(p.work).map(foreshadowKey).filter(Boolean)
-      const keep = (l: ScriptLine) => l.kind !== 'action' || /^△（/.test(l.zh) || keys.some((k) => l.zh.replace(/\s/g, '').includes(k))
+      const keep = (l: ScriptLine) => l.kind !== 'action' || /^△（/.test(l.zh)
       let n = 0
       for (let i = lines.length - 1; i >= 0 && size() > target * 1.15; i--) {
         if (keep(lines[i])) continue
         lines.splice(i, 1)
         n++
       }
-      if (n) changes.push(`删掉 ${n} 处普通动作描写，伏笔、承接与闪回保留，压到约 ${size()} 字`)
+      if (n) changes.push(`删掉 ${n} 处普通动作描写，承接与闪回保留，压到约 ${size()} 字`)
       if (size() > target * 1.15) manual.push('只删动作描写压不到时长内：考虑把一场戏挪到下一集')
       break
     }
@@ -1904,19 +1735,6 @@ export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: n
       }
       break
     }
-    case '伏笔未埋设':
-    case '伏笔未回收': {
-      const kind = issue.title === '伏笔未埋设' ? 'plant' : 'payoff'
-      const flat = flatText(lines)
-      const list = foreshadowPlans(p.work).filter((f) => (kind === 'plant' ? f.plantEp : f.payoffEp) === ep && foreshadowKey(f) && !flat.includes(foreshadowKey(f)))
-      beforeHook(
-        list.flatMap((f) =>
-          planLines(f, kind).map((l) => (l.kind === 'action' ? add({ kind: 'action', zh: l.zh }) : say(cast[l.speech.who], fill(l.speech.zh, ctx)))),
-        ),
-      )
-      if (list.length) changes.push(`按伏笔计划${kind === 'plant' ? '埋设' : '回收'}${list.map((f) => `「${foreshadowName(f)}」`).join('')}`)
-      break
-    }
     case '没承接上一集的钩子': {
       const prev = scriptOf(p.work, ep - 1)
       const hook = prev && hookOf(prev)
@@ -1936,15 +1754,11 @@ export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: n
       break
     }
     case '大反转不够明显': {
-      const payoff = foreshadowPlans(p.work).find((f) => f.payoffEp === ep && foreshadowKey(f))
       const turn = bp?.conflict.split(/转折[:：]?|，却|，但|没想到/).slice(1).join('，').trim()
-      if (payoff) {
-        beforeHook([add({ kind: 'action', zh: `△ 真相揭晓——${clauseOf(payoff)}。` })])
-        changes.push(`把伏笔「${foreshadowName(payoff)}」的真相当面揭开（伏笔计划本集回收）`)
-      } else if (turn) {
+      if (turn) {
         beforeHook([add({ kind: 'action', zh: `△ 原来，${turn.replace(/[。]$/, '')}。` })])
         changes.push('按本集蓝图的转折写一场明确的揭秘')
-      } else manual.push('伏笔计划和本集蓝图里都没有本集的反转：先定下反转内容')
+      } else manual.push('本集蓝图里没有本集的反转：先定下反转内容')
       break
     }
     case '场景单调':
@@ -1960,19 +1774,17 @@ export function fixQaIssue(p: Project, s: EpisodeScript, issue: QaIssue, seed: n
   return { lines: guarded.lines, changes: same && !translated ? [] : changes, manual: [...manual, ...guarded.dropped], checked: guarded.checked, ...(translated ? { translated } : {}) }
 }
 
-/** 定稿后提炼本集要点，回填到分集蓝图 */
+/** 定稿后提炼本集要点，回填到逐集蓝图 */
 export function extractPoints(p: Project, d: DraftLike & { states: Record<string, string> }): string {
   const actions = d.lines.filter((l) => l.kind === 'action' && !/^△（(接上集|承接)）/.test(l.zh))
   const clean = (t?: string) => (t ?? '').replace(/^△\s*/, '').replace(/[。]$/, '')
   const turn = actions.find((l) => /真相揭晓|特写|闪回/.test(l.zh)) ?? actions[Math.floor(actions.length / 2)]
-  const flat = flatText(d.lines)
 
   const earlier = p.work.scripts.filter((s) => s.ep < d.ep)
   const seenPlaces = new Set(earlier.flatMap((s) => s.lines.filter((l) => l.kind === 'scene').map((l) => placeOf(l.zh))))
   const seenPeople = new Set(earlier.flatMap((s) => speakers(s.lines)))
   const newPlaces = [...new Set(d.lines.filter((l) => l.kind === 'scene').map((l) => placeOf(l.zh)))].filter((x) => !seenPlaces.has(x))
   const newPeople = speakers(d.lines).filter((n) => !seenPeople.has(n))
-  const plans = foreshadowPlans(p.work).filter((f) => foreshadowKey(f) && flat.includes(foreshadowKey(f)))
 
   const states = Object.entries(d.states)
   const out = [
@@ -1986,7 +1798,6 @@ export function extractPoints(p: Project, d: DraftLike & { states: Record<string
     '## 角色动态',
     ...(states.length ? ['| 角色 | 本集变化/状态 |', '|------|-------------|', ...states.map(([n, s]) => `| ${n} | ${s} |`)] : ['- 无明显变化']),
   ]
-  if (plans.length) out.push('', '## 伏笔推进', ...plans.map((f) => `- ${f.plantEp === d.ep ? '埋设' : f.payoffEp === d.ep ? '回收' : '呼应'}「${foreshadowName(f)}」`))
   if (newPlaces.length || newPeople.length) {
     out.push('', '## 新增设定')
     if (newPeople.length) out.push(`- 首次出场：${newPeople.join('、')}`)

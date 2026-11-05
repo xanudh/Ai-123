@@ -10,7 +10,7 @@
 @utility top-stick-0 {
   top: var(--stick, 0px);
 }
-/* 可视高度：减去顶栏（4rem）、底部环节条（--bottom-bar，由 VersionBar 量出，没显示时为 0）和吸顶页头 */
+/* 可视高度：减去顶栏（4rem）、底部环节条（--bottom-bar，由 BottomBar 量出，没显示时为 0）和吸顶页头 */
 @utility max-h-stick {
   max-height: calc(100vh - var(--stick, 0px) - 4rem - var(--bottom-bar));
 }

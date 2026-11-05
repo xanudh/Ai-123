@@ -19,7 +19,6 @@ import { formatDateTime } from '../../../lib/format'
 import { ANALYZE_STEPS, SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME, analyzeBenchmark, parseSource } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { toast } from '../../../store/toast'
-import { useV2 } from '../../../store/uiVersion'
 import { useStageSlot } from '../../../v2/bottomSlot'
 
 /** 板块顺序：故事梗概 → 冲突主线 · 内容简介 → 人物设定 */
@@ -834,7 +833,7 @@ const PHASE_NO = ['一', '二', '三', '四', '五', '六', '七', '八']
 
 /**
  * 冲突主线 · 内容简介：交互类比情节大纲（11/4 标注）——上面一行节奏（曲线可收起），左边按冲突主线分段的目录，
- * 右边是选中这一段的梗概（类比粗纲，可改）和段下每集的走向（类比集纲）；可切完整视图看全部段。
+ * 右边是选中这一段的梗概（类比阶段总览，可改）和段下每集的走向（类比集纲）；可切完整视图看全部段。
  * 第 1 集到一卡逐场、逐句细拆，每集都能查看原文
  */
 function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: SourceScript | null; video: boolean; patch: (p: Partial<Breakdown>) => void }) {
@@ -930,7 +929,7 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
           </nav>
         </div>
 
-        {/* 选中的段：梗概（粗纲）+ 每集走向（集纲） */}
+        {/* 选中的段：梗概（阶段总览）+ 每集走向（集纲） */}
         <div className="min-w-0 divide-y divide-line">
           {shown.map((i) => {
             const b = bd.mainLine[i]
@@ -946,7 +945,7 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
                     {from <= card && card <= to && <Badge tone="orange">一卡 第 {card} 集</Badge>}
                   </div>
                   <div className="mt-2">
-                    <div className="mb-1 text-xs font-medium text-ink-500">本段梗概（粗纲）</div>
+                    <div className="mb-1 text-xs font-medium text-ink-500">本段梗概（阶段总览）</div>
                     <AutoTextarea
                       inline
                       aria-label={b.beat}
@@ -954,7 +953,7 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
                      
                       onChange={(e) => setBeat(i, e.target.value)}
                       minRows={2}
-                      placeholder="这一段的梗概：讲这一段的故事（类比粗纲），不逐集列"
+                      placeholder="这一段的梗概：讲这一段的故事（类比阶段总览），不逐集列"
                       className="bg-white text-[13px] leading-6 text-ink-700"
                     />
                   </div>
@@ -988,14 +987,13 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
 
 /* ---------------------------------- 审核与引用 ---------------------------------- */
 
-/** 版本二：滚到某个板块（板块留出 scroll-mt） */
+/** 滚到某个板块（板块留出 scroll-mt） */
 const jumpTo = (block: BreakdownBlock) => requestAnimationFrame(() => document.getElementById(`bd-block-${block}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 
-/** 板块跳转和一键引用：版本二放进页面底部的环节条（11/4 标注 #74；板块跳转靠左、一键引用靠右 #83），版本一仍在页面里；不再逐块审核（#76–#79），拆完就能引用 */
+/** 板块跳转和一键引用：放进页面底部的环节条（11/4 标注 #74；板块跳转靠左、一键引用靠右 #83）；不再逐块审核（#76–#79），拆完就能引用 */
 function ReferenceBar({ project, bd }: { project: Project; bd: Breakdown }) {
   const { patchWork, updateProject } = useProjects()
-  const v2 = useV2()
-  const slot = useStageSlot(v2)
+  const slot = useStageSlot()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [useRhythm, setUseRhythm] = useState(true)
@@ -1017,26 +1015,19 @@ function ReferenceBar({ project, bd }: { project: Project; bd: Breakdown }) {
     navigate(stagePath(cur, 'architecture'))
   }
 
-  const docked = v2 && !!slot
   const info = (
     <div data-bd-bar className="flex flex-wrap items-center gap-2 text-[13px]">
       <span className="text-ink-500">板块</span>
-      {BLOCKS.map((b) =>
-        v2 ? (
-          <button key={b} type="button" onClick={() => jumpTo(b)} title={`跳到「${blockLabel(b)}」`} className="rounded bg-canvas px-2 py-1 text-xs text-ink-700 transition-colors hover:ring-1 hover:ring-brand-300">
-            {blockLabel(b)}
-          </button>
-        ) : (
-          <span key={b} className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-ink-500">
-            {blockLabel(b)}
-          </span>
-        ),
-      )}
+      {BLOCKS.map((b) => (
+        <button key={b} type="button" onClick={() => jumpTo(b)} title={`跳到「${blockLabel(b)}」`} className="rounded bg-canvas px-2 py-1 text-xs text-ink-700 transition-colors hover:ring-1 hover:ring-brand-300">
+          {blockLabel(b)}
+        </button>
+      ))}
       {bd.referencedAt && <span className="text-xs text-ink-500">已于 {formatDateTime(bd.referencedAt)} 引用到故事架构</span>}
     </div>
   )
   const action = (
-    <Button size={docked ? 'md' : 'sm'} variant={bd.referencedAt ? 'secondary' : 'primary'} onClick={() => setOpen(true)}>
+    <Button size="md" variant={bd.referencedAt ? 'secondary' : 'primary'} onClick={() => setOpen(true)}>
       <Link2 size={14} />
       {bd.referencedAt ? '重新引用' : '一键引用'}
     </Button>
@@ -1074,14 +1065,6 @@ function ReferenceBar({ project, bd }: { project: Project; bd: Breakdown }) {
       </label>
     </Modal>
   )
-  if (!v2)
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white px-5 py-3.5 shadow-card">
-        {info}
-        {action}
-        {modal}
-      </div>
-    )
   return (
     slot && (
       <>
@@ -1138,7 +1121,7 @@ export default function BreakdownStage({ project }: { project: Project }) {
           </BlockCard>
           <BlockCard
             block="mainline"
-            desc={`左边选冲突主线的一段，右边是这一段的梗概（粗纲）和每集走向（集纲）；付费短剧最重要的是第 1 集和一卡（第 ${firstPaywall(bd)} 集）：第 1 集拆前 3 秒、前 30 秒和钩子，一卡拆卡点；${project.mode === 'video' ? '第 2 集' : '第 1 集'}到一卡逐场、逐句拆，之后的付费卡点集也按一卡拆卡点、逐场逐句——情绪在哪一句转、哪句台词带来转折，转折那句就是核心台词`}
+            desc={`左边选冲突主线的一段，右边是这一段的梗概（阶段总览）和每集走向（集纲）；付费短剧最重要的是第 1 集和一卡（第 ${firstPaywall(bd)} 集）：第 1 集拆前 3 秒、前 30 秒和钩子，一卡拆卡点；${project.mode === 'video' ? '第 2 集' : '第 1 集'}到一卡逐场、逐句拆，之后的付费卡点集也按一卡拆卡点、逐场逐句——情绪在哪一句转、哪句台词带来转折，转折那句就是核心台词`}
           >
             <StoryBlock bd={bd} source={source} video={project.mode === 'video'} patch={patch} />
           </BlockCard>

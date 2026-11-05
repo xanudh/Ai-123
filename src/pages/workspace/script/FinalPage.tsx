@@ -1,22 +1,19 @@
 import clsx from 'clsx'
-import { ArrowLeft, ArrowRight, BookOpen, Flag, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { AiButton, InlineInput, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { PointsView } from '../../../components/project/PointsView'
 import { Badge, Card, EmptyState, Segmented, buttonClass, dotBefore } from '../../../components/ui'
-import { PLAN_EVENT_META } from '../../../domain/constants'
-import { SHOW_FORESHADOW } from '../../../domain/pipeline'
 import type { EpisodeScript, LineNote } from '../../../domain/types'
 import { modelLabel } from '../../../domain/models'
-import { blueprintOf, draftLabel, draftsOf, eventCandidates, foreshadowName, foreshadowPlans, scriptOf, wordCount } from '../../../domain/work'
+import { blueprintOf, draftLabel, draftsOf, scriptOf, wordCount } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { extractPoints, translateEpisode } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
 import { STATE_TAB, activeTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
-import { useV2 } from '../../../store/uiVersion'
 import { QaReturnBanner, RelayBar, qaBackPath } from '../../../v2/FinalBits'
 import { useCurrentProject } from '../ProjectLayout'
 import { ScriptEditor } from './ScriptEditor'
@@ -39,7 +36,6 @@ export default function FinalPage() {
   const patchWork = useProjects((s) => s.patchWork)
   const { running, run } = useAiTask()
   const [view, setView] = useState<View>('en_zh')
-  const v2 = useV2()
   const [params] = useSearchParams()
   // 正文里选中的段落：状态库侧栏「标注」给它加标注
   const [pick, setPick] = useState<LinePick | null>(null)
@@ -85,9 +81,8 @@ export default function FinalPage() {
   const eps = w.scripts.map((s) => s.ep)
   const prev = Math.max(0, ...eps.filter((e) => e < ep))
   const next = Math.min(Infinity, ...eps.filter((e) => e > ep))
-  const candidates = foreshadowPlans(w).flatMap((f) => eventCandidates(f, [script]).map((c) => ({ f, c })))
-  // 版本二：从质检「去改正文」过来时带着问题
-  const fromQa = v2 && params.get('from') === 'qa'
+  // 从质检「去改正文」过来时带着问题
+  const fromQa = params.get('from') === 'qa'
   const qaIssue = fromQa ? w.qa?.issues.find((i) => i.id === params.get('issue') && i.ep === ep) : undefined
 
   /** 在最新数据上改本集正文 */
@@ -141,7 +136,7 @@ export default function FinalPage() {
         ) : (
           <Link to={`${scriptStagePath(project)}?ep=${ep}`} className="inline-flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-900">
             <ArrowLeft size={14} />
-            分集蓝图
+            逐集蓝图
           </Link>
         )}
         <div className="flex items-center gap-1">
@@ -200,7 +195,7 @@ export default function FinalPage() {
       </Card>
 
       {qaIssue && <QaReturnBanner project={project} issue={qaIssue} />}
-      {v2 && !fromQa && <RelayBar project={project} ep={ep} />}
+      {!fromQa && <RelayBar project={project} ep={ep} />}
 
       <ScriptEditor
         project={project}
@@ -219,7 +214,7 @@ export default function FinalPage() {
         ]}
       />
 
-      {/* 本集要点（含伏笔推进候选，伏笔这一步拿掉时不显示）/ 标注：填进状态库侧栏对应的标签页；人物状态在要点的「角色动态」与状态库标签页里 */}
+      {/* 本集要点 / 标注：填进状态库侧栏对应的标签页；人物状态在要点的「角色动态」与状态库标签页里 */}
       {slot &&
         createPortal(
           sideTab === 'points' ? (
@@ -247,38 +242,6 @@ export default function FinalPage() {
                   </p>
                 )}
               </div>
-
-              {SHOW_FORESHADOW && (
-                <div className="border-t border-line pt-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink-900">
-                      <Flag size={13} className="text-ink-400" />
-                      伏笔推进候选
-                    </span>
-                    {candidates.length > 0 && (
-                      <Link to={stagePath(project, 'foreshadow')} className="text-xs text-brand-600 hover:text-brand-700">
-                        去确认
-                      </Link>
-                    )}
-                  </div>
-                  {candidates.length ? (
-                    <ul className="space-y-2.5">
-                      {candidates.map(({ f, c }) => (
-                        <li key={f.id} className="text-[12.5px] leading-5">
-                          <div className="flex items-center gap-1.5">
-                            <Badge tone={PLAN_EVENT_META[c.kind].tone}>{PLAN_EVENT_META[c.kind].label}</Badge>
-                            <span className="truncate font-medium text-ink-900">{foreshadowName(f)}</span>
-                          </div>
-                          <p className="mt-0.5 line-clamp-2 text-ink-500">{c.text}</p>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-ink-400">没有待确认的推进</p>
-                  )}
-                  <p className="mt-2 text-xs text-ink-400">正文里命中伏笔检索词的行，确认后才计入状态库</p>
-                </div>
-              )}
 
             </div>
           ) : sideTab === 'notes' ? (

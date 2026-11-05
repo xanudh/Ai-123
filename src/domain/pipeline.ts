@@ -1,12 +1,6 @@
 import type { BreakdownBlock, Project, ProjectMode, QaCheckKey, StageKey } from './types'
 
 /**
- * 「伏笔与叙事线索」这一步：11/4 产品要求先拿掉。关掉时流程里没有这一步（旧地址回到概览），
- * 状态库、写作、审稿、质检也不再显示、不再读伏笔计划；代码和已有数据都留着，改回 true 就恢复。
- */
-export const SHOW_FORESHADOW = false
-
-/**
  * 创新点（对标剧怎么做 → 我们怎么做）只有仿写有：剧本仿写、视频仿写要，原创不要（11/4 第五轮标注）。
  * 质检的「创新点落地」也只查仿写：原创六项，仿写七项
  */
@@ -64,12 +58,11 @@ export const STAGES: Record<StageKey, StageMeta> = {
     key: 'architecture',
     label: '故事架构',
     source: '第三步 · 设计故事架构',
-    summary: '从核心设定往下一项项推出整部剧：核心设定（仿写前面是改写想法）→ 世界观 → 金手指 → 故事背景 → 核心亮点 → 主角人设 →（仿写另有创新点）→ 冲突主线 · 节奏框架 → 全局写作要求；每一项只读排在它前面的项，只有核心设定必填。',
+    summary: '从核心设定往下一项项推出整部剧：核心设定 → 世界观 → 金手指 → 故事背景 → 核心亮点 → 主角人设 →（仿写另有创新点）→ 冲突主线 · 节奏框架 → 全局写作要求；每一项只读排在它前面的项，只有核心设定必填。',
     deliverables: ['基本信息', '核心设定', '世界观与人物设定', '创新点（仿写）与冲突主线', '节奏框架', '全局写作要求'],
     phase: null,
     notes: [
-      '仿写：先写改写想法；没有想法时 AI 基于拆解结果提出 3 个新方向，选中的方向写进改写想法、核心设定和世界观、金手指、故事背景',
-      '原创：核心设定直接从这一步开始；也可以让 AI 给出 3 个方向，选中的方向写进核心设定和世界观、金手指、故事背景',
+      '核心设定写编剧自己的想法（仿写写清在对标剧上改了什么）；没有想法点「AI 框架方向」，AI 给出 3 个方向（仿写基于拆解结果），选中的方向写进核心设定和世界观、金手指、故事背景',
       '先定冲突主线（段落、集数、剧情），再按主线生成节奏框架',
     ],
   },
@@ -81,40 +74,32 @@ export const STAGES: Record<StageKey, StageMeta> = {
     deliverables: ['人物配置表', '人物关系图'],
     phase: null,
   },
-  foreshadow: {
-    key: 'foreshadow',
-    label: '伏笔与叙事线索',
-    source: '第四步 · 伏笔登记表',
-    summary: '大纲定下来之后再埋伏笔：对照集纲设置埋设与预计回收集，AI 建议的伏笔先勾选再录入；活跃计划自动注入后续写作，逾期或沉寂时提醒。只有人工确认的定稿内容才记为已发生事件。',
-    deliverables: ['伏笔与线索计划', '剧情树'],
-    phase: null,
-  },
   outline: {
     key: 'outline',
     label: '情节大纲',
     source: '第四步 · 分集大纲',
-    summary: '先总览整部剧的剧情，再按冲突主线总结每个阶段的粗纲，下面是每集的集纲（每 10 集一批）；钩子轮换自动检查，付费卡点集单独审核。',
-    deliverables: ['全剧总览', '阶段粗纲', '分集集纲'],
+    summary: '先总览整部剧的剧情，再按冲突主线写各阶段总览，下面是每集的集纲（每 10 集一批）；钩子轮换自动检查，付费卡点集单独审核。',
+    deliverables: ['全剧总览', '阶段总览', '分集集纲'],
     phase: null,
   },
   state: {
     key: 'state',
     label: '剧本状态库',
     source: '第五步 · 剧本状态库',
-    summary: '人物设定、关系、场景、道具与全部伏笔的结构化“户口本”，每定稿一集自动更新，防止人设漂移。',
+    summary: '人物设定、关系、场景与道具的结构化“户口本”，每定稿一集自动更新，防止人设漂移。',
     deliverables: ['剧本状态库'],
     phase: null,
-    notes: ['AI 写长剧最常见的问题是伏笔写着写着没了、人物状态乱跑——每次写作前先对照状态库检查'],
+    notes: ['AI 写长剧最常见的问题是人物状态乱跑、前后对不上——每次写作前先对照状态库检查'],
   },
   script: {
     key: 'script',
     label: '逐集剧本',
     source: '第五步 · 逐集剧本生成',
-    summary: '先看分集蓝图（出场人物、冲突、承接、钩子），再点击生成；草稿进草稿箱，审稿 / 修稿后定稿归入正文章节。',
-    deliverables: ['分集蓝图', '草稿箱', '正文章节（英文 + 中文对照）'],
+    summary: '先看逐集蓝图（每一集都按情节大纲和人物设定预填：出场人物、冲突、承接、钩子），再点击生成；草稿进草稿箱，审稿 / 修稿后定稿归入正文章节。',
+    deliverables: ['逐集蓝图', '草稿箱', '正文章节（英文 + 中文对照）'],
     phase: null,
     notes: [
-      `AI 一次只写一集（也可一批 5 集），编剧定稿后再写下一集；写第 N 集时引用前面的人物、${SHOW_FORESHADOW ? '伏笔与' : ''}状态`,
+      'AI 一次只写一集（也可一批 5 集），编剧定稿后再写下一集；写第 N 集时引用前面的人物、状态',
       '中文写作，定稿后一键把台词翻译成英文',
       '选中任意一句可标注、润色、扩写、续写或改成对话，去掉“AI 味”',
     ],
@@ -142,7 +127,6 @@ export const STAGE_NEED: Partial<Record<StageKey, { level: StageNeedLevel; text:
   architecture: { level: 'must', text: '必做；只有核心设定必填，其余各项可以空着，也可以让 AI 一项一项生成空着的项（每生成一项停下来看），确认前看一眼标「补充」的内容' },
   characters: { level: 'quick', text: '后面的大纲与写作都按人物来，必做；可以 AI 一键生成，非必填项不用填' },
   outline: { level: 'quick', text: '写作按集纲来，必做；可以「AI 一键生成全部」，不逐集细看' },
-  foreshadow: { level: 'skip', text: '可以整步跳过：不登记伏笔也能写，只是少了伏笔提醒与回收检查' },
   script: { level: 'must', text: '分集写作与定稿必做；蓝图细调、AI 审稿都可以跳过，没审稿也能直接定稿' },
   qa: { level: 'quick', text: '交付前跑一次质检，必做；只有严重问题要处理，其余可以先交付' },
 }
@@ -150,12 +134,11 @@ export const STAGE_NEED: Partial<Record<StageKey, { level: StageNeedLevel; text:
 export const NEED_LABEL: Record<StageNeedLevel, string> = { must: '必做', quick: '必做 · 可一键', skip: '可跳过' }
 
 /** 各创作方式在工作台中依次经过的环节 */
-const ALL_STAGES: Record<ProjectMode, StageKey[]> = {
-  original: ['overview', 'architecture', 'characters', 'outline', 'foreshadow', 'script', 'qa'],
-  adaptation: ['overview', 'breakdown', 'architecture', 'characters', 'outline', 'foreshadow', 'script', 'qa'],
-  video: ['overview', 'video', 'breakdown', 'architecture', 'characters', 'outline', 'foreshadow', 'script', 'qa'],
+export const MODE_STAGES: Record<ProjectMode, StageKey[]> = {
+  original: ['overview', 'architecture', 'characters', 'outline', 'script', 'qa'],
+  adaptation: ['overview', 'breakdown', 'architecture', 'characters', 'outline', 'script', 'qa'],
+  video: ['overview', 'video', 'breakdown', 'architecture', 'characters', 'outline', 'script', 'qa'],
 }
-export const MODE_STAGES = Object.fromEntries(Object.entries(ALL_STAGES).map(([mode, list]) => [mode, list.filter((k) => SHOW_FORESHADOW || k !== 'foreshadow')])) as Record<ProjectMode, StageKey[]>
 
 /** 需求文档总流程（首页展示用） */
 export const MASTER_FLOW = [
@@ -163,7 +146,7 @@ export const MASTER_FLOW = [
   { label: '视频转剧本', hint: '逐集转写 · 合并' },
   { label: '对标剧拆解', hint: '四大板块' },
   { label: '故事架构', hint: '核心设定 · 冲突主线' },
-  { label: '情节大纲', hint: SHOW_FORESHADOW ? '钩子 · 伏笔' : '钩子 · 付费卡点' },
+  { label: '情节大纲', hint: '钩子 · 付费卡点' },
   { label: '逐集剧本', hint: '状态库驱动' },
   { label: '质检交付', hint: '六 / 七项自动检查' },
   { label: '数据回流', hint: '反哺选题' },
@@ -182,9 +165,7 @@ export const BREAKDOWN_BLOCKS = [
 /** 质检七项（需求文档 · 第五板块，评审时补了角色一致性与故事流程）；weight 为总分里的权重，合计 1。创新点落地只查仿写，原创用 qaChecks 去掉 */
 export type QaCheckMeta = { key: QaCheckKey; label: string; desc: string; to: StageKey; weight: number }
 export const QA_CHECKS: QaCheckMeta[] = [
-  SHOW_FORESHADOW
-    ? { key: 'consistency', label: '一致性终检', desc: '时间线、伏笔埋设与回收、对标剧人名残留，对照剧本状态库', to: 'foreshadow', weight: 0.15 }
-    : { key: 'consistency', label: '一致性终检', desc: '时间线、人物状态、对标剧人名残留，对照剧本状态库', to: 'script', weight: 0.15 },
+  { key: 'consistency', label: '一致性终检', desc: '时间线、人物状态、对标剧人名残留，对照剧本状态库', to: 'script', weight: 0.15 },
   { key: 'character', label: '角色一致性', desc: '人物称谓是否统一、主要人物在各阶段是否在场，人物状态的变化是否有交代、有没有停滞或突变', to: 'characters', weight: 0.15 },
   { key: 'flow', label: '故事流程', desc: '剧情有没有断档、集与集的钩子是否承接、场景是否单调拖沓、各阶段的情绪是否层层推高', to: 'outline', weight: 0.15 },
   { key: 'rhythm', label: '节奏曲线对比', desc: '成稿的情绪曲线与对标剧 / 节奏框架对比，标出塌陷段', to: 'outline', weight: 0.15 },

@@ -5,7 +5,6 @@
  * 接入大模型后由模型按 domain/basis.ts 的三段式表生成，这里只演示取数逻辑和标记方式。
  */
 import { archBasis } from '../../domain/basis'
-import { SHOW_FORESHADOW } from '../../domain/pipeline'
 import { estimateChars, rhythmFromPhases } from '../../domain/rhythm'
 import { alignRhythm, benchSegment } from '../../domain/align'
 import { parseHeroCard } from '../../domain/cards'
@@ -129,42 +128,21 @@ function heroNameOf(p: Project, parts: LoglineParts) {
   return p.work.characters.find((c) => c.role === '主角')?.name || fromCard || namer(p)(parts.female === false ? 'm' : 'f')
 }
 
-/** 改写想法的改动里和这一项有关的条目 */
-const INNOVATION_TOPIC: Partial<Record<ArchItem, RegExp>> = {
-  goldenFinger: /金手指|道具|能力|卖点|底牌/,
-  heroSetup: /主角|人物|女主|男主|人设|身份/,
-  world: /世界|题材|时代|迁移|背景/,
-  background: /背景|旧案|恩怨|前情|秘密/,
-  highlights: /爽点|亮点|期待|情绪/,
-}
-/** 改写想法「改动」里和这一项有关的条目：仿写的设定按它改（创新点排在设定后面，设定不读创新点）；原创没有 */
-const changesFor = (p: Project, item: ArchItem) => {
-  const re = INNOVATION_TOPIC[item]
-  if (!re || p.mode === 'original') return []
-  return field(archOf(p).idea, '改动')
-    .split(/[；;]/)
-    .map((x) => x.trim())
-    .filter((x) => x && re.test(x))
-}
-const CHANGED = '改写想法（改动）'
-
 /* ---------------------------------- 各项 ---------------------------------- */
 
 /** 金手指（11/4 写法）：首行写名字（不标类型），首次出现、核心能力（每项来历和能做到什么）、表现方式、与主线强相关 */
 function goldenFingerOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   const a = archOf(p)
   const ctx: Record<string, string> = { ...ctxOf(p, kit), hero: parts.heroCore }
-  const own = changesFor(p, 'goldenFinger')
   const lead = worldLead(a.world)
   const g = fingerLines(kit, (t) => fill(t, ctx), {
-    name: own.length ? (/「([^「」]+)」/.exec(own[0])?.[1] ?? own[0]) : undefined,
     twist: parts.twist,
     foe: parts.foes[0] ?? ctx.villain,
     hero: parts.heroCore,
   })
   const bench = p.mode !== 'original' ? p.work.breakdown?.synopsis.goldenFinger : ''
   const lines: ArchMark[] = [
-    L(g.head, own.length ? 'given' : 'inferred', own.length ? CHANGED : lead ? '核心设定、世界观设定' : '核心设定'),
+    L(g.head, 'inferred', lead ? '核心设定、世界观设定' : '核心设定'),
     L(g.first, 'filled', common(p)),
     L('核心能力：', 'inferred', '核心设定'),
     ...g.abilities.map((x) => (x.kind === '身份型' && parts.twist ? L(x.line, 'given', '核心设定里的反常规点') : L(x.line, 'filled', common(p)))),
@@ -184,7 +162,6 @@ function heroSetupOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   const gf = fingerName(a.goldenFinger)
   const ending = endingOf(a.background)
   const female = parts.female !== false
-  const own = changesFor(p, 'heroSetup')
   const before = openingOf(a.background).replace(/。$/, '')
   const benchHero = p.mode !== 'original' ? p.work.breakdown?.characters.find((c) => c.role === '主角') : undefined
   return out([
@@ -200,7 +177,6 @@ function heroSetupOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
     ending
       ? L(`弧光：被看轻的${parts.heroCore} → 握住底牌反击 → ${trimEnd(ending)}`, 'inferred', '故事背景（结局）')
       : L(`弧光：${kit.roles.hero.arc}`, 'filled', common(p)),
-    ...(own.length ? [L(`备注：${own.join('；')}`, 'given', CHANGED)] : []),
   ])
 }
 
@@ -208,14 +184,12 @@ function heroSetupOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
 function worldOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   const ctx: Record<string, string> = { ...ctxOf(p, kit), hero: parts.heroCore }
   const identities = PERSON_WORDS.filter((w) => p.logline.includes(w))
-  const own = changesFor(p, 'world')
   const bench = p.mode !== 'original' ? p.work.breakdown?.synopsis.world : ''
   const ancient = /古代|王朝|皇宫|后宫|江湖|修仙|仙门|宫廷|中世纪|时代剧|古装/.test(p.logline + p.genres.join())
-  const base = own.length ? own[0] : fill(kit.setting.overview, ctx)
-  const lead = [base.replace(/[。；]$/, ''), identities.length > 1 && `${identities.join('、')}的身份差就是冲突的来源`, ancient && '不出现现代物品和现代用语'].filter(Boolean).join('；')
+  const lead = [fill(kit.setting.overview, ctx).replace(/[。；]$/, ''), identities.length > 1 && `${identities.join('、')}的身份差就是冲突的来源`, ancient && '不出现现代物品和现代用语'].filter(Boolean).join('；')
   const w = worldLines(kit, (t) => fill(t, ctx), lead)
   return out([
-    L(w.lead, own.length ? 'given' : parts.setting.length ? 'inferred' : 'filled', own.length ? CHANGED : parts.setting.length ? '核心设定、题材类型' : common(p)),
+    L(w.lead, parts.setting.length ? 'inferred' : 'filled', parts.setting.length ? '核心设定、题材类型' : common(p)),
     L('阵营设定：', 'inferred', '题材类型'),
     ...w.camps.map((t) => L(t, 'filled', common(p))),
     L('主要地点：', 'inferred', '题材类型'),
@@ -230,7 +204,6 @@ const PERSON_WORDS = ['真千金', '假千金', '千金', '总裁', '阿尔法',
 function backgroundOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   const a = archOf(p)
   const ctx: Record<string, string> = { ...ctxOf(p, kit), hero: parts.heroCore }
-  const own = changesFor(p, 'background')
   const text = storyText(kit, (t) => fill(t, ctx), {
     hero: parts.heroCore,
     villain: parts.foes[0] ?? ctx.villain,
@@ -239,7 +212,6 @@ function backgroundOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
     secret: secretOf(a.world, a.goldenFinger) || parts.twist || fill(kit.secret, ctx),
     finger: fingerName(a.goldenFinger) || kit.prop,
     identity: identityOf(a.goldenFinger),
-    extra: own[0] && `这一版的改动：${own[0]}`,
   })
   return out([L(text, parts.plight ? 'inferred' : 'filled', `${parts.plight ? '核心设定、' : ''}金手指 / 核心卖点、世界观设定`)])
 }
@@ -268,7 +240,6 @@ const benchEmotions = (p: Project) => {
 function highlightsOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   const a = archOf(p)
   const ctx: Record<string, string> = { ...ctxOf(p, kit), hero: parts.heroCore }
-  const own = changesFor(p, 'highlights')
   const finger = fingerName(a.goldenFinger)
   // 核心爽点先按核心设定里的反常规点，没写再拿世界观、金手指里的秘密
   const secret = parts.twist || secretOf(a.world, a.goldenFinger) || fill(kit.secret, ctx)
@@ -293,7 +264,6 @@ function highlightsOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
       finger ? '金手指 / 核心卖点、故事背景' : a.background.trim() ? '故事背景' : common(p),
     ),
     L(`· 情感期待：${ctx.lover}知道真相后的反应——${clip(kit.roles.lover.arc, 24)}。`, 'filled', common(p)),
-    ...own.map((x) => L(`· 这一版的改动：${x}`, 'given', CHANGED)),
     L('情绪：', 'inferred', '风格元素'),
     emotions.length
       ? L(`· 主打情绪：${emotions.join(' + ')}`, 'inferred', '题材类型、风格元素')
@@ -309,35 +279,26 @@ function highlightsOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
   return out(lines)
 }
 
-/** 创新点（只有仿写有）：改写想法里的「改动」逐条拆成「对标剧怎么做 → 我们怎么做」；不够 3 条拿写好的设定和对标剧同一项比 */
+/** 创新点（只有仿写有）：拿核心设定和写好的设定跟对标剧同一项比，写成「对标剧怎么做 → 我们怎么做」 */
 function adaptInnovationsOf(p: Project, kit: Kit): { list: Innovation[]; marks: ArchMark[] } {
   const a = archOf(p)
   const bd = p.work.breakdown
-  const changes = field(a.idea, '改动')
-    .split(/[；;]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
   const hero = bd?.characters.find((c) => c.role === '主角')
   const prop = bd?.episodes.find((e) => e.plant)?.plant.split('：')[0]
-  // 「对标剧怎么做」按改动的内容去对标剧拆解里找同一项（人物按 11/4 第五轮的拆法读主角简介）
-  const THEIRS: [RegExp, string | null | undefined][] = [
-    [/人物|主角|女主|男主/, hero && `主角 ${hero.name}：${clip(hero.intro?.trim() || hero.profile?.trim() || hero.personality, 30)}`],
-    [/道具/, prop && `关键道具：${prop}`],
-    [/秘密|身份|核心/, bd && `核心设定：${clip(bd.synopsis.coreSetup, 30)}`],
-    [/世界|题材|搬到|迁移/, bd && `世界观：${clip(bd.synopsis.world, 30)}`],
-    [/爽点|卖点/, bd && `核心亮点：${clip(bd.synopsis.highlights, 30)}`],
-  ]
-  const theirsOf = (c: string) => THEIRS.find(([re, t]) => t && re.test(c))?.[1] ?? '原剧走向'
-  const theirs = THEIRS.map(([, t]) => t).filter((x): x is string => !!x)
+  const core = bd && `核心设定：${clip(bd.synopsis.coreSetup, 30)}`
+  // 设定都比完还不够 3 条时，「对标剧怎么做」从拆解里按顺序取（人物按 11/4 第五轮的拆法读主角简介）
+  const theirs = [
+    hero && `主角 ${hero.name}：${clip(hero.intro?.trim() || hero.profile?.trim() || hero.personality, 30)}`,
+    prop && `关键道具：${prop}`,
+    core,
+    bd && `世界观：${clip(bd.synopsis.world, 30)}`,
+    bd && `核心亮点：${clip(bd.synopsis.highlights, 30)}`,
+  ].filter((x): x is string => !!x)
   const list: Innovation[] = []
   const marks: ArchMark[] = []
-  changes.forEach((c) => {
-    list.push({ id: newId(), theirs: theirsOf(c), ours: c })
-    marks.push(L(c, 'given', CHANGED))
-  })
-  if (p.logline.trim() && list.length < 3) {
+  if (p.logline.trim()) {
     const t = `核心设定：${clip(p.logline.trim(), 36)}`
-    list.push({ id: newId(), theirs: theirsOf('核心'), ours: t })
+    list.push({ id: newId(), theirs: core || '原剧走向', ours: t })
     marks.push(L(t, 'given', '核心设定'))
   }
   const SETTINGS: [string, string, string | null | undefined][] = [
@@ -416,19 +377,15 @@ function writingRulesOf(p: Project): ItemDraft {
     lines.push(L('不沿用对标剧人名，不照搬对标剧台词', 'given', '仿写必须遵守'))
   }
   lines.push(L('台词口语化，单句不超过 25 字；少用“仿佛、不禁、嘴角勾起”等 AI 味词', 'filled', '平台通用规范'))
-  lines.push(L(`${SHOW_FORESHADOW ? '伏笔按计划埋设与回收；' : ''}人物言行不得偏离人物小传`, 'filled', '平台通用规范'))
+  lines.push(L('人物言行不得偏离人物小传', 'filled', '平台通用规范'))
   return out(lines.map((l, i) => ({ ...l, text: `${i + 1}. ${l.text}` })))
 }
 
-/** 核心设定（仿写）：从改写想法出，参照对标剧的核心设定写法；改写想法可以是一句话，也可以是方向 / 评估整理后的「保留 / 改动」 */
+/** 核心设定（仿写）：编剧写了草稿就从草稿出（没写用立项灵感），参照对标剧的核心设定写法；都没写时同题材里换零部件 */
 function adaptLoglineOf(p: Project, kit: Kit): ItemDraft {
-  const a = archOf(p)
-  const idea = field(a.idea, '改写想法') || firstLine(a.idea || p.idea)
-  const change = field(a.idea, '改动').split(/[；;]/)[0]
-  const text = idea
-    ? `${trimEnd(idea)}${change ? `——${trimEnd(change.replace(/^核心秘密改为/, ''))}` : ''}。`
-    : fill(kit.loglines[0], ctxOf(p, kit))
-  return out([L(text, idea ? 'given' : 'filled', idea ? '改写想法' : common(p))])
+  const own = p.logline.trim() ? '编剧草稿' : p.idea.trim() ? '立项灵感' : ''
+  const text = own ? `${trimEnd(firstLine(p.logline || p.idea))}。` : fill(kit.loglines[0], ctxOf(p, kit))
+  return out([L(text, own ? 'given' : 'filled', own || common(p))])
 }
 
 /* ---------------------------------- 出口 ---------------------------------- */

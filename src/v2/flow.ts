@@ -1,13 +1,12 @@
 /**
- * 版本二：把散在各环节的状态汇总成「环节进度 / 单集流程 / 待办 / 下一步」。
- * 只读计算，不新增数据——版本一与版本二用的是同一份项目数据。
+ * 把散在各环节的状态汇总成「环节进度 / 单集流程 / 待办 / 下一步」。
+ * 只读计算，不新增数据。
  */
-import { MODE_STAGES, SHOW_FORESHADOW, STAGES } from '../domain/pipeline'
+import { MODE_STAGES, STAGES } from '../domain/pipeline'
 import { isStuck } from '../domain/review'
-import { overallSnapshot } from '../domain/snapshot'
 import type { EpisodeDraft, Project, StageKey } from '../domain/types'
-import { blueprintOf, draftLabel, draftsOf, eventCandidates, finalCount, foreshadowName, foreshadowPlans, outlineCount, pendingPaywalls, projectPhases, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
-import { MAX_REVISE_ROUNDS, draftPath, finalPath, linesSig, nextUnwritten, openBlocks, reviseRounds, scriptStagePath } from '../pages/workspace/script/ops'
+import { blueprintOf, draftLabel, draftsOf, finalCount, outlineCount, pendingPaywalls, projectPhases, qaStale, scriptOf, stageGate, stageState } from '../domain/work'
+import { MAX_REVISE_ROUNDS, draftPath, linesSig, nextUnwritten, openBlocks, reviseRounds, scriptStagePath } from '../pages/workspace/script/ops'
 
 export const stageTo = (p: Project, key: StageKey) => (key === 'overview' ? `/projects/${p.id}` : `/projects/${p.id}/stage/${key}`)
 
@@ -37,8 +36,6 @@ export function stageDetail(p: Project, key: StageKey): string | null {
       const n = outlineCount(p)
       return n ? `${n}/${total}` : w.plot ? '有总览' : null
     }
-    case 'foreshadow':
-      return w.foreshadows.length ? `${w.foreshadows.length} 条` : null
     case 'script':
       return finalCount(p) || w.drafts.length ? `定稿 ${finalCount(p)}/${total}` : null
     case 'qa':
@@ -76,33 +73,14 @@ export function episodeSteps(p: Project, ep: number): StepState[] {
   const latest = draftsOf(w, ep)[0]
   const reviewed = !!latest && latest.reviews.at(-1)?.sig === linesSig(latest)
   const outline = w.outline.some((o) => o.ep === ep)
-  const blueprint = !!blueprintOf(w, ep)
+  // 有集纲就有预填的蓝图（11/5 标注 #89），写作时存下：写过的集即使后来恢复预填、蓝图不再存，也算做过
+  const blueprint = !!blueprintOf(w, ep) || (outline && (!!latest || final))
   // 走到了哪一步 / 哪些步骤已经做完：草稿写了没审，算走到草稿、但没做完
   const reached = [outline, blueprint, !!latest || final, reviewed, final]
   const done = [outline, blueprint, (!!latest && reviewed) || final, reviewed, final]
   const far = reached.lastIndexOf(true)
   const open = far >= 0 && !done[far] ? far : far + 1
   return done.map((d, i) => (d ? 'done' : i === open ? 'current' : i < far ? 'skipped' : 'todo'))
-}
-
-export interface StepLink {
-  to: string
-  tip: string
-}
-
-/** 单集流程每一步对应的页面；还没做的步骤没有入口（写了一半的草稿有） */
-export function episodeStepLinks(p: Project, ep: number): (StepLink | null)[] {
-  const w = p.work
-  const latest = draftsOf(w, ep)[0]
-  const review = latest?.reviews.at(-1)
-  const final = scriptOf(w, ep)
-  return [
-    w.outline.some((o) => o.ep === ep) ? { to: `${stageTo(p, 'outline')}?ep=${ep}`, tip: `去情节大纲看第 ${ep} 集集纲` } : null,
-    blueprintOf(w, ep) ? { to: `${scriptStagePath(p)}?ep=${ep}`, tip: `去分集蓝图看第 ${ep} 集` } : null,
-    latest ? { to: draftPath(p, latest.id), tip: `打开最新草稿 ${draftLabel(latest)}${draftsOf(w, ep).length > 1 ? `（共 ${draftsOf(w, ep).length} 稿，其余在草稿箱）` : ''}` } : null,
-    latest && review ? { to: draftPath(p, latest.id, review.id), tip: `查看${draftLabel(latest)}的审稿意见` } : null,
-    final ? { to: finalPath(p, ep), tip: `打开第 ${ep} 集正文` } : null,
-  ]
 }
 
 export type DraftAction = 'review' | 'revise' | 'final'
@@ -177,7 +155,7 @@ export function projectTodos(p: Project): Todo[] {
   }
 
   if (w.architecture && w.architecture.status !== 'approved' && !stageGate(p, 'architecture')) {
-    push('arch', 'warn', `故事架构还是草稿：确认后才能生成人物、大纲${SHOW_FORESHADOW ? '与伏笔' : ''}`, 'architecture', '去确认')
+    push('arch', 'warn', '故事架构还是草稿：确认后才能生成人物、大纲', 'architecture', '去确认')
   }
 
   const paywalls = pendingPaywalls(p)
@@ -187,11 +165,6 @@ export function projectTodos(p: Project): Todo[] {
     const advice = draftAdvice(p, d)
     if (advice) push(`draft-${d.id}`, advice.action === 'revise' ? 'warn' : 'info', `第 ${d.ep} 集 ${draftLabel(d)}：${advice.short}`, 'script', '打开草稿', draftPath(p, d.id))
   }
-
-  for (const a of overallSnapshot(p).alerts) push(`fs-${a.item.id}`, 'warn', `「${foreshadowName(a.item)}」${a.overdue}`, 'foreshadow', '去处理')
-
-  const candidates = foreshadowPlans(w).reduce((n, f) => n + eventCandidates(f, w.scripts).length, 0)
-  if (candidates) push('fs-events', 'info', `定稿正文里有 ${candidates} 处伏笔推进待确认，确认后才计入状态库`, 'foreshadow', '去确认')
 
   if (w.qa && p.status !== 'delivered') {
     if (qaStale(p)) push('qa-stale', 'warn', '正文在质检后有改动，需要重新质检', 'qa', '去质检')
@@ -233,14 +206,12 @@ function stageTask(p: Project, key: StageKey): string {
       return '生成人物设定与关系'
     case 'outline': {
       if (!w.plot?.overview.trim()) return '生成全剧总纲'
-      if (projectPhases(p).some((_, i) => !w.plot?.phases[i]?.trim())) return '按总纲生成各段粗纲'
+      if (projectPhases(p).some((_, i) => !w.plot?.phases[i]?.trim())) return '按总纲生成各阶段总览'
       const ep = firstMissing(w.outline.map((o) => o.ep), total)
       return ep <= total ? `生成第 ${ep} 集起的集纲` : '审核付费卡点集纲'
     }
-    case 'foreshadow':
-      return '对照大纲埋伏笔与叙事线索'
     case 'script':
-      return w.blueprints.length ? `写第 ${nextUnwritten(p)} 集` : '生成分集蓝图'
+      return w.blueprints.length || w.outline.length ? `写第 ${nextUnwritten(p)} 集` : '生成逐集蓝图'
     case 'qa':
       return !w.qa ? '运行质检' : qaStale(p) ? '重新质检' : '处理问题并确认交付'
     default:
@@ -267,7 +238,7 @@ export function nextTask(p: Project): NextTask | null {
     if (w.outline.some((o) => o.ep === next)) {
       return {
         title: `写第 ${next} 集`,
-        desc: blueprintOf(w, next) ? '蓝图已就绪：看一眼冲突与钩子就可以开写' : '先生成本集蓝图，再开写',
+        desc: blueprintOf(w, next) ? '蓝图已就绪：看一眼冲突与钩子就可以开写' : '蓝图已按集纲和人物设定预填：看一眼冲突与钩子就可以开写',
         to: `${scriptStagePath(p)}?ep=${next}`,
         cta: '去写作',
       }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import type { Project } from '../domain/types'
 import { nextTask, projectProgress } from './flow'
 
-/** 版本二的项目卡片底部：环节进度 + 一步回到上次的工作 */
+/** 项目卡片底部：环节进度 + 一步回到上次的工作 */
 export function CardProgress({ project }: { project: Project }) {
   const navigate = useNavigate()
   const { stages, done, finals, total } = projectProgress(project)

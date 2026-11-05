@@ -566,7 +566,7 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
   /** 这几集按顺序讲下来 */
   const story = (list: EpisodeBreakdown[], n: number, size = 24) => peaks(list, n).map((r) => narrate(keyLine.get(r.ep)!, size)).join('，')
 
-  // 冲突主线：按默认比例分段，每段写这一段的梗概（类比粗纲：讲故事，不逐集列）
+  // 冲突主线：按默认比例分段，每段写这一段的梗概（类比阶段总览：讲故事，不逐集列）
   const mainLine: PlotBeat[] = MAIN_LINE.map((beat, i) => ({
     beat,
     range: rangeLabel(ranges[i]),

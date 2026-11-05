@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { modelLabel, modelOf } from '../domain/models'
 import { preWriteCheck } from '../domain/state'
 import type { ModelId } from '../domain/types'
-import { addDraft } from '../pages/workspace/script/ops'
+import { addDraft, withPrefill } from '../pages/workspace/script/ops'
 import { writeEpisode } from '../services/ai'
 import { useProjects } from './projects'
 import { toast } from './toast'
@@ -31,7 +31,7 @@ export const batchOf = (projectId: string) => {
 const projectOf = (id: string) => useProjects.getState().projects.find((p) => p.id === id)
 
 /**
- * 批量写作在页面之外跑：离开分集蓝图页（打开草稿、去别的环节）也会接着写，页头显示进度、随时可停。
+ * 批量写作在页面之外跑：离开逐集蓝图页（打开草稿、去别的环节）也会接着写，页头显示进度、随时可停。
  * 按顺序逐集写，遇到写作前检查拦下的集就停；停止后已写出的草稿保留。
  */
 export async function startBatch(projectId: string, from: number, to: number) {
@@ -53,7 +53,10 @@ export async function startBatch(projectId: string, from: number, to: number) {
         break
       }
       setBatchRun({ projectId, model, ep, i: ep - from + 1, n: to - from + 1, stop })
-      const content = await writeEpisode(cur, ep, 0, ctrl.signal, model)
+      // 本集蓝图还是预填的：先存下来，按这份写
+      const blueprints = withPrefill(cur, ep)
+      if (blueprints) useProjects.getState().patchWork(projectId, { blueprints })
+      const content = await writeEpisode(projectOf(projectId) ?? cur, ep, 0, ctrl.signal, model)
       const latest = projectOf(projectId)
       if (!latest) break
       useProjects.getState().patchWork(projectId, { drafts: addDraft(latest.work, ep, content).drafts }, `批量写作：第 ${ep} 集草稿`)

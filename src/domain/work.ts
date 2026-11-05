@@ -1,7 +1,7 @@
 import { newId } from '../lib/id'
-import { EPISODE_RANGE, EPISODE_SECONDS, PLAN_EVENT_META, VIEWPOINTS } from './constants'
-import { MAIN_LINE, SHOW_FORESHADOW, STAGES } from './pipeline'
-import type { Architecture, Character, EpisodeDraft, EpisodeScript, Foreshadow, PlanEvent, PlanEventKind, Project, ProjectWork, Relation, RhythmFrame, ScriptLine, StageKey } from './types'
+import { EPISODE_RANGE, EPISODE_SECONDS, VIEWPOINTS } from './constants'
+import { MAIN_LINE, STAGES } from './pipeline'
+import type { Architecture, Character, EpisodeDraft, Project, ProjectWork, Relation, RhythmFrame, ScriptLine, StageKey } from './types'
 
 export const emptyWork = (): ProjectWork => ({
   video: null,
@@ -10,7 +10,6 @@ export const emptyWork = (): ProjectWork => ({
   architecture: null,
   characters: [],
   relations: [],
-  foreshadows: [],
   plot: null,
   outline: [],
   blueprints: [],
@@ -68,16 +67,9 @@ export function phaseOf(ep: number, ranges: [number, number][]) {
 
 export const rangeLabel = ([from, to]: [number, number]) => (from === to ? `第 ${from} 集` : `第 ${from}–${to} 集`)
 
-/** 伏笔 / 叙事线索连续多少集没推进就提醒；0 表示不提醒（默认） */
-export const SILENCE_DEFAULT = 0
-
-/** 伏笔计划：「伏笔与叙事线索」这一步拿掉时（SHOW_FORESHADOW 为 false）一律当没有，数据留着不动 */
-export const foreshadowPlans = (w: Pick<ProjectWork, 'foreshadows'>) => (SHOW_FORESHADOW ? w.foreshadows : [])
-
 export function emptyArchitecture(total: number): Architecture {
   const ranges = phaseRanges(total)
   return {
-    idea: '',
     plan: '',
     formula: '',
     mainLine: MAIN_LINE.map((beat, i) => ({ beat, range: rangeLabel(ranges[i]), content: '' })),
@@ -86,7 +78,6 @@ export function emptyArchitecture(total: number): Architecture {
     status: 'pending',
     structure: '单线叙事',
     viewpoint: VIEWPOINTS[0],
-    silenceThreshold: SILENCE_DEFAULT,
     world: '',
     factions: '',
     background: '',
@@ -171,17 +162,6 @@ export function mergeCast(cur: Cast, gen: Cast): Cast & { added: number; filled:
   return { characters: [...characters, ...added], relations, added: added.length, filled, linked: relations.length - cur.relations.length }
 }
 
-export const newForeshadow = (patch: Partial<Foreshadow> = {}): Foreshadow => ({
-  id: newId(),
-  type: '人物秘密',
-  title: '',
-  content: '',
-  plantEp: 1,
-  payoffEp: 2,
-  events: [],
-  ...patch,
-})
-
 export type RelationGroup = 'love' | 'family' | 'hostile' | 'ally'
 
 /** 关系类型归类：关系图按类别配色 */
@@ -211,8 +191,6 @@ export function scaleRhythm(rhythm: RhythmFrame, from: number, to: number): Rhyt
   return { paywalls: list(rhythm.paywalls), twists: list(rhythm.twists), climaxFrom: s(rhythm.climaxFrom) }
 }
 
-const short = (text: string, n = 16) => (text.length > n ? `${text.slice(0, n)}…` : text)
-
 /* ---------------------------------- 剧本 ---------------------------------- */
 
 /** 正文章节（定稿） */
@@ -239,18 +217,6 @@ export const wordCount = (script: HasLines) => script.lines.reduce((n, l) => n +
 
 export const scriptText = (script: HasLines) => script.lines.map((l) => plainText(l.zh)).join('\n')
 
-/** 定稿集的名字：第 3 集 · 定稿 v2（版本号取自来源草稿） */
-export const finalLabel = (p: Project, s: EpisodeScript) => {
-  const d = p.work.drafts.find((x) => x.id === s.draftId)
-  return `第 ${s.ep} 集 · 定稿${d ? ` v${d.version}` : ''}`
-}
-
-/** 定稿事件的证据必须逐字摘自这一集定稿（不计加粗 / 斜体标记与首尾空白） */
-export const evidenceIn = (script: HasLines, quote: string) => {
-  const q = quote.trim()
-  return !!q && scriptText(script).includes(q)
-}
-
 /** 本集结尾钩子台词 */
 export const hookOf = (script: HasLines) => [...script.lines].reverse().find((l) => l.kind === 'hook')?.zh
 
@@ -260,110 +226,12 @@ export const prevHookOf = (work: ProjectWork, ep: number) => {
   return (prev && hookOf(prev)) || work.outline.find((o) => o.ep === ep - 1)?.hookLine || ''
 }
 
-/** 承接：本集开头要接住什么（上集遗留或前几集的伏笔）。蓝图里写了用蓝图的；没写时默认接上集结尾的钩子（auto） */
+/** 承接：本集开头要接住什么。蓝图里写了用蓝图的；没写时默认接上集结尾的钩子（auto） */
 export const carryOf = (work: ProjectWork, ep: number) => {
   const own = blueprintOf(work, ep)?.carry?.trim()
   if (own) return { text: own, auto: false }
   const hook = prevHookOf(work, ep)
   return hook ? { text: hook, auto: true } : undefined
-}
-
-/* ---------------------------------- 伏笔 ---------------------------------- */
-
-/** 伏笔在正文中的检索词：意图去掉空白后的前 6 个字 */
-export const foreshadowKey = (f: Foreshadow) => f.content.replace(/\s/g, '').slice(0, 6)
-
-export const foreshadowName = (f: Foreshadow) => f.title.trim() || short(f.content)
-
-export type ForeshadowStatus = '已计划' | '已埋设' | '已回收'
-
-export interface ForeshadowTrace {
-  status: ForeshadowStatus
-  /** 确认过的第一次埋设 / 开始集 */
-  plantedIn: number | null
-  /** 确认过的回收 / 结束集 */
-  paidIn: number | null
-  /** 最近一次确认事件所在的集 */
-  lastEp: number | null
-}
-
-/** 伏笔进度只看编剧确认过的定稿事件 */
-export function traceForeshadow(f: Foreshadow): ForeshadowTrace {
-  const eps = (kind: PlanEventKind) => f.events.filter((e) => e.kind === kind).map((e) => e.ep)
-  const plants = eps('plant')
-  const payoffs = eps('payoff')
-  const plantedIn = plants.length ? Math.min(...plants) : null
-  const paidIn = payoffs.length ? Math.min(...payoffs) : null
-  const lastEp = f.events.length ? Math.max(...f.events.map((e) => e.ep)) : null
-  return { status: paidIn !== null ? '已回收' : lastEp !== null ? '已埋设' : '已计划', plantedIn, paidIn, lastEp }
-}
-
-/** 已埋设的伏笔距最近一次推进过了几集（按已定稿的最新集算） */
-export const silenceOf = (trace: ForeshadowTrace, latestEp: number) =>
-  trace.status === '已埋设' && trace.lastEp !== null ? Math.max(0, latestEp - trace.lastEp) : 0
-
-/** 计划的埋设 / 回收集已经写过去了还没确认：哪一步、计划在第几集、超出几集 */
-export interface LateStep {
-  kind: 'plant' | 'payoff'
-  ep: number
-  by: number
-}
-
-/** 写到第 latestEp 集时超期（不含正好到期那一集）的一步；用来让编剧决定这条计划还要不要 */
-export function lateStep(f: Foreshadow, trace: ForeshadowTrace, latestEp: number): LateStep | null {
-  if (trace.status === '已回收') return null
-  const step: LateStep = trace.status === '已计划' ? { kind: 'plant', ep: f.plantEp, by: latestEp - f.plantEp } : { kind: 'payoff', ep: f.payoffEp, by: latestEp - f.payoffEp }
-  return step.by > 0 ? step : null
-}
-
-/** 写到第 latestEp 集（已定稿）时的提醒：到期没埋、到期没收、沉寂太久 */
-export function foreshadowAlert(f: Foreshadow, trace: ForeshadowTrace, latestEp: number, threshold: number): string | null {
-  if (trace.status === '已回收' || latestEp === 0) return null
-  // 到期当集还没发生记“还没…”，之后每多写一集记“已超出 N 集”
-  const late = (ep: number, what: string) => (latestEp === ep ? `计划第 ${ep} 集${what}，还没${what}` : `计划第 ${ep} 集${what}，已超出 ${latestEp - ep} 集`)
-  if (trace.status === '已计划') return f.plantEp <= latestEp ? late(f.plantEp, '埋设') : null
-  if (f.payoffEp <= latestEp) return late(f.payoffEp, '回收')
-  const silence = silenceOf(trace, latestEp)
-  return threshold > 0 && silence >= threshold ? `已沉寂 ${silence} 集，建议安排一次呼应` : null
-}
-
-const EVENT_ORDER = Object.keys(PLAN_EVENT_META) as PlanEventKind[]
-
-/** 事件按集数排，同一集按 埋设 → 呼应 → 回收 */
-export const sortEvents = (events: PlanEvent[]) => [...events].sort((a, b) => a.ep - b.ep || EVENT_ORDER.indexOf(a.kind) - EVENT_ORDER.indexOf(b.kind))
-
-export interface EventCandidate {
-  ep: number
-  kind: PlanEventKind
-  text: string
-}
-
-/** 在定稿正文里找可能的推进：命中检索词的行；按先后给出建议的事件类型，已确认过的集跳过 */
-export function eventCandidates(f: Foreshadow, scripts: EpisodeScript[]): EventCandidate[] {
-  const keys = [foreshadowKey(f), f.title.replace(/\s/g, '').slice(0, 4)].filter((k) => k.length >= 2)
-  if (!keys.length) return []
-  let planted = f.events.length > 0
-  const out: EventCandidate[] = []
-  for (const s of [...scripts].sort((a, b) => a.ep - b.ep)) {
-    if (f.events.some((e) => e.ep === s.ep)) {
-      planted = true
-      continue
-    }
-    const line = s.lines.find((l) => keys.some((k) => l.zh.replace(/\s/g, '').includes(k)))
-    if (!line) continue
-    out.push({ ep: s.ep, kind: !planted ? 'plant' : s.ep >= f.payoffEp ? 'payoff' : 'echo', text: line.zh })
-    planted = true
-  }
-  return out
-}
-
-/** 计划本身的问题：集数越界或顺序颠倒 */
-export function foreshadowIssue(f: Foreshadow, total: number) {
-  if (!f.title.trim() && !f.content.trim()) return '标题与意图未填写'
-  if (f.plantEp < 1 || f.plantEp > total) return `埋设 / 开始集超出 1–${total} 集`
-  if (f.payoffEp < 1 || f.payoffEp > total) return `回收 / 结束集超出 1–${total} 集`
-  if (f.payoffEp <= f.plantEp) return '回收 / 结束集必须晚于埋设 / 开始集'
-  return null
 }
 
 /* ---------------------------------- 质检 ---------------------------------- */
@@ -403,8 +271,6 @@ export function stageState(p: Project, key: StageKey): StageState {
       return w.architecture?.status === 'approved' ? 'done' : w.architecture ? 'active' : 'todo'
     case 'characters':
       return w.characters.length ? 'done' : 'todo'
-    case 'foreshadow':
-      return w.foreshadows.length ? 'done' : 'todo'
     case 'outline': {
       const n = outlineCount(p)
       return n >= total && pendingPaywalls(p).length === 0 ? 'done' : n || w.plot ? 'active' : 'todo'
@@ -437,12 +303,6 @@ export function stageGate(p: Project, key: StageKey): StageGate | null {
       return archGate
     case 'outline':
       return archGate ?? (w.characters.length ? null : { reason: '先生成人物设定', to: 'characters' })
-    case 'foreshadow':
-      return (
-        archGate ??
-        (w.characters.length ? null : { reason: '先生成人物设定', to: 'characters' }) ??
-        (outlineCount(p) ? null : { reason: '先确定情节大纲（至少一批集纲）：大纲定下来才能埋伏笔', to: 'outline' })
-      )
     case 'script':
       return outlineCount(p) ? null : { reason: '先生成情节大纲（至少一批集纲）', to: 'outline' }
     case 'qa':

@@ -19,9 +19,7 @@ import { nextSeed, polishLines, reviewDraft, reviseDraft } from '../../../servic
 import { useProjects } from '../../../store/projects'
 import { STATE_TAB, activeTab, openPanelTab, usePanelTabs, useStateFocus, useStatePanel } from '../../../store/statePanel'
 import { toast } from '../../../store/toast'
-import { useV2 } from '../../../store/uiVersion'
 import { writeDraft } from './write'
-import { EpisodeSteps } from '../../../v2/EpisodeSteps'
 import { DRAFT_ACTION_LABEL, draftAdvice } from '../../../v2/flow'
 import { useCurrentProject } from '../ProjectLayout'
 import { NotesTab } from './NotesTab'
@@ -44,7 +42,7 @@ const openPanel = (tab: SideTab) => openPanelTab(tab)
 /** 审稿结果的一句话概括：先说严重问题，其次建议，都没有时给通过语 */
 const reviewGist = (r: DraftReview) => (r.items.find((i) => i.level === 'block') ?? r.items.find((i) => i.level === 'warn') ?? r.items.find((i) => i.level === 'ok'))?.text ?? '没有发现问题'
 
-/** 版本二：定稿不是建议的下一步时降为描边按钮，仍可直接点 */
+/** 定稿不是建议的下一步时降为描边按钮，仍可直接点 */
 const finalOutline =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 text-[13px] font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50'
 
@@ -95,7 +93,6 @@ export default function DraftPage() {
   const [focusLine, setFocusLine] = useState<string | null>(null)
   // 正文里选中的段落：状态库侧栏「标注」给它加标注
   const [pick, setPick] = useState<LinePick | null>(null)
-  const v2 = useV2()
 
   useEffect(() => {
     if (!notice) return
@@ -166,8 +163,8 @@ export default function DraftPage() {
   const nextLabel = `草稿_v${(newest?.version ?? draft.version) + 1}`
   // 重新生成和写新一集走同一套写作前检查
   const writeBlock = preWriteCheck(project, draft.ep).find((c) => c.level === 'block')
-  // 版本二：按审稿状态推荐下一步，只有推荐的按钮是主按钮
-  const advice = v2 ? draftAdvice(project, draft) : null
+  // 按审稿状态推荐下一步，只有推荐的按钮是主按钮
+  const advice = draftAdvice(project, draft)
   const suggested = (action: 'review' | 'revise') => (advice?.action === action ? 'primary' : 'secondary')
 
   /** 在最新数据上改本草稿 */
@@ -264,7 +261,7 @@ export default function DraftPage() {
     <div className="space-y-4">
       <Link to={`${scriptStagePath(project)}?ep=${draft.ep}`} className="inline-flex items-center gap-1 text-[13px] text-ink-500 hover:text-ink-900">
         <ArrowLeft size={14} />
-        分集蓝图
+        逐集蓝图
       </Link>
 
       {/* 顶栏：标题 · 字数 · 状态 · 修稿 / 审稿 / 定稿；叠在正文格式栏之上，下拉菜单与说明浮层不被遮住 */}
@@ -282,8 +279,12 @@ export default function DraftPage() {
             {/* 版本名里已经有「草稿」，状态只在已修稿 / 已定稿时单独标出 */}
             {draft.status !== 'draft' && <Badge tone={meta.tone}>{meta.label}</Badge>}
             <span>{draftLabel(draft)}</span>
-            <span data-draft-model className={clsx(dotBefore, !draft.model && 'text-ink-400')} title={draft.model ? `这一版由 ${modelLabel(draft.model)} ${draft.revision ? '修稿生成' : '写出'}` : '这一版写于加入模型选择之前，没有记下模型'}>
-              {draft.model ? `${modelLabel(draft.model)} ${draft.revision ? '修稿' : '生成'}` : '模型未记录'}
+            <span
+              data-draft-model
+              className={clsx(dotBefore, !draft.model && !draft.manual && 'text-ink-400')}
+              title={draft.model ? `这一版由 ${modelLabel(draft.model)} ${draft.revision ? '修稿生成' : '写出'}` : draft.manual ? '这一版是编剧自己写的，没用 AI' : '这一版写于加入模型选择之前，没有记下模型'}
+            >
+              {draft.model ? `${modelLabel(draft.model)} ${draft.revision ? '修稿' : '生成'}` : draft.manual ? '自己写' : '模型未记录'}
             </span>
             <span className={clsx(dotBefore, 'tabular-nums')}>{wordCount(draft).toLocaleString()} 字</span>
             <button type="button" data-open-notes onClick={() => openPanel('notes')} className={clsx(dotBefore, draft.notes.length ? 'text-amber-700 hover:text-amber-800' : 'hover:text-brand-600')}>
@@ -385,18 +386,16 @@ export default function DraftPage() {
             {draft.status === 'final' ? '已定稿' : '定稿'}
           </button>
         </div>
-        {v2 && (
+        {/* 单集流程步骤条 11/5 标注 #90 全局删掉，这一行只剩建议下一步 */}
+        {advice && (
           <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-2.5">
-            <EpisodeSteps project={project} ep={draft.ep} here={newest?.id === draft.id ? (params.get('review') ? '审稿' : '草稿') : undefined} />
-            {advice && (
-              <span className="flex min-w-0 items-start gap-1.5 text-[13px] text-ink-700" data-v2="advice">
-                <Lightbulb size={14} className="mt-0.5 shrink-0 text-brand-500" />
-                <span>
-                  建议下一步：<span className="font-medium text-brand-700">{DRAFT_ACTION_LABEL[advice.action]}</span>
-                  <span className="text-ink-500"> —— {advice.text}</span>
-                </span>
+            <span className="flex min-w-0 items-start gap-1.5 text-[13px] text-ink-700" data-v2="advice">
+              <Lightbulb size={14} className="mt-0.5 shrink-0 text-brand-500" />
+              <span>
+                建议下一步：<span className="font-medium text-brand-700">{DRAFT_ACTION_LABEL[advice.action]}</span>
+                <span className="text-ink-500"> —— {advice.text}</span>
               </span>
-            )}
+            </span>
           </div>
         )}
       </Card>

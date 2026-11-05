@@ -18,7 +18,6 @@ export type StageKey =
   | 'breakdown'
   | 'architecture'
   | 'characters'
-  | 'foreshadow'
   | 'outline'
   | 'state'
   | 'script'
@@ -203,7 +202,6 @@ export type StoryStructure = '单线叙事' | '双线叙事' | '多线叙事'
 
 /** 故事架构里单独生成的一项 */
 export type ArchItem =
-  | 'idea'
   | 'logline'
   | 'plan'
   | 'innovations'
@@ -234,9 +232,7 @@ export interface ArchMark {
 export type BasisPrint = Record<string, string>
 
 export interface Architecture {
-  /** 编剧自己的改写想法 / 故事方向（可空，空时由 AI 提方向） */
-  idea: string
-  /** 原创的整体框架（开局、转折、结局）：11/4 第五轮从页面上删掉，生成不再读（开局、结局改按故事背景）；字段留着，旧数据不动。仿写不用（11/3 去掉改写方案，旧数据并进改写想法） */
+  /** 原创的整体框架（开局、转折、结局）：11/4 第五轮从页面上删掉，生成不再读（开局、结局改按故事背景）；字段留着，旧数据不动。仿写不用（11/3 去掉改写方案；11/5 改写想法也删掉，编剧的想法直接写进核心设定） */
   plan: string
   /** 爽点公式：每 X 集一次什么爽感（11/4 页面上删掉，生成不再读；字段留着，旧数据不动） */
   formula: string
@@ -250,8 +246,6 @@ export interface Architecture {
   structure: StoryStructure
   /** 叙事视角（同上） */
   viewpoint: string
-  /** 伏笔 / 叙事线索连续多少集没有推进就提醒（同上；页面上删掉后按默认 0：不做沉寂提醒） */
-  silenceThreshold: number
   /** 世界观设定 */
   world: string
   /** 主要势力：主角阵营 / 敌对阵营各有谁（旧数据没有） */
@@ -311,39 +305,9 @@ export interface Character {
   benchmark: string
 }
 
-export type ForeshadowType = '人物秘密' | '隐藏身份' | '关键道具' | '前情恩怨' | '叙事线索'
-
-/** 伏笔在正文中的一次推进：埋设、呼应或回收 */
-export type PlanEventKind = 'plant' | 'echo' | 'payoff'
-
-export interface PlanEvent {
-  id: string
-  ep: number
-  kind: PlanEventKind
-  /** 证据：逐字摘自这一集定稿的短原文 */
-  text: string
-  /** 确认理由（旧数据没有） */
-  reason?: string
-  at: string
-}
-
-/** 伏笔 / 叙事线索计划：只有编剧确认过的定稿事件才算数 */
-export interface Foreshadow {
-  id: string
-  type: ForeshadowType
-  title: string
-  /** 作者意图：埋什么、怎么收 */
-  content: string
-  /** 埋设集；叙事线索为开始集 */
-  plantEp: number
-  /** 回收集；叙事线索为结束集 */
-  payoffEp: number
-  events: PlanEvent[]
-}
-
 export type HookType = '悬念' | '反转' | '情绪高点' | '新秘密' | '付费卡点'
 
-/** 情节大纲：全剧总览 + 冲突主线各段粗纲 */
+/** 情节大纲：全剧总览 + 冲突主线各阶段总览 */
 export interface Plot {
   overview: string
   phases: string[]
@@ -368,7 +332,7 @@ export interface CastLook {
   look: string
 }
 
-/** 分集蓝图：写作前的预览设定 */
+/** 逐集蓝图：写作前的预览设定 */
 export interface EpisodeBlueprint {
   ep: number
   title: string
@@ -380,7 +344,7 @@ export interface EpisodeBlueprint {
   goal: string
   /** 实质冲突与转折 */
   conflict: string
-  /** 承接：本集开头接住什么——上集结尾的钩子，或前几集埋下、本集要响的伏笔；不写时默认接上集结尾的钩子（旧数据没有） */
+  /** 承接：本集开头接住什么；不写时默认接上集结尾的钩子（旧数据没有） */
   carry?: string
   /** 末尾悬念钩子 */
   hook: string
@@ -422,12 +386,10 @@ export type ReviewCode =
   | 'scene'
   | 'hook'
   | 'carry'
-  | 'plan'
   | 'hero'
   | 'unknown'
   | 'absent'
   | 'state'
-  | 'paid'
   | 'filler'
   | 'longLine'
   | 'notes'
@@ -440,8 +402,8 @@ export type ReviewCode =
   | 'benchEvent'
   | 'benchShape'
 
-/** 审稿意见对照的依据：核心设定 / 人物设定 / 状态库 / 集纲 / 蓝图 / 伏笔计划 / 格式与篇幅 / 文风 / 对标剧拆解（只有仿写）；写作也按这几项写 */
-export type ReviewBasis = 'core' | 'character' | 'state' | 'outline' | 'blueprint' | 'foreshadow' | 'format' | 'style' | 'bench'
+/** 审稿意见对照的依据：核心设定 / 人物设定 / 状态库 / 集纲 / 蓝图 / 格式与篇幅 / 文风 / 对标剧拆解（只有仿写）；写作也按这几项写 */
+export type ReviewBasis = 'core' | 'character' | 'state' | 'outline' | 'blueprint' | 'format' | 'style' | 'bench'
 
 /** 意见在修稿后的走向：new 新发现 / still 修稿后仍在 / stuck 两轮没改掉 / back 改好又出现 / fixed 已改掉；stuck 与 back 不再交给 AI 修稿 */
 export type ReviewItemStatus = 'new' | 'still' | 'stuck' | 'back' | 'fixed'
@@ -533,6 +495,8 @@ export interface EpisodeDraft {
   revision?: DraftRevision
   /** 写出（或修出）这一版的模型 */
   model?: ModelId
+  /** 编剧自己写的这一版，没用 AI（11/5 标注 #91；旧草稿没有） */
+  manual?: boolean
   /** AI 写这一版时对照的依据（旧草稿没有） */
   basis?: WriteBasisItem[]
   createdAt: string
@@ -672,7 +636,6 @@ export interface ProjectWork {
   architecture: Architecture | null
   characters: Character[]
   relations: Relation[]
-  foreshadows: Foreshadow[]
   plot: Plot | null
   outline: OutlineEpisode[]
   blueprints: EpisodeBlueprint[]
@@ -681,7 +644,7 @@ export interface ProjectWork {
   qa: QaReport | null
   /** 编剧保留不改的审稿意见（旧数据没有） */
   keeps?: ReviewKeep[]
-  /** 生成依据指纹：每份 AI 产物（故事架构各项、人物设定、全剧总览、阶段粗纲）生成时用到的依据；上游改了就提示「依据已改」，不自动重写（旧数据没有） */
+  /** 生成依据指纹：每份 AI 产物（故事架构各项、人物设定、全剧总览、阶段总览）生成时用到的依据；上游改了就提示「依据已改」，不自动重写（旧数据没有） */
   prints?: Record<string, BasisPrint>
 }
 

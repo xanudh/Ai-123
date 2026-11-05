@@ -1,5 +1,5 @@
 import { GENRE_OPTIONS, type GenreRegion } from './genreOptions'
-import type { Audience, CharacterRole, DraftStatus, ForeshadowType, HeroDetailKey, HookType, PlanEventKind, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
+import type { Audience, CharacterRole, DraftStatus, HeroDetailKey, HookType, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
 
 /** 下拉框的一组选项 */
 export interface TagGroup {
@@ -157,14 +157,6 @@ export type GoldenFingerKind = (typeof GOLDEN_FINGER_KINDS)[number]['label']
 /** 对标剧拆解里主角另拆的几项（11/4 标注：主角要拆细），按页面顺序 */
 export const HERO_DETAIL: HeroDetailKey[] = ['intro', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']
 
-export const FORESHADOW_TYPES: ForeshadowType[] = ['人物秘密', '隐藏身份', '关键道具', '前情恩怨', '叙事线索']
-
-export const PLAN_EVENT_META: Record<PlanEventKind, { label: string; tone: 'amber' | 'violet' | 'green' }> = {
-  plant: { label: '埋设', tone: 'amber' },
-  echo: { label: '呼应', tone: 'violet' },
-  payoff: { label: '回收', tone: 'green' },
-}
-
 export const STORY_STRUCTURES: { value: StoryStructure; hint: string }[] = [
   { value: '单线叙事', hint: '一条主线贯穿到底，节奏最快' },
   { value: '双线叙事', hint: '主线 + 感情线 / 复仇线交替推进' },
@@ -182,7 +174,7 @@ export const OUTLINE_BATCH = 10
 /** 逐集剧本批量写作默认选的集数（范围可以手动选到最后一集） */
 export const SCRIPT_BATCH = 5
 
-/** 分集蓝图里的本集定位 */
+/** 逐集蓝图里的本集定位 */
 export const EPISODE_POSITIONS = ['开篇', '铺垫', '发展', '转折', '付费卡点', '升级', '高潮', '结局'] as const
 
 export const DRAFT_STATUS_META: Record<DraftStatus, { label: string; tone: 'gray' | 'amber' | 'green' }> = {

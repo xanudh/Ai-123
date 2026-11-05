@@ -1,24 +1,18 @@
 import clsx from 'clsx'
-import { AlertTriangle, ChevronLeft, ChevronRight, ChevronsRight, Database, ExternalLink, Flag, Link2, MapPin, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronsRight, Database, ExternalLink, Link2, MapPin, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { episodeLooks } from '../../domain/looks'
 import { episodeSnapshot, overallSnapshot, phaseSnapshot } from '../../domain/snapshot'
-import type { CastEntry, ForeshadowAt, StateFocus } from '../../domain/snapshot'
-import type { PlanEventKind, Project } from '../../domain/types'
-import { PLAN_EVENT_META } from '../../domain/constants'
-import { SHOW_FORESHADOW } from '../../domain/pipeline'
-import { foreshadowName, phaseNames, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
-import type { ForeshadowStatus } from '../../domain/work'
+import type { CastEntry, StateFocus } from '../../domain/snapshot'
+import type { Project } from '../../domain/types'
+import { phaseNames, phaseOf, projectPhases, rangeLabel } from '../../domain/work'
 import { STATE_TAB, activeTab, useStatePanel } from '../../store/statePanel'
-import { EventForm } from './EventForm'
-import { LateFix } from './LateFix'
 import { Badge, NumberInput, Segmented, Select } from '../ui'
 
 type Tab = 'ep' | 'phase' | 'all'
 
-const STATUS_TONE: Record<ForeshadowStatus, 'gray' | 'amber' | 'green'> = { 已计划: 'gray', 已埋设: 'amber', 已回收: 'green' }
 const ROLE_TONE = (role: string | null) => (role === '主角' ? 'violet' : role === '反派' ? 'red' : role ? 'gray' : 'amber')
 const NODE_TONE: Record<string, 'violet' | 'orange' | 'green' | 'gray'> = { 开场钩子: 'violet', 首付费: 'orange', 付费卡点: 'orange', 大反转: 'green', 结局高潮: 'gray' }
 
@@ -133,89 +127,6 @@ function CastTable({ project, ep, draftId, cast }: { project: Project; ep: numbe
   )
 }
 
-const fixKey = (f: { item: { id: string } }) => `fix-${f.item.id}`
-
-/** 超期的伏笔：展开处理（确认定稿 / 改期 / 不要了） */
-function FixToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
-  return (
-    <button type="button" aria-expanded={open} onClick={onClick} className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700">
-      处理
-    </button>
-  )
-}
-
-/** 计划在这一集埋 / 收、还没记事件的伏笔：这一集定稿后可以就地确认定稿事件 */
-const confirmKind = (f: ForeshadowAt, ep: number): PlanEventKind | undefined => {
-  if (f.item.events.some((e) => e.ep === ep)) return undefined
-  if (f.item.payoffEp === ep && f.status !== '已回收' && f.plantedIn !== null) return 'payoff'
-  if (f.item.plantEp === ep && f.status === '已计划') return 'plant'
-}
-
-function ForeshadowList({ list, empty, project, ep }: { list: ForeshadowAt[]; empty: string; project?: Project; ep?: number }) {
-  const [open, setOpen] = useState<string | null>(null)
-  if (!list.length) return <Empty>{empty}</Empty>
-  const final = project && ep !== undefined && project.work.scripts.some((s) => s.ep === ep)
-  return (
-    <ul className="space-y-2">
-      {list.map((f) => {
-        const kind = project && ep !== undefined ? confirmKind(f, ep) : undefined
-        const action = kind && (
-          <button
-            type="button"
-            aria-expanded={open === f.item.id}
-            disabled={!final}
-            title={final ? `在第 ${ep} 集定稿里确认${PLAN_EVENT_META[kind].label}` : `第 ${ep} 集定稿后才能确认`}
-            onClick={() => setOpen((v) => (v === f.item.id ? null : f.item.id))}
-            className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:text-ink-300"
-          >
-            {final ? '确认定稿' : '定稿后可确认'}
-          </button>
-        )
-        return (
-          <li key={f.item.id} className="text-[12.5px] leading-5">
-            <div className="flex items-center gap-1.5">
-              <span className="min-w-0 flex-1 truncate font-medium text-ink-900" title={foreshadowName(f.item)}>
-                {foreshadowName(f.item) || '未命名计划'}
-              </span>
-              <Badge tone={STATUS_TONE[f.status]}>{f.status}</Badge>
-            </div>
-            <p className="text-xs text-ink-400 tabular-nums">
-              {f.item.type} · 计划第 {f.item.plantEp} → {f.item.payoffEp} 集
-              {f.plantedIn !== null && ` · 实际第 ${f.plantedIn}${f.paidIn !== null ? ` → ${f.paidIn}` : ''} 集`}
-            </p>
-            {f.task && (
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-brand-700">{f.task}</p>
-                {action}
-              </div>
-            )}
-            {f.alert && (
-              <div className="flex items-start justify-between gap-2">
-                <p className="flex items-start gap-1 text-amber-800">
-                  <AlertTriangle size={12} className="mt-1 shrink-0" />
-                  {f.alert}
-                </p>
-                {!f.task && (action || (project && f.late && <FixToggle open={open === fixKey(f)} onClick={() => setOpen((v) => (v === fixKey(f) ? null : fixKey(f)))} />))}
-              </div>
-            )}
-            {!f.task && !f.alert && action && <div className="text-right">{action}</div>}
-            {project && f.late && open === fixKey(f) && (
-              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
-                <LateFix project={project} f={f.item} late={f.late} onDone={() => setOpen(null)} />
-              </div>
-            )}
-            {kind && open === f.item.id && project && (
-              <div className="mt-2 rounded-lg border border-line bg-canvas/60 p-2.5">
-                <EventForm project={project} f={f.item} ep={ep} kind={kind} onDone={() => setOpen(null)} />
-              </div>
-            )}
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
 /** 下拉直接跳到任意一集 / 一段，两侧箭头逐个翻 */
 /** 上一个 / 下一个 + 中间的选择：给了 options 是下拉；给了 max 是可直接输入的数字（从 1 起，前后缀如「第 / 集」） */
 function Stepper({
@@ -290,12 +201,6 @@ function EpisodeView({ project, ep, draftId }: { project: Project; ep: number; d
         </dl>
       </div>
 
-      {SHOW_FORESHADOW && (
-        <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
-          <ForeshadowList list={s.foreshadows} empty="本集没有要埋、要收或进行中的伏笔" project={project} ep={ep} />
-        </Section>
-      )}
-
       <Section icon={<Users size={14} />} title="人物 · 本集进场与服化道" count={s.cast.length}>
         <CastTable project={project} ep={ep} draftId={draftId} cast={s.cast} />
       </Section>
@@ -362,14 +267,8 @@ function PhaseView({ project, index }: { project: Project; index: number }) {
             ))}
           </div>
         )}
-        {s.rough ? <p className="line-clamp-6 text-[12.5px] leading-5 whitespace-pre-wrap text-ink-700">{s.rough}</p> : <Empty>还没有阶段粗纲</Empty>}
+        {s.rough ? <p className="line-clamp-6 text-[12.5px] leading-5 whitespace-pre-wrap text-ink-700">{s.rough}</p> : <Empty>还没有阶段总览</Empty>}
       </div>
-
-      {SHOW_FORESHADOW && (
-        <Section icon={<Flag size={14} />} title="伏笔与线索" count={s.foreshadows.length}>
-          <ForeshadowList list={s.foreshadows} empty="本段没有计划中的伏笔" />
-        </Section>
-      )}
 
       <Section icon={<Users size={14} />} title="人物 · 截至段末" count={s.cast.length}>
         <CastList cast={s.cast} phase />
@@ -411,35 +310,9 @@ function Meter({ label, value, total }: { label: string; value: number; total: n
 
 /* ---------------------------------- 全剧 ---------------------------------- */
 
-/** 全剧需处理：逾期的可以就地处理，沉寂的只提醒 */
-function AlertList({ project, alerts }: { project: Project; alerts: ReturnType<typeof overallSnapshot>['alerts'] }) {
-  const [open, setOpen] = useState<string | null>(null)
-  return (
-    <ul className="space-y-1.5 text-[12.5px] leading-5">
-      {alerts.map((f) => (
-        <li key={f.item.id}>
-          <div className="flex items-start justify-between gap-2">
-            <p>
-              <span className="font-medium text-ink-900">{foreshadowName(f.item)}</span>
-              <span className="ml-1.5 text-amber-800">{f.overdue}</span>
-            </p>
-            {f.late && <FixToggle open={open === fixKey(f)} onClick={() => setOpen((v) => (v === fixKey(f) ? null : fixKey(f)))} />}
-          </div>
-          {f.late && open === fixKey(f) && (
-            <div className="mt-1.5 mb-1 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5">
-              <LateFix project={project} f={f.item} late={f.late} onDone={() => setOpen(null)} />
-            </div>
-          )}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 function OverallView({ project }: { project: Project }) {
   const s = overallSnapshot(project)
   const { lib } = s
-  const count = (st: ForeshadowStatus) => lib.foreshadows.filter((f) => f.status === st).length
   const chars = lib.characters.filter((c) => c.role || c.firstEp !== null)
   return (
     <>
@@ -459,28 +332,6 @@ function OverallView({ project }: { project: Project }) {
         </div>
         {s.drafting > 0 && <p className="text-xs text-ink-500">另有 {s.drafting} 集草稿未定稿，不计入全剧状态</p>}
       </div>
-
-      {/* 需处理只有伏笔的逾期 / 沉寂：伏笔这一步拿掉时和伏笔一起不显示 */}
-      {SHOW_FORESHADOW && (
-        <>
-          <Section icon={<AlertTriangle size={14} />} title="需处理" count={s.alerts.length}>
-            {s.alerts.length ? (
-              <AlertList project={project} alerts={s.alerts} />
-            ) : (
-              <Empty>没有逾期或沉寂的伏笔</Empty>
-            )}
-          </Section>
-
-          <Section icon={<Flag size={14} />} title="伏笔与线索" count={lib.foreshadows.length}>
-            <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
-              <Badge>已计划 {count('已计划')}</Badge>
-              <Badge tone="amber">已埋设 · 待回收 {count('已埋设')}</Badge>
-              <Badge tone="green">已回收 {count('已回收')}</Badge>
-            </div>
-            <ForeshadowList list={lib.foreshadows.filter((f) => f.status === '已埋设').map((f) => ({ ...f, task: null, alert: null }))} empty="没有进行中的伏笔" />
-          </Section>
-        </>
-      )}
 
       <Section icon={<Users size={14} />} title="人物 · 最新状态" count={chars.length}>
         {chars.length ? (
@@ -534,7 +385,7 @@ function OverallView({ project }: { project: Project }) {
 const tabsOf = (f: StateFocus): Tab[] => (f.kind === 'ep' ? ['ep', 'phase', 'all'] : f.kind === 'phase' ? ['phase', 'all'] : ['all'])
 const TAB_LABEL: Record<Tab, string> = { ep: '本集', phase: '本阶段', all: '全剧' }
 
-/** 剧本状态库侧栏：情节大纲、伏笔与线索（这一步拿掉时没有）、逐集剧本页面可随时展开核对；页面登记了标签页时（如草稿页）与之并列 */
+/** 剧本状态库侧栏：情节大纲、逐集剧本页面可随时展开核对；页面登记了标签页时（如草稿页）与之并列 */
 export function StatePanel({ project }: { project: Project }) {
   const { open, focus, setOpen, tabs: pageTabs, tab: pageTab, setTab: setPageTab, setSlot } = useStatePanel()
   const shown = activeTab(pageTabs, pageTab)
@@ -563,8 +414,6 @@ export function StatePanel({ project }: { project: Project }) {
 
   if (!focus || !view) return null
 
-  const alerts = overallSnapshot(project).alerts.length
-
   if (!open) {
     return (
       <button
@@ -575,7 +424,6 @@ export function StatePanel({ project }: { project: Project }) {
       >
         <Database size={15} className="text-brand-600" />
         <span className="[writing-mode:vertical-rl]">状态库</span>
-        {alerts > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[11px] text-amber-800 tabular-nums">{alerts}</span>}
       </button>
     )
   }

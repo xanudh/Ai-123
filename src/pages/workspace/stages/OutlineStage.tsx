@@ -28,8 +28,8 @@ function outlineChecks(project: Project): CheckItem[] {
   const total = project.spec.totalEpisodes
   const list = project.work.outline.filter((o) => o.ep <= total).sort((a, b) => a.ep - b.ep)
   const items: CheckItem[] = []
-  if (!project.work.plot?.overview.trim()) items.push({ level: 'info', text: '还没有全剧总览：先总览整部剧，再按阶段写粗纲，集纲会更连贯' })
-  if (!list.length) items.push({ level: 'info', text: '还没有集纲：每段先生成粗纲，再生成本段集纲' })
+  if (!project.work.plot?.overview.trim()) items.push({ level: 'info', text: '还没有全剧总览：先总览整部剧，再写各阶段总览，集纲会更连贯' })
+  if (!list.length) items.push({ level: 'info', text: '还没有集纲：每段先生成阶段总览，再生成本段集纲' })
 
   // 钩子轮换：相邻两集同类钩子（付费卡点除外）
   for (let i = 1; i < list.length; i++) {
@@ -148,7 +148,7 @@ function AlignChip({ project, eps }: { project: Project; eps: number[] }) {
         className="invisible absolute top-full left-0 z-40 mt-1 w-96 rounded-lg border border-line bg-white p-3 text-xs leading-5 opacity-0 shadow-pop transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
       >
         <span className="mb-1 block text-[13px] font-medium text-ink-900">{alignLabel(eps)} · 拆解</span>
-        <span className="mb-1.5 block text-ink-500">学力度和形式，不学事件；本集事件来自我们自己的阶段粗纲</span>
+        <span className="mb-1.5 block text-ink-500">学力度和形式，不学事件；本集事件来自我们自己的阶段总览</span>
         {rows.map((r) => (
           <span key={r.ep} className="mb-1.5 block border-t border-line pt-1.5 text-ink-700">
             <span className="font-medium">第 {r.ep} 集</span>：冲突 {r.conflict} · 情绪 {r.emotion}
@@ -186,9 +186,9 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const [phase, setPhase] = useState(startPhase)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([startPhase]))
   const [full, setFull] = useState(false)
-  // 待确认的覆盖操作：全部 / 总纲 / 某一段的粗纲 / 某一段的集纲 / 某一集的集纲
+  // 待确认的覆盖操作：全部 / 总纲 / 某一段的阶段总览 / 某一段的集纲 / 某一集的集纲
   const [confirm, setConfirm] = useState<'all' | 'overview' | { rough: number } | { phase: number } | { ep: number } | null>(null)
-  // 状态库侧栏跟着选中的层级：总览 → 全剧，阶段 → 粗纲，某一集 → 集纲
+  // 状态库侧栏跟着选中的层级：总览 → 全剧，阶段 → 阶段总览，某一集 → 集纲
   const [level, setLevel] = useState<StateFocus | null>(epParam ? { kind: 'ep', ep: epParam } : null)
   useStateFocus(level ?? { kind: 'phase', index: phase })
   useEffect(() => {
@@ -214,14 +214,14 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
   const checks = outlineChecks(project)
   useCheckTab(checks)
 
-  /** 记下总纲 / 各段粗纲这次按的依据：上游改了就提示「依据已改」 */
+  /** 记下总纲 / 各阶段总览这次按的依据：上游改了就提示「依据已改」 */
   const stampPrints = (cur: Project, which: ('overview' | number)[]) => {
     const prints = { ...cur.work.prints }
     for (const w of which) prints[w === 'overview' ? PRINT_KEY.overview : PRINT_KEY.phase(w)] = printOf(cur, downBasis(cur, w === 'overview' ? 'overview' : 'phase').deps)
     return prints
   }
 
-  /** 只生成总纲（全剧总览），各段粗纲不动 */
+  /** 只生成总纲（全剧总览），各阶段总览不动 */
   const generateOverview = async () => {
     const cur = latestProject(project.id)
     if (!cur) return
@@ -229,10 +229,10 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     if (!result) return
     const latest = latestProject(project.id)?.work.plot
     patchWork(project.id, { plot: { overview: result.overview, phases: latest?.phases ?? ranges.map(() => '') }, prints: stampPrints(cur, ['overview']) }, '生成情节大纲：全剧总纲')
-    toast('总纲已生成，各段粗纲未改动')
+    toast('总纲已生成，各阶段总览未改动')
   }
 
-  /** 只生成 / 重新生成这一段的粗纲：依据总纲，其他段与集纲不动 */
+  /** 只生成 / 重新生成这一段的阶段总览：依据总纲，其他段与集纲不动 */
   const generateRough = async (i: number) => {
     const cur = latestProject(project.id)
     if (!cur) return
@@ -240,8 +240,8 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     if (!result) return
     const latest = latestProject(project.id)?.work.plot
     const phases = ranges.map((_, k) => (k === i ? result.phases[i] : (latest?.phases[k] ?? '')))
-    patchWork(project.id, { plot: { overview: latest?.overview ?? '', phases }, prints: stampPrints(latestProject(project.id) ?? cur, [i]) }, `生成情节大纲：${names[i]}粗纲`)
-    toast(`「${names[i]}」粗纲已生成，可直接修改`)
+    patchWork(project.id, { plot: { overview: latest?.overview ?? '', phases }, prints: stampPrints(latestProject(project.id) ?? cur, [i]) }, `生成情节大纲：${names[i]}阶段总览`)
+    toast(`「${names[i]}」阶段总览已生成，可直接修改`)
     setLevel({ kind: 'phase', index: i })
   }
 
@@ -262,7 +262,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     setLevel({ kind: 'ep', ep })
   }
 
-  /** 一键集纲：按这一段的粗纲生成本段全部集纲 */
+  /** 一键集纲：按这一段的阶段总览生成本段全部集纲 */
   const generatePhase = async (i: number, seed: number) => {
     const cur = latestProject(project.id)
     if (!cur) return
@@ -275,7 +275,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     pick(i)
   }
 
-  /** AI 一键生成全部：补齐总览、各段粗纲，再逐段补齐还没生成的集纲；已有内容不覆盖 */
+  /** AI 一键生成全部：补齐总纲、各阶段总览，再逐段补齐还没生成的集纲；已有内容不覆盖 */
   const generateAll = async () => {
     const done = await run('all', async (signal) => {
       let cur = latestProject(project.id)
@@ -287,7 +287,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         const merged: Plot = old
           ? { overview: old.overview.trim() ? old.overview : fresh.overview, phases: fresh.phases.map((t, i) => old.phases[i]?.trim() || t) }
           : fresh
-        patchWork(project.id, { plot: merged, prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '生成情节大纲：全剧总览与阶段粗纲')
+        patchWork(project.id, { plot: merged, prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '生成情节大纲：总纲与阶段总览')
       }
       // 逐段补齐：每段内连续缺失的集一次生成，开场承接上一集的钩子
       for (const [a, b] of projectPhases(cur)) {
@@ -311,15 +311,15 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     if (!done) return
     const cur = latestProject(project.id)
     const paywalls = cur ? pendingPaywalls(cur).length : 0
-    toast(paywalls ? `总览、粗纲与全部集纲已生成，${paywalls} 个付费卡点集待审核` : '总览、粗纲与全部集纲已生成')
+    toast(paywalls ? `总纲、阶段总览与全部集纲已生成，${paywalls} 个付费卡点集待审核` : '总纲、阶段总览与全部集纲已生成')
   }
 
-  /** 重新全部生成：按最新的故事架构重写总纲、各段粗纲，再逐段重写全部集纲 */
+  /** 重新全部生成：按最新的故事架构重写总纲、各阶段总览，再逐段重写全部集纲 */
   const regenerateAll = async () => {
     const done = await run('all', async (signal) => {
       let cur = latestProject(project.id)
       if (!cur) return false
-      patchWork(project.id, { plot: await draftPlot(cur, signal), prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '重新生成情节大纲：总纲与各段粗纲')
+      patchWork(project.id, { plot: await draftPlot(cur, signal), prints: stampPrints(cur, ['overview', ...projectPhases(cur).map((_, i) => i)]) }, '重新生成情节大纲：总纲与各阶段总览')
       for (const [a, b] of projectPhases(cur)) {
         cur = latestProject(project.id)
         if (!cur) return false
@@ -330,7 +330,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
     if (!done) return
     const cur = latestProject(project.id)
     const paywalls = cur ? pendingPaywalls(cur).length : 0
-    toast(paywalls ? `已重新生成总纲、粗纲与全部集纲，${paywalls} 个付费卡点集待审核` : '已重新生成总纲、粗纲与全部集纲')
+    toast(paywalls ? `已重新生成总纲、阶段总览与全部集纲，${paywalls} 个付费卡点集待审核` : '已重新生成总纲、阶段总览与全部集纲')
   }
 
   const setPlot = (patch: Partial<Plot>) => {
@@ -393,7 +393,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
               variant={allDone ? 'secondary' : 'primary'}
               loading={running === 'all'}
               disabled={blocked || !!running}
-              title={allDone ? '总纲、各段粗纲与全部集纲重新生成（会先确认）；只改一段可用段落右上角的按钮' : '依次生成总纲、各段粗纲与还没生成的集纲；已有内容不覆盖'}
+              title={allDone ? '总纲、各阶段总览与全部集纲重新生成（会先确认）；只改一段可用段落右上角的按钮' : '依次生成总纲、各阶段总览与还没生成的集纲；已有内容不覆盖'}
               onClick={() => (allDone ? setConfirm('all') : generateAll())}
             >
               {allDone ? '重新全部生成' : 'AI 一键生成全部'}
@@ -467,7 +467,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                 variant={hasOverview ? 'secondary' : 'primary'}
                 loading={running === 'overview'}
                 disabled={blocked || !!running}
-                title={`只生成全剧总览（总纲），各段粗纲不动。生成逻辑：${basisLine(downBasis(project, 'overview'))}`}
+                title={`只生成全剧总览（总纲），各阶段总览不动。生成逻辑：${basisLine(downBasis(project, 'overview'))}`}
                 onClick={() => (hasOverview ? setConfirm('overview') : generateOverview())}
               >
                 {hasOverview ? '重新生成总纲' : '生成总纲'}
@@ -510,32 +510,32 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                       variant={rough || !hasOverview ? 'secondary' : 'primary'}
                       loading={running === `rough-${i}`}
                       disabled={blocked || !!running || !hasOverview}
-                      title={hasOverview ? `按总纲只生成「${names[i]}」的粗纲，其他段不动` : '先生成总纲，再生成粗纲'}
+                      title={hasOverview ? `按总纲只生成「${names[i]}」的阶段总览，其他段不动` : '先生成总纲，再生成阶段总览'}
                       onClick={() => (rough ? setConfirm({ rough: i }) : generateRough(i))}
                     >
-                      {rough ? '重新生成粗纲' : '生成粗纲'}
+                      {rough ? '重新生成阶段总览' : '生成阶段总览'}
                     </AiButton>
                     <AiButton
                       variant={has || !rough ? 'secondary' : 'primary'}
                       loading={running === `phase-${i}`}
                       disabled={blocked || !!running || !rough}
-                      title={rough ? `按本段粗纲生成第 ${a}–${b} 集的集纲` : '先生成本段粗纲，再生成集纲'}
+                      title={rough ? `按阶段总览生成第 ${a}–${b} 集的集纲` : '先生成阶段总览，再生成集纲'}
                       onClick={() => (has ? setConfirm({ phase: i }) : generatePhase(i, 0))}
                     >
                       {has ? '重新生成集纲' : '一键集纲'}
                     </AiButton>
-                    <BasisInfo title="阶段粗纲 / 集纲" row={{ ...downBasis(project, 'phase'), must: [...downBasis(project, 'phase').must, ...downBasis(project, 'episode').must.map((x) => `集纲：${x}`)] }} align="right" />
+                    <BasisInfo title="阶段总览 / 集纲" row={{ ...downBasis(project, 'phase'), must: [...downBasis(project, 'phase').must, ...downBasis(project, 'episode').must.map((x) => `集纲：${x}`)] }} align="right" />
                   </div>
                   {rough && (
                     <div className="mt-2 empty:hidden">
-                      <StaleNote project={project} printKey={PRINT_KEY.phase(i)} deps={downBasis(project, 'phase').deps} action="点「重新生成粗纲」，或直接改" />
+                      <StaleNote project={project} printKey={PRINT_KEY.phase(i)} deps={downBasis(project, 'phase').deps} action="点「重新生成阶段总览」，或直接改" />
                     </div>
                   )}
                   <div className="mt-2">
-                    <div className="mb-1 text-xs font-medium text-ink-500">阶段粗纲</div>
+                    <div className="mb-1 text-xs font-medium text-ink-500">阶段总览</div>
                     <AutoTextarea
                       inline
-                      aria-label={`${names[i]}粗纲`}
+                      aria-label={`${names[i]}阶段总览`}
                       onFocus={() => setLevel({ kind: 'phase', index: i })}
                       minRows={2}
                       value={plot?.phases[i] ?? ''}
@@ -558,7 +558,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
                       generate={{
                         loading: running === `ep-${ep}`,
                         disabled: blocked || !!running || !rough,
-                        hint: rough ? undefined : '先生成本段粗纲，再生成集纲',
+                        hint: rough ? undefined : '先生成阶段总览，再生成集纲',
                         onClick: () => (byEp.has(ep) ? setConfirm({ ep }) : generateEpisode(ep, 0)),
                       }}
                     />
@@ -591,7 +591,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         onClose={() => setConfirm(null)}
         onConfirm={regenerateAll}
         title="重新全部生成情节大纲？"
-        desc={`总纲、${ranges.length} 段粗纲与全部 ${total} 集集纲（含付费卡点审核状态）都会按最新的故事架构重写；分集蓝图与已写的剧本不受影响。`}
+        desc={`总纲、${ranges.length} 个阶段总览与全部 ${total} 集集纲（含付费卡点审核状态）都会按最新的故事架构重写；逐集蓝图与已写的剧本不受影响。`}
         confirmText="重新全部生成"
         danger
       />
@@ -601,15 +601,15 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         onClose={() => setConfirm(null)}
         onConfirm={generateOverview}
         title="重新生成总纲？"
-        desc="全剧总览会被替换；各段粗纲与分集集纲不受影响。"
+        desc="全剧总览会被替换；各阶段总览与分集集纲不受影响。"
         confirmText="重新生成"
       />
       <ConfirmDialog
         open={!!confirm && typeof confirm === 'object' && 'rough' in confirm}
         onClose={() => setConfirm(null)}
         onConfirm={() => confirm && typeof confirm === 'object' && 'rough' in confirm && generateRough(confirm.rough)}
-        title={confirm && typeof confirm === 'object' && 'rough' in confirm ? `重新生成「${names[confirm.rough]}」的粗纲？` : ''}
-        desc="这一段的粗纲会被替换；总纲、其他段粗纲与已生成的集纲不受影响。"
+        title={confirm && typeof confirm === 'object' && 'rough' in confirm ? `重新生成「${names[confirm.rough]}」的阶段总览？` : ''}
+        desc="这一段的阶段总览会被替换；总纲、其他段的阶段总览与已生成的集纲不受影响。"
         confirmText="重新生成"
       />
       <ConfirmDialog
@@ -623,7 +623,7 @@ export default function OutlineStage({ project, blocked }: { project: Project; b
         title={confirm && typeof confirm === 'object' && !('rough' in confirm) ? ('phase' in confirm ? `重新生成「${names[confirm.phase]}」的集纲？` : `重新生成第 ${confirm.ep} 集的集纲？`) : ''}
         desc={
           confirm && typeof confirm === 'object' && !('rough' in confirm)
-            ? `${'phase' in confirm ? rangeLabel(ranges[confirm.phase]) : `第 ${confirm.ep} 集`}的集纲（含付费卡点审核状态）会被替换；分集蓝图与已写的剧本不受影响。`
+            ? `${'phase' in confirm ? rangeLabel(ranges[confirm.phase]) : `第 ${confirm.ep} 集`}的集纲（含付费卡点审核状态）会被替换；逐集蓝图与已写的剧本不受影响。`
             : ''
         }
         confirmText="重新生成"

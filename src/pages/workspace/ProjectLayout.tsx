@@ -1,14 +1,13 @@
 import clsx from 'clsx'
-import { ChevronLeft, CloudCheck, Copy, Download, Loader2, Lock, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
+import { ChevronLeft, CloudCheck, Copy, Download, Loader2, MoreHorizontal, Palette, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, Outlet, useMatch, useNavigate, useOutletContext, useParams } from 'react-router'
+import { Link, Outlet, useMatch, useNavigate, useOutletContext, useParams } from 'react-router'
 import { ConfirmDialog, Menu } from '../../components/overlay'
 import { ProjectModels } from '../../components/project/ModelBits'
 import { ModeBadge, ProjectCover, StatusBadge } from '../../components/project/ProjectBits'
 import { StatePanel } from '../../components/project/StatePanel'
 import { Badge, EmptyState, buttonClass } from '../../components/ui'
 import { MODE_META, PALETTES } from '../../domain/constants'
-import { MODE_STAGES, STAGES } from '../../domain/pipeline'
 import type { Project } from '../../domain/types'
 import { downloadText } from '../../lib/download'
 import { formatDateTime } from '../../lib/format'
@@ -17,15 +16,13 @@ import { useBatchRun } from '../../store/batchRun'
 import { useProject, useProjects } from '../../store/projects'
 import { toast } from '../../store/toast'
 import { useStatePanel } from '../../store/statePanel'
-import { useV2 } from '../../store/uiVersion'
 import { StageNav } from '../../v2/StageNav'
 import { useNavFold } from '../../v2/navFold'
 import { SearchX } from 'lucide-react'
-import { ScriptTree } from './script/ScriptTree'
 
 export const useCurrentProject = () => useOutletContext<Project>()
 
-/** 批量写作在后台跑：离开分集蓝图页也看得到进度，可以停 */
+/** 批量写作在后台跑：离开逐集蓝图页也看得到进度，可以停 */
 function BatchChip({ project }: { project: Project }) {
   const run = useBatchRun((s) => (s.run?.projectId === project.id ? s.run : null))
   if (!run) return null
@@ -94,7 +91,6 @@ export default function ProjectLayout() {
   const navigate = useNavigate()
   const { duplicateProject, deleteProject } = useProjects()
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const v2 = useV2()
   // 状态库侧栏展开时，宽屏上给它让出位置，不压住页面右侧
   const docked = useStatePanel((s) => s.open && !!s.focus)
   const navCollapsed = useNavFold((s) => s.collapsed)
@@ -135,8 +131,6 @@ export default function ProjectLayout() {
     )
   }
 
-  const stages = MODE_STAGES[project.mode]
-
   const badges = (
     <>
       <StatusBadge status={project.status} />
@@ -148,12 +142,10 @@ export default function ProjectLayout() {
   )
   const actions = (
     <div className="flex items-center gap-2">
-      {v2 && (
-        <span className="mr-1 flex items-center gap-1 text-xs text-ink-400" title="项目数据自动保存在当前浏览器">
-          <CloudCheck size={14} className="text-emerald-500" />
-          已自动保存 · {formatDateTime(project.updatedAt)}
-        </span>
-      )}
+      <span className="mr-1 flex items-center gap-1 text-xs text-ink-400" title="项目数据自动保存在当前浏览器">
+        <CloudCheck size={14} className="text-emerald-500" />
+        已自动保存 · {formatDateTime(project.updatedAt)}
+      </span>
       <BatchChip project={project} />
       {/* 模型是整个项目的选择，各环节都在页头看得到、随时可换 */}
       <ProjectModels project={project} size={isOverview ? 'md' : 'sm'} />
@@ -231,38 +223,8 @@ export default function ProjectLayout() {
         </header>
       )}
 
-      <div className={clsx('grid items-start gap-6', v2 && navCollapsed ? 'lg:grid-cols-[52px_minmax(0,1fr)]' : v2 ? 'lg:grid-cols-[248px_minmax(0,1fr)]' : 'lg:grid-cols-[232px_minmax(0,1fr)]')}>
-        {v2 ? (
-          <StageNav project={project} />
-        ) : (
-          <nav data-stage-nav className="scrollbar-thin lg:sticky lg:top-stick lg:max-h-stick lg:overflow-y-auto">
-            <div className="mb-2 px-2.5 text-[11px] font-medium tracking-wider text-ink-400">创作流程</div>
-            <ol className="space-y-0.5">
-              {stages.map((key, i) => {
-                const meta = STAGES[key]
-                return (
-                  <li key={key}>
-                    <NavLink
-                      to={key === 'overview' ? '.' : `stage/${key}`}
-                      end={key !== 'script'}
-                      className={({ isActive }) =>
-                        clsx(
-                          'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors',
-                          isActive ? 'bg-white font-medium text-brand-700 shadow-card' : 'text-ink-700 hover:bg-white/70',
-                        )
-                      }
-                    >
-                      <span className="w-4 text-center text-[11px] text-ink-400 tabular-nums">{i + 1}</span>
-                      <span className="flex-1 truncate">{meta.label}</span>
-                      {meta.phase && <Lock size={12} className="text-ink-300" />}
-                    </NavLink>
-                    {key === 'script' && (project.work.drafts.length > 0 || project.work.scripts.length > 0) && <ScriptTree project={project} />}
-                  </li>
-                )
-              })}
-            </ol>
-          </nav>
-        )}
+      <div className={clsx('grid items-start gap-6', navCollapsed ? 'lg:grid-cols-[52px_minmax(0,1fr)]' : 'lg:grid-cols-[248px_minmax(0,1fr)]')}>
+        <StageNav project={project} />
 
         <div className="min-w-0">
           <Outlet context={project} />

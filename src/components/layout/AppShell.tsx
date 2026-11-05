@@ -15,7 +15,7 @@ import {
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router'
-import { VersionBar } from '../../v2/VersionBar'
+import { BottomBar } from '../../v2/BottomBar'
 import { buttonClass } from '../ui'
 
 interface NavItem {
@@ -163,7 +163,7 @@ export function AppShell() {
         <main className="scrollbar-thin flex-1 overflow-y-auto">
           <Outlet />
         </main>
-        <VersionBar />
+        <BottomBar />
       </div>
     </div>
   )

@@ -638,7 +638,7 @@ export const EVENT_MOVES: string[][] = [
   ],
 ]
 
-/** 粗纲剧情概况里串起各集的连接词 */
+/** 阶段总览剧情概况里串起各集的连接词 */
 export const STORY_LINKS = ['随后', '与此同时', '紧接着', '没过多久']
 
 export const TWIST_EVENTS = ['真相揭开：{secret}', '{mentor}说出尘封旧案：{grudge}', '{lover}终于得知{hero}就是{identity}']
@@ -896,7 +896,7 @@ export const PHASE_SCENES: SceneType[][] = [
   ['confront', 'crisis', 'romance', 'reveal', 'intel'],
 ]
 
-/** 伏笔埋设 / 回收时补的一句台词 */
+/** 原来伏笔埋设 / 回收时补的一句台词：伏笔这一步已删，留着给旧草稿里的这两句做翻译 */
 export const PLANT_LINE: Speech = { who: 'hero', zh: '（低声）这到底是怎么回事……', en: '(under breath) What is going on...' }
 export const PAYOFF_LINE: Speech = { who: 'hero', zh: '原来……一切早有预兆。', en: 'So... the signs were there all along.' }
 

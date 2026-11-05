@@ -1,21 +1,15 @@
-import clsx from 'clsx'
 import { Info, MapPin, ScrollText, Users } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { CheckList, EpisodeInput, Stat, Table, stagePath } from '../../../components/stage/StageKit'
 import { Badge, Card, CardHeader } from '../../../components/ui'
-import { SHOW_FORESHADOW } from '../../../domain/pipeline'
-import { buildState, preWriteCheck, silenceThreshold } from '../../../domain/state'
+import { buildState, preWriteCheck } from '../../../domain/state'
 import type { Project } from '../../../domain/types'
-import { foreshadowName, scriptOf } from '../../../domain/work'
-import type { ForeshadowStatus } from '../../../domain/work'
-
-const STATUS_TONE: Record<ForeshadowStatus, 'gray' | 'amber' | 'green'> = { 已计划: 'gray', 已埋设: 'amber', 已回收: 'green' }
+import { scriptOf } from '../../../domain/work'
 
 export default function StateStage({ project }: { project: Project }) {
   const total = project.spec.totalEpisodes
   const lib = buildState(project)
-  const threshold = silenceThreshold(project)
   // 下一集要写的：第一个还没定稿的集
   let nextEp = 1
   while (nextEp < total && scriptOf(project.work, nextEp)) nextEp++
@@ -24,22 +18,13 @@ export default function StateStage({ project }: { project: Project }) {
 
   const registered = lib.characters.filter((c) => c.role).length
   const unregistered = lib.characters.length - registered
-  const active = lib.foreshadows.filter((f) => f.status === '已埋设').length
-  const paid = lib.foreshadows.filter((f) => f.status === '已回收').length
-  const alerts = lib.foreshadows.filter((f) => f.overdue).length
 
   return (
     <>
       <Card className="p-5">
-        <div className={clsx('grid gap-3 sm:grid-cols-2', SHOW_FORESHADOW && 'xl:grid-cols-4')}>
+        <div className="grid gap-3 sm:grid-cols-2">
           <Stat label="已定稿" value={lib.latestEp ? `至第 ${lib.latestEp} 集 / 共 ${total} 集` : `0 / ${total} 集`} />
           <Stat label="人物" value={unregistered ? `${registered} 登记 · ${unregistered} 未登记` : `${registered} 人`} tone={unregistered ? 'amber' : undefined} />
-          {SHOW_FORESHADOW && (
-            <>
-              <Stat label="伏笔与线索" value={`${active} 待回收 · ${paid} 已回收`} />
-              <Stat label="需处理" value={alerts} tone={alerts ? 'red' : 'green'} />
-            </>
-          )}
         </div>
         {!lib.latestEp && (
           <p className="mt-4 flex items-start gap-2 rounded-lg bg-canvas px-3.5 py-2.5 text-[13px] leading-5 text-ink-700">
@@ -57,7 +42,7 @@ export default function StateStage({ project }: { project: Project }) {
       <Card>
         <CardHeader
           title="写作前检查"
-          desc={`每写一集前对照状态库：集纲与蓝图、上一集定稿、${SHOW_FORESHADOW ? '伏笔到期与逾期、' : ''}钩子承接、人物最新状态`}
+          desc="每写一集前对照状态库：集纲与蓝图、上一集定稿、钩子承接、人物最新状态"
           action={
             <span className="flex items-center gap-1 text-[13px] text-ink-500">
               第
@@ -142,47 +127,6 @@ export default function StateStage({ project }: { project: Project }) {
           )}
         </Card>
       </div>
-
-      {SHOW_FORESHADOW && (
-        <Card className="overflow-hidden">
-          <CardHeader
-            title="伏笔与叙事线索进度"
-            desc={
-              <>
-                只计编剧确认过的定稿事件；{threshold > 0 ? `连续 ${threshold} 集没推进会提醒` : '未设沉寂提醒'} ·
-                <Link to={stagePath(project, 'foreshadow')} className="ml-1 text-brand-600 hover:text-brand-700">
-                  去确认事件
-                </Link>
-              </>
-            }
-          />
-          {lib.foreshadows.length ? (
-            <Table columns={['名称', '类型', '状态', '计划', '实际', '沉寂', '提醒']} minWidth={760}>
-              {lib.foreshadows.map((f) => (
-                <tr key={f.item.id}>
-                  <td className="max-w-56 px-4 py-2.5 font-medium">{foreshadowName(f.item)}</td>
-                  <td className="px-4 py-2.5 whitespace-nowrap text-ink-700">{f.item.type}</td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">
-                    <Badge tone={STATUS_TONE[f.status]}>{f.status}</Badge>
-                  </td>
-                  <td className="px-4 py-2.5 whitespace-nowrap text-ink-700 tabular-nums">
-                    第 {f.item.plantEp} → {f.item.payoffEp} 集
-                  </td>
-                  <td className="px-4 py-2.5 whitespace-nowrap text-ink-700 tabular-nums">
-                    {f.plantedIn === null ? <span className="text-ink-300">—</span> : `第 ${f.plantedIn}${f.paidIn !== null ? ` → ${f.paidIn}` : ''} 集`}
-                  </td>
-                  <td className={clsx('px-4 py-2.5 whitespace-nowrap tabular-nums', threshold > 0 && f.silence >= threshold ? 'font-medium text-amber-700' : 'text-ink-500')}>
-                    {f.status === '已埋设' ? `${f.silence} 集` : <span className="text-ink-300">—</span>}
-                  </td>
-                  <td className="px-4 py-2.5 text-amber-800">{f.overdue ?? <span className="text-ink-300">—</span>}</td>
-                </tr>
-              ))}
-            </Table>
-          ) : (
-            <p className="px-5 py-4 text-[13px] text-ink-400">还没有伏笔计划</p>
-          )}
-        </Card>
-      )}
 
       <Card>
         <CardHeader title={<span className="flex items-center gap-1.5"><ScrollText size={15} className="text-ink-400" />定稿日志</span>} desc="每定稿一集，状态库自动更新" />

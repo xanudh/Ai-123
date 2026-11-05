@@ -35,7 +35,7 @@ function StageIcon({ project, stage, index }: { project: Project; stage: StageKe
   )
 }
 
-/** 版本二的创作流程导航：白底面板，每个环节带状态与进度摘要，被拦住的环节悬停可见原因；可收起成一列图标 */
+/** 创作流程导航：白底面板，每个环节带状态与进度摘要，被拦住的环节悬停可见原因；可收起成一列图标 */
 export function StageNav({ project }: { project: Project }) {
   const stages = MODE_STAGES[project.mode]
   const progress = projectProgress(project)

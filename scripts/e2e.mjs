@@ -91,9 +91,6 @@ const results = []
 const check = async (name, fn) => {
   try { await fn(); results.push(['PASS', name]) } catch (e) { results.push(['FAIL', name, e.message]); await shot('fail-' + results.length).catch(() => {}) }
 }
-// 「伏笔与叙事线索」11/4 先拿掉（和 src/domain/pipeline.ts 的 SHOW_FORESHADOW 一致）：伏笔这一步的检查先不跑，恢复时一起改回 true
-const SHOW_FORESHADOW = false
-const fsCheck = (name, fn) => (SHOW_FORESHADOW ? check(name, fn) : Promise.resolve())
 
 const KEY = 'zhiying.projects.v1'
 const projects = () => evaluate(`JSON.parse(localStorage.getItem('${KEY}')).state.projects`)
@@ -307,8 +304,10 @@ await check('故事架构：不分层，按编剧顺序 核心设定 → 世界�
   const rowTops = await evaluate(`['input[aria-label=总集数]', 'input[aria-label=单集时长]', 'select[aria-label=剧本语言]'].map((q) => Math.round(document.querySelector(q).getBoundingClientRect().top))`)
   if (new Set(rowTops).size !== 1) throw new Error('总集数、单集时长、剧本语言应在同一行：' + rowTops)
   // 顶部的顺序说明里也有「世界观设定」，按元素位置比：按钮在核心设定这一项后面、世界观设定这一项前面
-  if (!(await evaluate(`(() => { const btn = [...document.querySelectorAll('#arch-items button')].find((b) => b.textContent.includes('AI 给出 3 个方向')); const lg = document.querySelector('[data-item=logline]'); const w = document.querySelector('[data-item=world]'); return !!btn && !!(lg.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(btn.compareDocumentPosition(w) & Node.DOCUMENT_POSITION_FOLLOWING) })()`))) throw new Error('3 个方向应紧跟核心设定、在世界观前')
-  // 11/4 第五轮标注 #58：AI 评估可行性去掉，只留 AI 给出 3 个方向
+  // 11/5 标注 #86：「AI 给出 3 个方向」改名「AI 框架方向」，放在核心设定框下面、世界观设定前面
+  if (!(await evaluate(`(() => { const btn = [...document.querySelectorAll('#arch-items button')].find((b) => b.textContent.trim() === 'AI 框架方向'); const box = document.querySelector('textarea[aria-label=核心设定]'); const w = document.querySelector('[data-item=world]'); return !!btn && !!(box.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(btn.compareDocumentPosition(w) & Node.DOCUMENT_POSITION_FOLLOWING) })()`))) throw new Error('AI 框架方向应在核心设定框下面、世界观前')
+  if (await t(`__t.has('AI 给出 3 个方向')`)) throw new Error('「AI 给出 3 个方向」应改名为「AI 框架方向」')
+  // 11/4 第五轮标注 #58：AI 评估可行性去掉，只留 AI 框架方向
   if (await t(`__t.has('评估可行性') || __t.has('可行性')`)) throw new Error('AI 评估可行性应已去掉')
   // 节奏框架折在冲突主线里，默认收起，不单独排号
   if (!(await evaluate(`!!document.querySelector('[data-item=mainLine] [data-rhythm]')`))) throw new Error('节奏框架应折在冲突主线里')
@@ -347,9 +346,9 @@ await check('故事架构：冲突主线未填完时不能生成节奏框架（�
   if (!(await t(`__t.find('[data-rhythm] button', '生成节奏框架').disabled`))) throw new Error('主线为空时「生成节奏框架」应禁用')
   if (!(await t(`__t.has('先定冲突主线，再点「生成节奏框架」')`))) throw new Error('缺少先定主线的提示')
 })
-await check('故事架构：AI 3 个方向在弹窗里对比，原创每个方向列出核心设定、世界观、金手指、故事背景（整体框架删掉）；选一个点「确定录入」才写入这四项', async () => {
-  await t(`__t.click('button', 'AI 给出 3 个方向')`)
-  await waitFor(dialog('AI 给出的 3 个方向'), '方向弹窗', 5000)
+await check('故事架构：AI 框架方向的 3 个方向在弹窗里对比，原创每个方向列出核心设定、世界观、金手指、故事背景（整体框架删掉）；选一个点「确定录入」才写入这四项', async () => {
+  await t(`__t.click('button', 'AI 框架方向')`)
+  await waitFor(dialog('AI 框架方向'), '方向弹窗', 5000)
   const cards = await evaluate(`[...document.querySelectorAll('[role=radiogroup] label')].map((l) => l.innerText)`)
   if (cards.length !== 3) throw new Error('应有 3 个方向：' + cards.length)
   for (const c of cards) for (const h of ['核心设定', '世界观', '金手指', '故事背景', '世界总览：', '阵营设定：', '主要地点：', '首次出现：', '核心能力：', '表现方式：']) if (!c.includes(h)) throw new Error('方向卡缺少「' + h + '」')
@@ -364,7 +363,7 @@ await check('故事架构：AI 3 个方向在弹窗里对比，原创每个方�
   await sleep(300)
   await shot('architecture-directions')
   await t(`__t.click('[role=dialog] button', '确定录入')`)
-  await waitFor(`!${dialog('AI 给出的 3 个方向')}`, '弹窗关闭')
+  await waitFor(`!${dialog('AI 框架方向')}`, '弹窗关闭')
   const a = await arch()
   const p = await project()
   if (a.plan || !cards[1].includes(p.logline)) throw new Error('方向应录入核心设定、不再写整体框架')
@@ -612,9 +611,9 @@ await check('人物设定：每项都有 AI 生成 → AI 润色并标注生成�
   if (mine.notes !== '保留这句' || !mine.fear.trim() || mine.lookRef !== old.lookRef || mine.profile !== old.profile) throw new Error('应保留已填内容、只补空着的项：' + JSON.stringify({ notes: mine.notes, fear: mine.fear }))
 })
 
-/* ------------------------------ 大纲 → 伏笔 ------------------------------ */
+/* ---------------------------------- 大纲 ---------------------------------- */
 
-if (!SHOW_FORESHADOW) await check('创作流程：伏笔与叙事线索先拿掉——导航里没有这一步，情节大纲之后直接是逐集剧本；旧地址回到概览', async () => {
+await check('创作流程：伏笔与叙事线索已删——导航里没有这一步，情节大纲之后直接是逐集剧本；旧地址回到概览', async () => {
   const nav = await evaluate(`[...document.querySelectorAll('nav ol a')].map((a) => a.textContent)`)
   if (nav.some((x) => x.includes('伏笔'))) throw new Error('导航里不应再有伏笔：' + nav.join(' / '))
   const o = nav.findIndex((x) => x.includes('情节大纲'))
@@ -622,24 +621,16 @@ if (!SHOW_FORESHADOW) await check('创作流程：伏笔与叙事线索先拿掉
   await goto(projectPath + '/stage/foreshadow')
   await waitFor(`location.pathname === '${projectPath}'`, '旧地址回到概览')
 })
-await fsCheck('创作流程：情节大纲在伏笔线索之前，大纲未定时不能埋伏笔', async () => {
-  const nav = await evaluate(`[...document.querySelectorAll('nav ol a')].map((a) => a.textContent)`)
-  const [o, f] = [nav.findIndex((x) => x.includes('情节大纲')), nav.findIndex((x) => x.includes('伏笔与叙事线索'))]
-  if (o < 0 || f < 0 || o > f) throw new Error('环节顺序不对：' + nav.join(' / '))
-  await goto(projectPath + '/stage/foreshadow')
-  await waitFor(`document.body.innerText.includes('先确定情节大纲')`, '大纲闸门')
-  if (!(await t(`__t.find('button', 'AI 建议伏笔与线索').disabled`))) throw new Error('大纲未定时 AI 建议应禁用')
-})
-await check('情节大纲：AI 一键生成全部（总览 + 粗纲 + 集纲）；全部生成后按钮变成「重新全部生成」，确认后整份重写', async () => {
+await check('情节大纲：AI 一键生成全部（总览 + 阶段总览 + 集纲）；全部生成后按钮变成「重新全部生成」，确认后整份重写', async () => {
   await goto(projectPath + '/stage/outline')
   if (await evaluate(`document.body.innerText.includes('本次生成范围')`)) throw new Error('生成范围一行应已删除')
   await t(`__t.click('button', 'AI 一键生成全部')`)
   await waitFor(`(() => { const p = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}'); return p.work.plot?.overview && p.work.outline.length >= p.spec.totalEpisodes })()`, '全部集纲', 20000)
   await until(`__t.find('main button', '重新全部生成') && !__t.find('main button', '重新全部生成').disabled`, '按钮变为重新全部生成')
   if (!(await t(`!!__t.find('main button', '重新生成集纲')`))) throw new Error('阶段卡片上应有「重新生成集纲」')
-  // 阶段卡片头：「生成粗纲」排在「一键集纲 / 重新生成集纲」前面，同一行
+  // 阶段卡片头：「生成阶段总览」排在「一键集纲 / 重新生成集纲」前面，同一行
   const order = await evaluate(`[...document.querySelectorAll('#outline-phase-0 > div:first-child > div:first-child button:not([data-basis])')].map((b) => b.textContent.trim())`)
-  if (order.join('/') !== '重新生成粗纲/重新生成集纲') throw new Error('粗纲按钮应在集纲按钮前面：' + order.join('/'))
+  if (order.join('/') !== '重新生成阶段总览/重新生成集纲') throw new Error('阶段总览按钮应在集纲按钮前面：' + order.join('/'))
   await evaluate(`scrollTo(0, 0)`)
   await sleep(200)
   await shot('outline-head')
@@ -650,15 +641,15 @@ await check('情节大纲：AI 一键生成全部（总览 + 粗纲 + 集纲）�
   await waitFor(`(() => { const p = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}'); return p.work.outline.length >= p.spec.totalEpisodes && p.work.outline.map((o) => o.event).join('|') !== ${JSON.stringify(before)} })()`, '集纲已整份重写', 20000)
   await until(`!__t.find('main button', '重新全部生成').disabled`, '重写完成', 20000)
 })
-await check('情节大纲：集纲写成一段（发生了什么 → 主角怎么应对 → 推进到哪）；粗纲先写这一段的剧情概况，再写段名、节点、金手指（11/4 第五轮标注 #60 #61）', async () => {
+await check('情节大纲：集纲写成一段（发生了什么 → 主角怎么应对 → 推进到哪）；阶段总览先写这一段的剧情概况，再写段名、节点、金手指（11/4 第五轮标注 #60 #61）', async () => {
   const p = await project()
   const short = p.work.outline.filter((o) => o.event.split('。').filter(Boolean).length < 2 || o.event.length < 50)
   if (short.length) throw new Error('集纲应写成一段、不只一句：' + JSON.stringify(short.slice(0, 3).map((o) => [o.ep, o.event])))
   const beats = (await arch()).mainLine.map((b) => b.beat)
   p.work.plot.phases.forEach((text, i) => {
     const lines = text.split('\n')
-    if (lines[0].startsWith(beats[i]) || lines[0].length < 40 || !lines[1]?.startsWith(beats[i] + '（')) throw new Error(`第 ${i + 1} 段粗纲应先写剧情概况、再写「${beats[i]}（集数）：」：` + text.slice(0, 160))
-    if (!lines.some((l) => l.startsWith('节点：')) && i < beats.length - 1) throw new Error('粗纲应写节点：' + text)
+    if (lines[0].startsWith(beats[i]) || lines[0].length < 40 || !lines[1]?.startsWith(beats[i] + '（')) throw new Error(`第 ${i + 1} 段阶段总览应先写剧情概况、再写「${beats[i]}（集数）：」：` + text.slice(0, 160))
+    if (!lines.some((l) => l.startsWith('节点：')) && i < beats.length - 1) throw new Error('阶段总览应写节点：' + text)
   })
   // 写作开场只写集纲的第一句（本集主事件），不把整段塞进一行动作
   const lines = await evaluate(`import('/src/services/mock/writer.ts').then((m) => m.writeEpisode(JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((x) => x.id === '${projectId}'), 2, 0).lines.map((l) => l.zh))`)
@@ -666,14 +657,14 @@ await check('情节大纲：集纲写成一段（发生了什么 → 主角怎�
   const [head, next] = two.split(/[；。]/).map((x) => x.trim())
   if (!lines.some((l) => l.includes(head)) || lines.some((l) => l.includes(head) && l.includes(next))) throw new Error('开场应只写集纲第一句：' + JSON.stringify(lines.slice(0, 4)))
 })
-await check('情节大纲：只重新生成总纲时粗纲不动；单集重新生成集纲时同段其他集不动', async () => {
-  await patchStored(`(p) => { p.work.plot.overview = '旧总纲'; p.work.plot.phases[0] = '手改粗纲'; for (const o of p.work.outline) if (o.ep <= 3) o.event = '手改集纲' + o.ep }`, projectPath + '/stage/outline?ep=2')
+await check('情节大纲：只重新生成总纲时阶段总览不动；单集重新生成集纲时同段其他集不动', async () => {
+  await patchStored(`(p) => { p.work.plot.overview = '旧总纲'; p.work.plot.phases[0] = '手改阶段总览'; for (const o of p.work.outline) if (o.ep <= 3) o.event = '手改集纲' + o.ep }`, projectPath + '/stage/outline?ep=2')
   await waitFor(`document.querySelector('#outline-ep-2') && document.querySelector('[aria-label="重新生成第 2 集集纲"]')`, '?ep=2 定位到第 2 集所在的段')
   await t(`__t.click('main button', '重新生成总纲')`)
   await waitFor(dialog('重新生成总纲？'), '总纲确认')
   await t(`__t.click('[role=dialog] button', '重新生成')`)
   await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.plot.overview !== '旧总纲'`, '总纲已替换', 5000)
-  if ((await project()).work.plot.phases[0] !== '手改粗纲') throw new Error('重新生成总纲不应改动粗纲')
+  if ((await project()).work.plot.phases[0] !== '手改阶段总览') throw new Error('重新生成总纲不应改动阶段总览')
   const ov = (await project()).work.plot.overview
   const bg = (await arch()).background.trim()
   if (!ov.startsWith('【故事简介】') || ov.includes('【核心设定】') || !ov.split('\n')[0].includes(bg.slice(0, 20))) throw new Error('总览开头应是【故事简介】，用故事背景那段故事简介：' + ov.slice(0, 120))
@@ -687,24 +678,26 @@ await check('情节大纲：只重新生成总纲时粗纲不动；单集重新�
   const o = (await project()).work.outline
   if (o.find((x) => x.ep === 1).event !== '手改集纲1' || o.find((x) => x.ep === 3).event !== '手改集纲3') throw new Error('单集重新生成不应改动其他集')
 })
-await check('情节大纲：按总纲 → 粗纲 → 集纲的顺序生成；「付费卡点待审核」点一下跳到待审核的集', async () => {
+await check('情节大纲：按总纲 → 阶段总览 → 集纲的顺序生成；「付费卡点待审核」点一下跳到待审核的集', async () => {
   const before = (await project()).work
   const keep = { overview: before.plot.overview, phase1: before.plot.phases[1], approved: before.outline.filter((o) => o.approved).map((o) => o.ep) }
-  // 没有总纲：粗纲按钮禁用
+  // 没有总纲：阶段总览按钮禁用
   await patchStored(`(p) => { p.work.plot.overview = '' }`, projectPath + '/stage/outline?ep=1')
   await waitFor(`document.querySelector('#outline-phase-0')`, '第一段')
-  if (await t(`!!__t.find('main button', '生成总览与')`)) throw new Error('总览卡不应再有「总览与粗纲」合并按钮')
-  if (!(await t(`__t.find('#outline-phase-0 button', '重新生成粗纲').disabled`))) throw new Error('没有总纲时粗纲按钮应禁用')
-  // 有总纲、本段没有粗纲：本段集纲（整段与单集）都禁用
+  if (await t(`!!__t.find('main button', '生成总览与')`)) throw new Error('总览卡不应再有「总览与阶段总览」合并按钮')
+  if (!(await t(`__t.find('#outline-phase-0 button', '重新生成阶段总览').disabled`))) throw new Error('没有总纲时阶段总览按钮应禁用')
+  // 有总纲、本段没有阶段总览：本段集纲（整段与单集）都禁用
   await patchStored(`(p) => { p.work.plot.overview = ${JSON.stringify(keep.overview)}; p.work.plot.phases[0] = '' }`, projectPath + '/stage/outline?ep=1')
   await waitFor(`document.querySelector('[aria-label="重新生成第 1 集集纲"]')`, '第 1 集')
   if (!(await t(`document.querySelector('[aria-label="重新生成第 1 集集纲"]').disabled && [...document.querySelectorAll('#outline-phase-0 button')].find((b) => b.textContent.trim() === '重新生成集纲' && !b.getAttribute('aria-label')).disabled`)))
-    throw new Error('没有粗纲时本段集纲按钮应禁用')
-  await t(`__t.click('#outline-phase-0 button', '生成粗纲')`)
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.plot.phases[0].trim()`, '本段粗纲已生成', 5000)
+    throw new Error('没有阶段总览时本段集纲按钮应禁用')
+  // 11/5 标注 #88：「阶段粗纲」统一叫「阶段简介」；#94 再改叫「阶段总览」（页面、按钮、状态库）
+  if (await t(`__t.has('粗纲') || __t.has('阶段简介')`)) throw new Error('「粗纲」「阶段简介」应统一叫「阶段总览」')
+  await t(`__t.click('#outline-phase-0 button', '生成阶段总览')`)
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.plot.phases[0].trim()`, '阶段总览已生成', 5000)
   const plot = (await project()).work.plot
-  if (plot.phases[1] !== keep.phase1 || plot.overview !== keep.overview) throw new Error('生成本段粗纲不应改动总纲与其他段')
-  await waitFor(`!document.querySelector('[aria-label="重新生成第 1 集集纲"]').disabled`, '有粗纲后集纲可生成')
+  if (plot.phases[1] !== keep.phase1 || plot.overview !== keep.overview) throw new Error('生成阶段总览不应改动总纲与其他段')
+  await waitFor(`!document.querySelector('[aria-label="重新生成第 1 集集纲"]').disabled`, '有阶段总览后集纲可生成')
   // 付费卡点待审核：依次跳到待审核的集
   await patchStored(`(p) => { for (const o of p.work.outline) if (p.rhythm.paywalls.includes(o.ep)) o.approved = false }`, projectPath + '/stage/outline')
   const cur = await project()
@@ -745,23 +738,6 @@ await check('情节大纲：大纲检查放在状态库的「检查」标签页�
   if (!wasOpen) await evaluate(`document.querySelector('[aria-label=收起剧本状态库]').click()`)
   await patchStored(`(p) => { for (const o of p.work.outline) o.approved = ${JSON.stringify(keep)}.includes(o.ep) }`, projectPath + '/stage/outline')
 })
-await fsCheck('伏笔线索：AI 建议先在弹窗里勾选，确定后才录入', async () => {
-  await goto(projectPath + '/stage/foreshadow')
-  await t(`__t.click('button', 'AI 建议伏笔与线索')`)
-  await waitFor(dialog('AI 建议的伏笔与线索'), '建议弹窗', 5000)
-  if ((await project()).work.foreshadows.length) throw new Error('弹窗打开时不应直接录入')
-  if (!(await t(`__t.find('[role=dialog] button', '确定录入').disabled`))) throw new Error('未勾选时「确定录入」应禁用')
-  const boxes = `[...document.querySelectorAll('[role=dialog] input[aria-label^="选择："]')]`
-  if ((await evaluate(`${boxes}.length`)) < 3) throw new Error('建议少于 3 条')
-  await evaluate(`${boxes}.slice(0, 2).forEach((b) => b.click())`)
-  await waitFor(`document.body.innerText.includes('已选 2')`, '已选 2')
-  await sleep(300)
-  await shot('foreshadow-suggest')
-  await t(`__t.click('[role=dialog] button', '确定录入 2 条')`)
-  await waitFor(`document.body.innerText.includes('已录入 2 条计划')`, '录入 toast')
-  if ((await project()).work.foreshadows.length !== 2) throw new Error('应只录入勾选的 2 条')
-})
-
 /* -------------------------------- 质检交付 -------------------------------- */
 
 await check('质检交付：没有定稿时不能质检', async () => {
@@ -987,21 +963,15 @@ await check('状态库：审阅第 1 集时，本集看第 1 集结束时的状�
   await waitFor(`${panel}.querySelector('select[aria-label=选择阶段]').value === '2'`, '下拉跳到第 3 段')
   await panelTab('本集')
 })
-await check(SHOW_FORESHADOW ? '状态库：伏笔环节看写作进度上的当前集；可收起、可打开完整视图' : '状态库：没有伏笔与线索、需处理（伏笔这一步先拿掉）；可收起、可打开完整视图', async () => {
-  if (SHOW_FORESHADOW) {
-    await goto(projectPath + '/stage/foreshadow')
-    await waitFor(`${panel}?.querySelector('input[aria-label=选择集]')?.value === '7'`, '伏笔环节当前集')
-    if (!(await panelText()).includes('伏笔与线索')) throw new Error('缺少伏笔信息')
-  } else {
-    await goto(projectPath + '/stage/outline')
-    await waitFor(panel, '侧栏')
-    // 情节大纲默认选中阶段：本阶段 / 全剧
-    for (const tab of ['本阶段', '全剧']) {
-      await panelTab(tab)
-      await sleep(150)
-      const text = await panelText()
-      if (text.includes('伏笔与线索') || text.includes('需处理')) throw new Error(`侧栏「${tab}」不应再有伏笔与线索、需处理：` + text.slice(0, 200))
-    }
+await check('状态库：没有伏笔与线索、需处理（伏笔这一步已删）；可收起、可打开完整视图', async () => {
+  await goto(projectPath + '/stage/outline')
+  await waitFor(panel, '侧栏')
+  // 情节大纲默认选中阶段：本阶段 / 全剧
+  for (const tab of ['本阶段', '全剧']) {
+    await panelTab(tab)
+    await sleep(150)
+    const text = await panelText()
+    if (text.includes('伏笔与线索') || text.includes('需处理')) throw new Error(`侧栏「${tab}」不应再有伏笔与线索、需处理：` + text.slice(0, 200))
   }
   await t(`document.querySelector('[aria-label=收起剧本状态库]').click()`)
   await waitFor(`!${panel} && document.querySelector('[aria-label=展开剧本状态库]')`, '收起')
@@ -1014,10 +984,10 @@ await check(SHOW_FORESHADOW ? '状态库：伏笔环节看写作进度上的当�
   await t(`__t.click('aside[aria-label=剧本状态库] a', '打开完整状态库')`)
   await waitFor(`location.pathname === '${projectPath}/state' && document.body.innerText.includes('剧本状态库 · 完整视图') && document.body.innerText.includes('定稿日志')`, '完整视图')
   if (await evaluate(`!!${panel}`)) throw new Error('完整视图页不应显示侧栏')
-  if (!SHOW_FORESHADOW && (await t(`__t.has('伏笔与叙事线索进度') || __t.has('伏笔与线索')`))) throw new Error('完整视图不应再有伏笔进度')
+  if (await t(`__t.has('伏笔与叙事线索进度') || __t.has('伏笔与线索')`)) throw new Error('完整视图不应再有伏笔进度')
 })
 
-await check('状态库：草稿页按这份草稿显示本集，注明不计入全剧；写作前检查只在分集蓝图的「检查」页', async () => {
+await check('状态库：草稿页按这份草稿显示本集，注明不计入全剧；写作前检查只在逐集蓝图的「检查」页', async () => {
   await patchStored(`async (p) => {
     const { writeEpisode } = await import('/src/services/mock/writer.ts')
     const d = writeEpisode(p, 7, 0)
@@ -1025,7 +995,7 @@ await check('状态库：草稿页按这份草稿显示本集，注明不计入�
     p.work.drafts.push({ id: 'e2e-draft-7', ep: 7, version: 1, title: d.title, lines: d.lines, status: 'draft', translated: false, states: d.states, reviews: [], notes: [], createdAt: at, updatedAt: at })
   }`, projectPath + '/stage/script/draft/e2e-draft-7')
   await waitFor(`${panel}?.innerText.includes('草稿_v1 · 未定稿，不计入全剧状态')`, '草稿依据')
-  if ((await panelText()).includes('写作前检查')) throw new Error('状态库里不应再有写作前检查，它在分集蓝图的「检查」页')
+  if ((await panelText()).includes('写作前检查')) throw new Error('状态库里不应再有写作前检查，它在逐集蓝图的「检查」页')
   await sleep(300)
   await shot('state-panel-draft')
   await panelTab('全剧')
@@ -1591,138 +1561,6 @@ await check('视频转剧本：没有 AI 校对，改成人工校对——选一
   await patchStored(`async (p) => { p.mode = 'original'; p.work.video = null; p.models = {}; p.work.source = p.e2eSource; p.work.breakdown = p.e2eBreakdown; delete p.e2eSource; delete p.e2eBreakdown }`, projectPath + '/settings')
 })
 
-await check('故事架构新版 Demo：单独一页，从一个想法 / 固定格式出 1 版或 3 版整剧骨架；选定一版后由小到大逐项讲清楚——写意见只重写这一项、可切回旧版本；前面改过提醒后面复核；不碰正式的故事架构', async () => {
-  const before = JSON.stringify((await project()).work.architecture)
-  // 故事架构页上的 Demo 入口暂时隐藏，按地址打开
-  await goto(projectPath + '/stage/architecture')
-  await waitFor(`document.querySelector('#arch-items')`, '故事架构页')
-  if (await evaluate(`!!document.querySelector('[data-lab-entry], [data-chat-entry]')`)) throw new Error('Demo 入口应先隐藏')
-  await goto(projectPath + '/lab/architecture')
-  await waitFor(`document.querySelector('[data-arch-lab]')`, '打开新版 Demo')
-  // 固定格式：填空拼出核心设定
-  await t(`__t.click('[data-arch-lab] button', '固定格式')`)
-  await waitFor(`document.querySelector('input[aria-label=主角是谁]')`, '固定格式填空')
-  await t(`__t.type(document.querySelector('input[aria-label=主角是谁]'), '被当众退婚的落魄千金')`)
-  await t(`__t.type(document.querySelector('input[aria-label=遭遇什么]'), '家族破产')`)
-  await t(`__t.type(document.querySelector('input[aria-label=必须做什么]'), '在 30 天内夺回公司')`)
-  await until(`__t.has('拼出来是：被当众退婚的落魄千金，遭遇家族破产，必须在 30 天内夺回公司')`, '拼出核心设定')
-  await t(`__t.click('[data-arch-lab] button', '出 3 版对比')`)
-  await t(`__t.click('[data-arch-lab] button', 'AI 生成整部剧骨架')`)
-  await waitFor(`document.querySelectorAll('[data-lab-candidate]').length === 3`, '3 版骨架', 6000)
-  const titles = ['核心设定', '故事简介', '故事背景', '世界观', '金手指 / 核心卖点', '主角', '节奏框架', '写作风格与要求']
-  const card = await evaluate(`document.querySelectorAll('[data-lab-candidate]')[1].innerText`)
-  if (titles.some((x) => !card.includes(x))) throw new Error('每一版都要有整部剧的八项：' + card.slice(0, 200))
-  if (!(await evaluate(`document.querySelector('[data-arch-lab]').innerText.includes('定这一版') && [...document.querySelectorAll('[data-arch-lab] button')].find((b) => b.textContent.includes('定这一版')).disabled`))) throw new Error('没选之前不能定')
-  await sleep(200)
-  await shot('arch-lab-candidates')
-  await evaluate(`document.querySelectorAll('[data-lab-candidate]')[1].click()`)
-  await t(`__t.click('[data-arch-lab] button', '定这一版，开始逐项讨论')`)
-  await waitFor(`document.querySelector('[data-lab-item=core][data-status=active]')`, '从核心设定开始讨论')
-  if (await evaluate(`document.querySelectorAll('[data-lab-item][data-status=active]').length !== 1`)) throw new Error('同一时间只讨论一项')
-  // 写意见只重写这一项：多一版、说明写明已定的不动；可以切回旧版本
-  const core1 = await evaluate(`document.querySelector('textarea[aria-label=核心设定]').value`)
-  await t(`__t.type(document.querySelector('textarea[aria-label=核心设定修改意见]'), '反派要更狠一点')`)
-  await t(`__t.click('[data-lab-item=core] button', 'AI 按意见重写')`)
-  await waitFor(`document.querySelector('[data-lab-item=core]').innerText.includes('共 2 版')`, '按意见重写出第 2 版', 5000)
-  const core2 = await evaluate(`document.querySelector('textarea[aria-label=核心设定]').value`)
-  if (core2 === core1 || !core2.includes('反派要更狠一点')) throw new Error('应按意见改写核心设定：' + core2)
-  if (!(await evaluate(`document.querySelector('[data-lab-notes]').innerText.includes('已按意见改写')`))) throw new Error('重写后写明改了什么')
-  await t(`__t.click('[data-lab-item=core] button', 'v1')`)
-  await waitFor(`document.querySelector('textarea[aria-label=核心设定]').value === ${JSON.stringify(core1)}`, '切回 v1')
-  await t(`__t.click('[data-lab-item=core] button', 'v2')`)
-  // 讲好一项再说下一项
-  await t(`__t.click('[data-lab-item=core] button', '这一项定了，下一项')`)
-  await waitFor(`document.querySelector('[data-lab-item=core][data-status=done]') && document.querySelector('[data-lab-item=synopsis][data-status=active]')`, '核心设定定了，接着故事简介')
-  for (const k of ['synopsis', 'background', 'world', 'goldenFinger', 'hero', 'rhythm', 'style']) {
-    await waitFor(`document.querySelector('[data-lab-item=${k}][data-status=active]')`, '讨论 ' + k)
-    await evaluate(`[...document.querySelectorAll('[data-lab-item=${k}] button')].find((b) => b.textContent.includes('这一项定了')).click()`)
-  }
-  await waitFor(`document.querySelector('#lab-done pre')?.innerText.startsWith('【核心设定】')`, '八项都定了，出导出预览')
-  const exported = await evaluate(`document.querySelector('#lab-done pre').innerText`)
-  if (!exported.includes(core2) || !exported.includes('【节奏框架】') || !exported.includes('付费卡点')) throw new Error('导出预览应直接写出核心设定那一段话与节奏框架：' + exported.slice(0, 200))
-  // 前面已定的改过：后面已定的提醒复核
-  await evaluate(`[...document.querySelectorAll('[data-lab-item=core] button')].find((b) => b.textContent === '重新讨论').click()`)
-  await waitFor(`document.querySelector('[data-lab-item=core][data-status=active]')`, '重新讨论核心设定')
-  await t(`__t.click('[data-lab-item=core] button', 'AI 换一种写法')`)
-  await waitFor(`document.querySelector('[data-lab-item=core]').innerText.includes('共 3 版')`, '换一种写法', 5000)
-  if (!(await evaluate(`document.querySelector('[data-lab-notes]').innerText.includes('已对照已定的 7 项')`))) throw new Error('重写时写明已定的项没动')
-  await evaluate(`[...document.querySelectorAll('[data-lab-item=core] button')].find((b) => b.textContent.includes('这一项定了')).click()`)
-  await waitFor(`document.querySelector('[data-lab-item=style]')?.innerText.includes('「核心设定」改过')`, '后面已定的提醒复核')
-  await t(`__t.click('[data-lab-item=style] button', '看过了，不用改')`)
-  await waitFor(`!document.querySelector('[data-lab-item=style]').innerText.includes('「核心设定」改过')`, '清掉提醒')
-  await sleep(200)
-  await shot('arch-lab-items')
-  // 刷新后进度还在；正式的故事架构没被碰过
-  await goto(projectPath + '/lab/architecture')
-  await waitFor(`document.querySelector('#lab-done')`, '刷新后进度还在')
-  if (JSON.stringify((await project()).work.architecture) !== before) throw new Error('Demo 不能读写正式的故事架构')
-  await t(`__t.click('[data-arch-lab] button', '重新开始')`)
-  await t(`__t.click('[role=dialog] button', '重新开始')`)
-  await waitFor(`!document.querySelector('[data-lab-item]')`, '重新开始后清空')
-})
-
-await check('改写方案 · 多轮对话 Demo：单独一页；先给方向、可换一批，选定后按引导一项一项聊；每轮只改提到的项，锁定的不动（要改先解锁）；每改一次存一版、可回到上一版；右边可直接改字；不碰正式的故事架构', async () => {
-  const before = JSON.stringify((await project()).work.architecture)
-  await goto(projectPath + '/lab/rewrite')
-  await waitFor(`document.querySelector('[data-rewrite-chat]')`, '打开多轮对话 Demo')
-  if (!(await evaluate(`document.querySelector('[data-chat-context]').innerText.includes('每轮带给 AI')`))) throw new Error('要写明每轮带给 AI 什么')
-  const state = () => evaluate(`JSON.parse(localStorage.getItem('zhiying.rewriteChat')).state.chats['${projectId}']`)
-  const idle = (label) => waitFor(`!document.querySelector('[data-chat-typing]')`, label, 6000)
-  const reply = async (label) => { await t(`__t.click('[data-chat-options] button', ${JSON.stringify(label)})`); await sleep(50); await idle('回复：' + label) }
-  const lastAi = `[...document.querySelectorAll('[data-chat-msg=ai]')].at(-1)`
-  await t(`__t.click('[data-rewrite-chat] button', '先给我几个方向')`)
-  await waitFor(`document.querySelectorAll('[data-chat-direction]').length === 3`, '三个方向', 6000)
-  await reply('都不对，换一批')
-  await waitFor(`document.querySelectorAll('[data-chat-msg=ai]').length === 2 && ${lastAi}.querySelectorAll('[data-chat-direction]').length === 3`, '换一批', 6000)
-  if (!(await evaluate(`[...document.querySelector('[data-chat-msg=ai] ').querySelectorAll('[data-chat-direction] button')].every((b) => b.disabled)`))) throw new Error('旧的方向不能再点，只有最新一条能操作')
-  await evaluate(`${lastAi}.querySelector('[data-chat-direction] button').click()`)
-  await waitFor(`document.querySelector('[data-plan-field=logline]')`, '方案 v1', 6000)
-  await idle('方案 v1')
-  let s = await state()
-  if (s.versions.length !== 1 || s.topic !== 'logline') throw new Error('选定方向后出 v1，从核心设定聊起：' + JSON.stringify({ v: s.versions.length, topic: s.topic }))
-  // 点引导里的现成回答：只改核心设定，回复里列出改前改后
-  const v1 = s.versions[0].fields
-  await reply('核心设定再狠一点')
-  s = await state()
-  const changed = Object.keys(v1).filter((k) => s.versions.at(-1).fields[k] !== v1[k])
-  if (s.versions.length !== 2 || changed.join() !== 'logline') throw new Error('只改核心设定：' + changed)
-  if (!(await evaluate(`!!${lastAi}.querySelector('[data-chat-changes]')`))) throw new Error('回复里要列出改前改后')
-  await reply('行，锁定「核心设定」')
-  s = await state()
-  if (!s.locks.includes('logline') || s.topic !== 'hero') throw new Error('锁定后接着聊主角：' + JSON.stringify({ locks: s.locks, topic: s.topic }))
-  // 自己打字点名锁定的项：不动，问要不要解锁
-  const box = `document.querySelector('textarea[aria-label="对 AI 说"]')`
-  await t(`__t.type(${box}, '核心设定加一句：她其实早就知道丈夫也是重生的')`)
-  await t(`__t.enter(${box})`)
-  await sleep(50)
-  await idle('点名锁定的项')
-  await waitFor(`${lastAi}.innerText.includes('锁定了，我没动')`, '锁定的不动')
-  if ((await state()).versions.at(-1).fields.logline.includes('早就知道')) throw new Error('锁定的项不该被改')
-  await reply('解锁「核心设定」，按刚才说的改')
-  s = await state()
-  if (s.locks.includes('logline') || !s.versions.at(-1).fields.logline.endsWith('她其实早就知道丈夫也是重生的。')) throw new Error('解锁后按刚才的话改：' + s.versions.at(-1).fields.logline)
-  // 回到上一版：存成新的一版
-  const n = s.versions.length
-  await reply('回到上一版')
-  s = await state()
-  if (s.versions.length !== n + 1 || s.versions.at(-1).fields.logline !== s.versions[n - 2].fields.logline) throw new Error('回到上一版应存为新的一版')
-  // 右边直接改字：存一版，对话里留旁注
-  await t(`__t.type(document.querySelector('[data-plan-field=ending] textarea'), '男女主各自成全，开放式结局。')`)
-  await t(`__t.blur(document.querySelector('[data-plan-field=ending] textarea'))`)
-  await waitFor(`JSON.parse(localStorage.getItem('zhiying.rewriteChat')).state.chats['${projectId}'].versions.at(-1).fields.ending === '男女主各自成全，开放式结局。'`, '直接改字存一版')
-  if (!(await evaluate(`[...document.querySelectorAll('[data-chat-note]')].some((x) => x.innerText.includes('你直接改了「结局走向」'))`))) throw new Error('直接改字要在对话里留旁注')
-  // 锁定的项右边只读
-  await evaluate(`document.querySelector('[data-plan-field=ending] [aria-label=锁定结局走向]').click()`)
-  await waitFor(`document.querySelector('[data-plan-field=ending] textarea').readOnly`, '锁定后只读')
-  await sleep(300)
-  await shot('rewrite-chat')
-  if (JSON.stringify((await project()).work.architecture) !== before) throw new Error('Demo 不应改动正式的故事架构')
-  // 刷新后对话和方案都还在
-  await goto(projectPath + '/lab/rewrite')
-  await waitFor(`document.querySelectorAll('[data-chat-msg]').length > 6 && document.querySelector('[data-plan-field=ending]')?.dataset.locked`, '刷新后对话还在')
-  await evaluate(`localStorage.removeItem('zhiying.rewriteChat')`)
-})
-
 await check('我的剧本：页头「更新日志」打开字段变更日志——按日期列出新增 / 删除 / 必填改动与页面改动，可复制给开发', async () => {
   await goto('/projects')
   await waitFor(`document.querySelector('[data-changelog-open]')`, '更新日志按钮')
@@ -1833,17 +1671,11 @@ await check('AI 按钮：草稿页顺序为 重新生成 → AI 润色 → AI �
   await patchStored(`(p) => { p.work.drafts = ${JSON.stringify(p0.work.drafts)}; p.work.architecture = ${JSON.stringify(p0.work.architecture)} }`, projectPath)
 })
 
-await check(`必做 / 可跳过：每一步页头标明能不能跳；${SHOW_FORESHADOW ? '伏笔与线索可以整步跳过并直达下一步；' : ''}题材下拉分组并排、可直接去掉已选`, async () => {
+await check('必做 / 可跳过：每一步页头标明能不能跳；题材下拉分组并排、可直接去掉已选', async () => {
   await goto(projectPath + '/stage/architecture')
   await waitFor(`document.querySelector('[data-stage-need=must] [title]')?.title.includes('只有核心设定必填')`, '故事架构必做，只有核心设定必填')
   await goto(projectPath + '/stage/outline')
   await waitFor(`document.querySelector('[data-stage-need=quick]')?.innerText.includes('必做 · 可一键')`, '情节大纲必做可一键')
-  if (SHOW_FORESHADOW) {
-    await goto(projectPath + '/stage/foreshadow')
-    await waitFor(`document.querySelector('[data-stage-need=skip]')?.innerText.includes('可跳过')`, '伏笔可跳过')
-    await t(`__t.click('[data-stage-need=skip] a', '跳过这一步')`)
-    await waitFor(`location.pathname === '${projectPath}/stage/script'`, '直达逐集剧本')
-  }
   await goto(projectPath + '/stage/architecture')
   await evaluate(`document.querySelectorAll('[aria-haspopup=listbox]')[0].click()`)
   await waitFor(`document.querySelector('[role=listbox]')`, '题材下拉')
@@ -1862,7 +1694,7 @@ await check(`必做 / 可跳过：每一步页头标明能不能跳；${SHOW_FOR
   await patchStored(`(p) => { p.genres = ${JSON.stringify(g0)} }`, projectPath)
 })
 
-/* ---------------------------------- 版本二 ---------------------------------- */
+/* --------------------------------- 流程引导 --------------------------------- */
 
 const btnClass = (label, scope = 'document') => `([...${scope}.querySelectorAll('button')].find((b) => b.textContent.trim() === '${label}')?.className ?? '')`
 /** 元素顶部已滚到视口上部；最后一个板块不够长时，滚到底且已露出也算 */
@@ -1873,129 +1705,6 @@ const nearTop = (sel) => `(() => {
   const m = document.querySelector('main')
   return m.scrollHeight - m.clientHeight - m.scrollTop < 2 && r.top < innerHeight - 120
 })()`
-
-/* -------------------------------- 定稿事件 -------------------------------- */
-
-// 新建一条计划，标题取自第 ep 集定稿里的一句，保证 AI 能在定稿里找到它
-const injectPlan = (id, ep, plantEp, path) =>
-  patchStored(`async (p) => {
-    const s = p.work.scripts.find((x) => x.ep === ${ep})
-    const raw = s.lines.filter((l) => l.kind !== 'scene' && l.zh.replace(/\s/g, '').length >= 8)[2].zh.replace(/\s/g, '')
-    p.work.foreshadows = p.work.foreshadows.filter((f) => f.id !== '${id}')
-    p.work.foreshadows.push({ id: '${id}', type: '关键道具', title: raw.slice(2, 6), content: '', plantEp: ${plantEp}, payoffEp: 10, events: [] })
-  }`, path)
-const planOf = async (id) => (await project()).work.foreshadows.find((f) => f.id === id)
-const eventTotal = async () => (await project()).work.foreshadows.reduce((n, f) => n + f.events.length, 0)
-
-await fsCheck('伏笔线索：「确认定稿事件」在卡片里展开；证据须逐字摘自定稿，AI 识别填入后由人保存', async () => {
-  await injectPlan('e2e-fs1', 2, 2, projectPath + '/stage/foreshadow')
-  const card = `document.getElementById('plan-e2e-fs1')`
-  await waitFor(card, '计划卡片')
-  await t(`__t.click('#plan-e2e-fs1 button', '确认定稿事件')`)
-  await waitFor(`${card}.querySelector('[data-event-form]') && ${card}.querySelector('button[aria-expanded=true]')`, '卡片内展开表单')
-  await t(`__t.type(document.querySelector('#plan-e2e-fs1 [aria-label=证据原文]'), '这句话不在定稿里')`)
-  await t(`__t.type(document.querySelector('#plan-e2e-fs1 [aria-label=确认理由]'), '测试')`)
-  await waitFor(`${card}.innerText.includes('定稿里没有这段原文')`, '证据逐字校验')
-  if (!(await t(`__t.find('#plan-e2e-fs1 button', '保存事件').disabled`))) throw new Error('证据不在定稿里时不能保存')
-  await t(`__t.click('#plan-e2e-fs1 button', 'AI 识别定稿事件')`)
-  await until(`!__t.find('#plan-e2e-fs1 button', '保存事件').disabled`, 'AI 填入证据与理由', 5000)
-  if ((await planOf('e2e-fs1')).events.length) throw new Error('AI 识别后不应直接记入')
-  await evaluate(`${card}.scrollIntoView({ block: 'center' })`)
-  await sleep(300)
-  await shot('foreshadow-confirm')
-  await t(`__t.click('#plan-e2e-fs1 button', '保存事件')`)
-  await waitFor(`!${card}.querySelector('[data-event-form]')`, '保存后收起')
-  const [ev] = (await planOf('e2e-fs1')).events
-  if (!ev?.reason) throw new Error('事件应带确认理由')
-  if (!(await project()).work.scripts.find((s) => s.ep === ev.ep).lines.some((l) => l.zh.includes(ev.text))) throw new Error('证据应逐字来自所选定稿')
-  if (!(await evaluate(`${card}.innerText.includes('理由：')`))) throw new Error('卡片应显示确认理由')
-})
-
-await fsCheck('伏笔线索：AI 批量确认定稿先在弹窗里勾选，确认后才记入', async () => {
-  await injectPlan('e2e-fs2', 3, 3, projectPath + '/stage/foreshadow')
-  const title = (await planOf('e2e-fs2')).title
-  const before = await eventTotal()
-  await until(`!__t.find('button', 'AI 批量确认定稿').disabled`, '批量按钮可用')
-  await t(`__t.click('button', 'AI 批量确认定稿')`)
-  await waitFor(dialog('AI 批量确认定稿事件'), '批量弹窗', 5000)
-  if ((await eventTotal()) !== before) throw new Error('弹窗打开时不应直接记入')
-  const boxes = `[...document.querySelectorAll('[role=dialog] input[type=checkbox]')]`
-  if (!(await evaluate(`${boxes}.some((b) => b.getAttribute('aria-label').startsWith('确认：${title}'))`))) throw new Error('批量结果缺少新计划')
-  const n = await evaluate(`${boxes}.length`)
-  if (n > 1) await evaluate(`${boxes}.find((b) => !b.getAttribute('aria-label').startsWith('确认：${title}')).click()`)
-  const want = n > 1 ? n - 1 : n
-  await sleep(200)
-  await shot('foreshadow-batch')
-  await t(`__t.click('[role=dialog] button', '确认 ${want} 个事件')`)
-  await waitFor(`!document.querySelector('[role=dialog]')`, '关闭弹窗')
-  if ((await eventTotal()) !== before + want) throw new Error('应只记入勾选的事件')
-  if (!(await planOf('e2e-fs2')).events.length) throw new Error('新计划应记入事件')
-})
-
-await fsCheck('状态库：计划在本集埋设的伏笔，本集定稿后可在侧栏就地确认；未定稿时提示定稿后可确认', async () => {
-  await injectPlan('e2e-fs3', 4, 4, projectPath + '/stage/script/final/4')
-  const title = (await planOf('e2e-fs3')).title
-  if (!(await evaluate(`!!${panel}`))) await t(`document.querySelector('[aria-label=展开剧本状态库]').click()`)
-  await waitFor(panel, '状态库展开')
-  await t(`__t.click('aside [role=tab]', '状态库')`)
-  await panelTab('本集')
-  const item = `[...document.querySelectorAll('aside[aria-label=剧本状态库] li')].find((li) => li.innerText.includes('${title}') && li.innerText.includes('还没埋设'))`
-  await waitFor(item, '定稿集里计划埋设、还没确认')
-  await evaluate(`[...${item}.querySelectorAll('button')].find((b) => b.textContent === '确认定稿').click()`)
-  await waitFor(`${item}?.querySelector('[data-event-form]')`, '侧栏展开确认表单')
-  if (!(await evaluate(`${item}.querySelector('[aria-label=定稿章节]').value === '4' && ${item}.querySelector('[aria-label=事件类型]').value === 'plant'`))) throw new Error('应预选第 4 集、埋设')
-  await evaluate(`[...${item}.querySelectorAll('button')].find((b) => b.textContent.includes('AI 识别定稿事件')).click()`)
-  await waitFor(`!![...${item}.querySelectorAll('button')].find((b) => b.textContent === '保存事件' && !b.disabled)`, 'AI 填入', 5000)
-  await sleep(200)
-  await shot('state-panel-confirm')
-  await evaluate(`[...${item}.querySelectorAll('button')].find((b) => b.textContent === '保存事件').click()`)
-  await waitFor(`${panel}.innerText.includes('本集已埋设')`, '侧栏显示本集已埋设')
-  const [ev] = (await planOf('e2e-fs3')).events
-  if (ev?.ep !== 4 || ev.kind !== 'plant') throw new Error('应记为第 4 集埋设')
-  // 还没定稿的集：按钮提示定稿后可确认
-  await patchStored(`async (p) => { p.work.foreshadows.push({ id: 'e2e-fs4', type: '关键道具', title: '未定稿道具', content: '', plantEp: 7, payoffEp: 10, events: [] }) }`, projectPath + '/stage/foreshadow')
-  await waitFor(`${panel}?.querySelector('input[aria-label=选择集]')?.value === '7' && ${panel}.innerText.includes('未定稿道具') && ${panel}.innerText.includes('本集需埋设')`, '第 7 集计划')
-  if (!(await evaluate(`[...document.querySelectorAll('aside[aria-label=剧本状态库] button')].some((b) => b.textContent === '定稿后可确认' && b.disabled)`))) throw new Error('未定稿的集应提示定稿后可确认')
-})
-
-await fsCheck('状态库：伏笔超期不只提醒——可 AI 确认定稿、改期或不要了', async () => {
-  await injectPlan('e2e-late', 2, 1, projectPath + '/stage/script/final/4')
-  const title = (await planOf('e2e-late')).title
-  if (!(await evaluate(`!!${panel}`))) await t(`document.querySelector('[aria-label=展开剧本状态库]').click()`)
-  await waitFor(panel, '状态库展开')
-  await t(`__t.click('aside [role=tab]', '状态库')`)
-  await panelTab('本集')
-  const item = `[...document.querySelectorAll('aside[aria-label=剧本状态库] li')].find((li) => li.innerText.includes('${title}') && li.innerText.includes('已超出'))`
-  await waitFor(item, '超期提醒')
-  const btn = (label) => `[...${item}.querySelectorAll('button')].find((b) => b.textContent.trim() === '${label}')`
-  await evaluate(`${btn('处理')}.click()`)
-  await waitFor(`${item}?.querySelector('[data-late-fix]')?.innerText.includes('还要吗')`, '展开超期处理')
-  // AI 确认定稿：打开即识别，填进表单后由人保存
-  await evaluate(`${btn('AI 确认定稿')}.click()`)
-  await waitFor(`!!${btn('保存事件')} && !${btn('保存事件')}.disabled`, 'AI 填入定稿事件', 5000)
-  await sleep(200)
-  await shot('state-panel-late-fix')
-  // 还要，改期：改到还没定稿的集
-  await evaluate(`${btn('还要，改期')}.click()`)
-  const to = await evaluate(`${item}.querySelector('[aria-label=改期埋设集]').value`)
-  const written = Math.max(...(await project()).work.scripts.map((x) => x.ep))
-  if (Number(to) !== written + 1) throw new Error(`改期应从第 ${written + 1} 集起，实际 ${to}`)
-  await evaluate(`${btn('保存')}.click()`)
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.foreshadows.find((f) => f.id === 'e2e-late').plantEp === ${to}`, '改期写回')
-  const moved = await planOf('e2e-late')
-  if (moved.payoffEp <= moved.plantEp) throw new Error('回收应晚于埋设')
-  // 不要了：确认后删除计划
-  await injectPlan('e2e-late2', 2, 1, projectPath + '/stage/script/final/4')
-  const title2 = (await planOf('e2e-late2')).title
-  const item2 = `[...document.querySelectorAll('aside[aria-label=剧本状态库] li')].find((li) => li.innerText.includes('${title2}') && li.innerText.includes('已超出'))`
-  await waitFor(item2, '第二条超期提醒')
-  await evaluate(`[...${item2}.querySelectorAll('button')].find((b) => b.textContent.trim() === '处理').click()`)
-  await waitFor(`${item2}?.querySelector('[data-late-fix]')`, '展开')
-  await evaluate(`[...${item2}.querySelectorAll('button')].find((b) => b.textContent.trim() === '不要了').click()`)
-  await waitFor(dialog('不要这条计划了？'), '删除前确认')
-  await t(`__t.click('[role=dialog] button', '删除')`)
-  await waitFor(`!JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.foreshadows.some((f) => f.id === 'e2e-late2')`, '计划已删除')
-})
 
 await check('正文章节：侧栏并成「本集要点 / 状态库 / 标注」标签页；要点不显示 Markdown 符号、不重复人物状态；定稿也能标注', async () => {
   // 要点存在蓝图上：给第 4 集补一份带 Markdown 的要点（与 AI 提炼的格式一致）
@@ -2015,8 +1724,8 @@ await check('正文章节：侧栏并成「本集要点 / 状态库 / 标注」�
   await waitFor(`document.querySelector('[data-panel-tab=points] [data-points]')`, '本集要点')
   const text = await evaluate(`document.querySelector('[data-panel-tab=points]').innerText`)
   for (const mark of ['##', '| ', '- [', '**']) if (text.includes(mark)) throw new Error('要点不应显示 Markdown 符号 ' + mark)
-  for (const s of ['剧情节点', '触发', '真相揭晓', '角色动态', '埃琳娜', '起了疑心', ...(SHOW_FORESHADOW ? ['伏笔推进候选'] : [])]) if (!text.includes(s)) throw new Error('本集要点页缺少 ' + s)
-  if (!SHOW_FORESHADOW && text.includes('伏笔推进候选')) throw new Error('伏笔这一步拿掉时，本集要点不应有伏笔推进候选')
+  for (const s of ['剧情节点', '触发', '真相揭晓', '角色动态', '埃琳娜', '起了疑心']) if (!text.includes(s)) throw new Error('本集要点页缺少 ' + s)
+  if (text.includes('伏笔推进候选')) throw new Error('本集要点不应有伏笔推进候选')
   // 人物状态与要点里的「角色动态」、状态库标签页重复，不再单列；标签名也不在页内再重复一遍
   if (text.includes('人物状态') || text.startsWith('本集要点')) throw new Error('本集要点页不应再重复人物状态 / 标题')
   await sleep(200)
@@ -2045,13 +1754,14 @@ await check('页面底部不再有「版本二 · 交互优化 / 改动说明」
   if (!next || next.right > 40 || !next.inActions) throw new Error('去下一步应在底部条最右：' + JSON.stringify(next))
 })
 
-await check('版本二：导航显示环节状态与进度；概览「继续工作」指到具体的集，「待处理」汇总且不重复，可标记已处理并恢复', async () => {
+await check('导航显示环节状态与进度；概览「继续工作」指到具体的集，「待处理」汇总且不重复，可标记已处理并恢复', async () => {
   // 第 7 集只留一份还没审过的草稿
   await patchStored(`async (p) => {
     const { writeEpisode } = await import('/src/services/mock/writer.ts')
     const d = writeEpisode(p, 7, 0)
     const at = new Date().toISOString()
     p.work.drafts = p.work.drafts.filter((x) => x.ep !== 7)
+    p.work.blueprints = p.work.blueprints.filter((x) => x.ep !== 7)
     p.work.drafts.push({ id: 'v2-draft-7', ep: 7, version: 1, title: d.title, lines: d.lines, status: 'draft', translated: false, states: d.states, reviews: [], notes: [], createdAt: at, updatedAt: at })
   }`, projectPath)
   const total = (await project()).spec.totalEpisodes
@@ -2090,69 +1800,62 @@ await check('版本二：导航显示环节状态与进度；概览「继续工�
   await waitFor(`location.pathname === '${projectPath}/stage/script/draft/v2-draft-7'`, '直达草稿')
 })
 
-await check('版本二：草稿页按审稿状态推荐主操作——未审 → 审稿，审完 → 修稿或定稿', async () => {
+await check('草稿页按审稿状态推荐主操作——未审 → 审稿，审完 → 修稿或定稿', async () => {
   const advice = `(document.querySelector('[data-v2=advice]')?.innerText ?? '')`
   await waitFor(`${advice}.includes('建议下一步：AI 审稿')`, '建议审稿')
   if (!(await evaluate(`${btnClass('AI 审稿')}.includes('bg-brand-600')`))) throw new Error('AI 审稿应为主按钮')
   if (!(await evaluate(`${btnClass('AI 修稿')}.includes('bg-white')`))) throw new Error('AI 修稿应为次按钮')
   if (!(await evaluate(`${btnClass('定稿')}.includes('border-emerald-300')`))) throw new Error('定稿应降为描边按钮')
-  if (!(await evaluate(`!!document.querySelector('ol[aria-label="第 7 集流程"] [aria-current=step]')`))) throw new Error('缺少单集流程步骤条')
-  // 草稿还没审：停在「草稿」这一步，「审稿」不应亮起
-  const cur = await evaluate(`document.querySelector('ol[aria-label="第 7 集流程"] [aria-current=step]').textContent`)
-  if (!cur.includes('草稿') || cur.includes('审稿')) throw new Error('未审的草稿应停在草稿一步：' + cur)
-  // 第 7 集没有蓝图：步骤条如实标「未做」，不冒充已完成
-  if (!(await evaluate(`document.querySelector('ol[aria-label="第 7 集流程"]').textContent.includes('蓝图未做')`))) throw new Error('缺蓝图应标为未做')
+  // 单集流程步骤条 11/5 标注 #90 全局删掉：草稿页只剩「建议下一步」
+  if (await evaluate(`!!document.querySelector('ol[aria-label$=集流程]')`)) throw new Error('单集流程步骤条应已删掉')
   await sleep(200)
   await shot('v2-draft')
   await t(`__t.click('button', 'AI 审稿')`)
   await waitFor(`document.querySelector('[data-review-detail]')`, '审稿报告', 6000)
   const d = (await project()).work.drafts.find((x) => x.id === 'v2-draft-7')
-  const now = await evaluate(`document.querySelector('ol[aria-label="第 7 集流程"] [aria-current=step]')?.textContent ?? ''`)
-  if (!now.includes('定稿')) throw new Error('审完后应走到定稿一步：' + now)
   const block = d.reviews.at(-1).items.filter((i) => i.level === 'block').length
   await waitFor(`${advice}.includes('建议下一步：${block ? 'AI 修稿' : '定稿'}')`, '审完后的建议')
   if (block ? !(await evaluate(`${btnClass('AI 修稿')}.includes('bg-brand-600')`)) : !(await evaluate(`${btnClass('定稿')}.includes('bg-emerald-600')`))) throw new Error('主按钮没随建议切换')
 })
 
-await check('版本二：定稿后在正文页接力写下一集；写作前检查拦下时指向分集蓝图', async () => {
+await check('定稿后在正文页接力写下一集；下一集没存过蓝图时按预填直接写，写的时候把预填的蓝图存下来（11/5 标注 #89）', async () => {
   await t(`__t.click('button', '定稿')`)
   await waitFor(`location.pathname === '${projectPath}/stage/script/final/7'`, '定稿后到正文', 6000)
   const relay = `(document.querySelector('[data-v2=relay]')?.innerText ?? '')`
-  await waitFor(`${relay}.includes('接着写第 8 集') && ${relay}.includes('去分集蓝图处理')`, '没有蓝图时指向分集蓝图')
-  await patchStored(`(p) => { const o = p.work.outline.find((x) => x.ep === 8); p.work.blueprints = p.work.blueprints.filter((b) => b.ep !== 8).concat({ ep: 8, title: o?.title ?? '', position: '', cast: '', goal: '', conflict: o?.event ?? '', hook: o?.hookLine ?? '', guidance: '', points: '' }) }`, projectPath + '/stage/script/final/7')
+  await waitFor(`${relay}.includes('接着写第 8 集')`, '接力写第 8 集')
+  if ((await project()).work.blueprints.some((b) => b.ep === 8)) throw new Error('第 8 集应还没存蓝图')
+  if (await evaluate(`${relay}.includes('去逐集蓝图处理')`)) throw new Error('有集纲就能按预填写，不应再被「没有蓝图」拦下')
   await waitFor(`[...document.querySelectorAll('[data-v2=relay] button')].some((b) => b.textContent.includes('写第 8 集'))`, '可直接写下一集')
   await sleep(200)
   await shot('v2-relay')
   await t(`__t.click('[data-v2=relay] button', '写第 8 集')`)
   await waitFor(`location.pathname.startsWith('${projectPath}/stage/script/draft/')`, '写完进草稿', 8000)
-  if (!(await project()).work.drafts.some((x) => x.ep === 8)) throw new Error('第 8 集草稿未生成')
+  const p8 = await project()
+  if (!p8.work.drafts.some((x) => x.ep === 8)) throw new Error('第 8 集草稿未生成')
+  const bp8 = p8.work.blueprints.find((b) => b.ep === 8)
+  const o8 = p8.work.outline.find((x) => x.ep === 8)
+  if (!bp8 || bp8.conflict !== o8.event || bp8.hook !== o8.hookLine) throw new Error('写作时应把按集纲预填的蓝图存下来：' + JSON.stringify(bp8))
 })
 
-await check('版本二：单集步骤条里做过的步骤可以点开；选中的一集可单独重新生成蓝图', async () => {
-  const steps = `document.querySelector('ol[aria-label="第 8 集流程"]')`
-  await waitFor(steps, '草稿页步骤条')
-  if (await evaluate(`[...${steps}.querySelectorAll('a')].some((a) => a.textContent.includes('草稿'))`)) throw new Error('当前所在的草稿一步不应再是链接')
-  await evaluate(`[...${steps}.querySelectorAll('a')].find((a) => a.textContent.includes('蓝图')).click()`)
-  await waitFor(`location.pathname === '${projectPath}/stage/script' && location.search === '?ep=8' && [...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '点蓝图回到这一集蓝图')
-  await waitFor(steps, '蓝图页步骤条')
-  await evaluate(`[...${steps}.querySelectorAll('a')].find((a) => a.textContent.includes('草稿')).click()`)
-  await waitFor(`location.pathname.startsWith('${projectPath}/stage/script/draft/') && document.querySelector('ol[aria-label="第 8 集流程"]')`, '点草稿打开最新草稿')
-  await evaluate(`[...${steps}.querySelectorAll('a')].find((a) => a.textContent.includes('集纲')).click()`)
-  await waitFor(`location.pathname === '${projectPath}/stage/outline' && document.querySelector('#outline-ep-8')`, '点集纲到情节大纲这一集')
+await check('单集流程步骤条全局删掉（11/5 标注 #90），逐集蓝图列表的进度点还在；选中的一集可单独重新生成蓝图', async () => {
+  if (await evaluate(`!!document.querySelector('ol[aria-label$=集流程]')`)) throw new Error('草稿页不应再有单集流程步骤条')
   await goto(projectPath + '/stage/script?ep=8')
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '选中第 8 集')
+  if (await evaluate(`!!document.querySelector('ol[aria-label$=集流程]')`)) throw new Error('逐集蓝图页不应再有单集流程步骤条')
+  if (!(await evaluate(`[...document.querySelectorAll('[data-bp-list] > li')].every((li) => li.querySelector('[aria-label^="当前："], [aria-label=已定稿]'))`))) throw new Error('逐集蓝图列表的单集进度点应还在')
   const before = (await project()).work.blueprints.find((b) => b.ep === 8)
   await t(`__t.click('main button', '重新生成本集蓝图')`)
   await waitFor(dialog('重新生成第 8 集蓝图？'), '蓝图确认')
   await t(`__t.click('[role=dialog] button', '重新生成')`)
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.blueprints.find((b) => b.ep === 8).position !== ''`, '第 8 集蓝图已重新生成', 5000)
+  // 写作时存下的预填蓝图本来就有定位、没有承接：等 AI 写好承接、按钮停下才算生成完
+  await waitFor(`!!JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.blueprints.find((b) => b.ep === 8).carry?.trim() && [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === '重新生成本集蓝图')?.disabled === false`, '第 8 集蓝图已重新生成', 5000)
   const after = (await project()).work.blueprints
   if (after.find((b) => b.ep === 8).guidance !== before.guidance) throw new Error('作者微操指导应保留')
   await sleep(200)
-  await shot('v2-steps-links')
+  await shot('script-blueprint-regenerate')
 })
 
-await check('分集蓝图：本集定位、主角小目标、作者微操指导删掉（11/4 第五轮标注 #64 #65 #67），写作和写作前检查也不再读作者微操指导', async () => {
+await check('逐集蓝图：本集定位、主角小目标、作者微操指导删掉（11/4 第五轮标注 #64 #65 #67），写作和写作前检查也不再读作者微操指导', async () => {
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '选中第 8 集')
   if (await evaluate(`!!document.querySelector('textarea[aria-label=作者微操指导], input[placeholder="这一集主角最想做成的一件事"]') || [...document.querySelectorAll('main label, main span')].some((e) => /^(本集定位|主角小目标|作者微操指导)/.test(e.textContent.trim()))`)) throw new Error('本集定位、主角小目标、作者微操指导应已删掉')
   if (await t(`__t.has('有指导') || __t.has('作者微操') || __t.has('小目标')`)) throw new Error('页面上不应再提作者微操指导、小目标')
@@ -2167,12 +1870,12 @@ await check('分集蓝图：本集定位、主角小目标、作者微操指导�
   })()`)
   if (r.wrote || r.checks.includes('作者微操指导')) throw new Error('写作和写作前检查不应再读作者微操指导：' + JSON.stringify(r))
 })
-await check('分集蓝图：本集卡片头有「查看本集」与「写作第 N 集」；批量写作可选集数范围；承接可接住前几集的伏笔', async () => {
+await check('逐集蓝图：本集卡片头有「查看本集」与「去写第 N 集」；批量写作可选集数范围', async () => {
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '选中第 8 集')
   const head = `document.querySelector('[data-ep-head]')`
   const headText = await evaluate(`${head}.innerText`)
-  if (!headText.includes('查看本集') || !headText.includes('写作第 8 集')) throw new Error('本集卡片头缺按钮：' + headText)
-  if (await t(`[...document.querySelectorAll('main button')].filter((b) => b.textContent.includes('写作第')).length !== 1`)) throw new Error('写作按钮应只在本集卡片头')
+  if (!headText.includes('查看本集') || !headText.includes('去写第 8 集')) throw new Error('本集卡片头缺按钮：' + headText)
+  if (await t(`[...document.querySelectorAll('main button')].filter((b) => b.textContent.includes('去写第')).length !== 1`)) throw new Error('写作按钮应只在本集卡片头')
   if (await t(`__t.has('批量创作')`)) throw new Error('批量创作应改名为批量写作')
   // 起止集是输入框：输入后回车生效，超出范围的数收回到边界
   const from = `document.querySelector('input[aria-label=批量写作起始集]')`
@@ -2197,18 +1900,9 @@ await check('分集蓝图：本集卡片头有「查看本集」与「写作第 
   await waitFor(dialog('批量写作第 1–5 集？'), '范围里有写过的集先确认')
   await t(`__t.click('[role=dialog] button', '取消')`)
   await until(`!document.querySelector('[role=dialog]')`, '关闭确认')
-  // 承接：前几集埋下、本集之后才收的伏笔可一键接住
-  const w = (await project()).work
-  const due = w.foreshadows.filter((f) => f.plantEp < 8 && f.payoffEp >= 8)
-  if (SHOW_FORESHADOW && due.length) {
-    await waitFor(`document.querySelector('[data-carry-foreshadows] button:not(:disabled)')`, '承接里的伏笔')
-    await evaluate(`document.querySelector('[data-carry-foreshadows] button:not(:disabled)').click()`)
-    await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.blueprints.find((b) => b.ep === 8).carry.includes('在本集响起')`, '伏笔写进承接')
-  }
-  // 写作按钮带 ▾ 换模型，本集卡片头的按钮仍排在一行
+  // 本集卡片头的按钮排在一行
   const tops = await evaluate(`[...document.querySelectorAll('[data-ep-head] > div:last-child button')].map((b) => Math.round(b.getBoundingClientRect().top))`)
   if (new Set(tops).size !== 1) throw new Error('本集卡片头按钮折行了：' + tops)
-  if (!(await evaluate(`!!document.querySelector('[data-ep-head] button[aria-label=换个模型写作]')`))) throw new Error('写作按钮旁缺少换模型的 ▾')
   await sleep(200)
   await shot('script-stage-head')
   await t(`__t.click('main button', '查看本集')`)
@@ -2217,73 +1911,119 @@ await check('分集蓝图：本集卡片头有「查看本集」与「写作第 
   await waitFor(`document.querySelector('textarea[aria-label=承接]')`, '回到第 8 集蓝图')
 })
 
-if (!SHOW_FORESHADOW) await check('伏笔先拿掉：拿掉前登记过的伏笔计划也不显示、不读——分集蓝图的承接没有「接住前文埋点」，侧栏没有伏笔，审稿范围、质检一致性、下游依据、写作要求都不提伏笔', async () => {
-  // 存一条横跨第 1–9 集、还没回收的计划，模拟拿掉之前登记过的
-  await patchStored(`async (p) => {
-    p.work.foreshadows = p.work.foreshadows.filter((f) => f.id !== 'e2e-hidden')
-    p.work.foreshadows.push({ id: 'e2e-hidden', type: '关键道具', title: '藏起来的道具', content: '', plantEp: 1, payoffEp: 9, events: [] })
-  }`, projectPath + '/stage/script?ep=8')
+await check('「去写第 N 集」不走 AI（11/5 标注 #93）：没有换模型的 ▾，点了新建一版草稿，按本集蓝图列好开头承接和末尾钩子，标「自己写」，不记模型', async () => {
+  const before = await project()
+  await goto(projectPath + '/stage/script?ep=8')
+  const go = `[...document.querySelectorAll('[data-ep-head] button')].find((b) => b.textContent.trim() === '去写第 8 集')`
+  await waitFor(`${go} && !${go}.disabled`, '「去写第 8 集」')
+  if (await evaluate(`!!document.querySelector('[data-ep-head] button[aria-label=换个模型写作]') || [...document.querySelectorAll('[data-ep-head] button')].some((b) => b.textContent.includes('写作第'))`)) throw new Error('本集卡片头不应再有 AI 写作按钮和换模型的 ▾')
+  if (!(await evaluate(`${go}.title.includes('不用 AI')`))) throw new Error('「去写」的提示应说明不用 AI')
+  await evaluate(`${go}.click()`)
+  await waitFor(`location.pathname.startsWith('${projectPath}/stage/script/draft/')`, '打开自己写的草稿')
+  const after = await project()
+  const d = after.work.drafts.find((x) => !before.work.drafts.some((y) => y.id === x.id))
+  if (!d || d.ep !== 8 || !d.manual || d.model) throw new Error('应新建一版自己写的第 8 集草稿，不记模型：' + JSON.stringify(d && { ep: d.ep, manual: d.manual, model: d.model }))
+  const bp = after.work.blueprints.find((b) => b.ep === 8)
+  if (d.lines[0].kind !== 'scene' || d.lines[0].zh !== '' || !/^△（(接上集|承接)）/.test(d.lines[1].zh) || d.lines.at(-1).kind !== 'hook' || d.lines.at(-1).zh !== bp.hook.trim()) throw new Error('应按本集蓝图列好架子：' + JSON.stringify(d.lines.map((l) => [l.kind, l.zh.slice(0, 16)])))
+  await waitFor(`document.querySelector('[data-draft-model]')?.textContent.trim() === '自己写'`, '草稿页标「自己写」')
+  if (!(await evaluate(`(() => { const box = document.querySelector('textarea[aria-label="第 1 段"]'); return !!box && !box.readOnly })()`))) throw new Error('自己写的草稿应能直接编辑')
+  await patchStored(`(p) => { p.work.drafts = ${JSON.stringify(before.work.drafts)}; p.work.blueprints = ${JSON.stringify(before.work.blueprints)} }`, projectPath + '/stage/script?ep=8')
+})
+await check('伏笔已删：逐集蓝图的承接没有「接住前文埋点」，审稿范围、质检一致性、下游依据、写作要求都不提伏笔', async () => {
+  await goto(projectPath + '/stage/script?ep=8')
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集')) && document.querySelector('textarea[aria-label=承接]')`, '第 8 集蓝图')
   if (await evaluate(`!!document.querySelector('[data-carry-foreshadows]')`)) throw new Error('承接里不应再列伏笔')
   if (await t(`__t.has('前几集埋下')`)) throw new Error('承接的说明不应再提伏笔')
-  if (!(await evaluate(`!!${panel}`))) await t(`document.querySelector('[aria-label=展开剧本状态库]').click()`)
-  await waitFor(panel, '侧栏')
-  await t(`__t.click('aside [role=tab]', '状态库')`)
-  for (const tab of ['本集', '全剧']) {
-    await panelTab(tab)
-    await sleep(150)
-    if ((await panelText()).includes('藏起来的道具')) throw new Error(`侧栏「${tab}」不应显示伏笔计划`)
-  }
   const r = await evaluate(`(async () => {
     const p = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((x) => x.id === '${projectId}')
     const review = await import('/src/domain/review.ts')
     const pipeline = await import('/src/domain/pipeline.ts')
     const basis = await import('/src/domain/basis.ts')
     const chain = await import('/src/services/mock/chain.ts')
-    const state = await import('/src/domain/state.ts')
     return {
       scope: review.reviewScope(true).map((x) => x.label + x.covers).join(' '),
       qa: pipeline.QA_CHECKS.find((c) => c.key === 'consistency'),
       down: ['episode', 'blueprint', 'write', 'review'].map((k) => basis.downBasis(p, k)),
       rules: chain.draftArchItem(p, 'writingRules').text,
-      lib: state.buildState(p).foreshadows.length,
     }
   })()`)
   if (r.scope.includes('伏笔')) throw new Error('审稿范围不应再有伏笔：' + r.scope)
-  if (r.qa.desc.includes('伏笔') || r.qa.to === 'foreshadow') throw new Error('质检一致性不应再提伏笔、也不应指向伏笔：' + JSON.stringify(r.qa))
-  if (r.down.some((row) => row.deps.includes('foreshadows') || [...row.must, ...row.focus, ...row.light].some((x) => x.startsWith('伏笔计划')))) throw new Error('下游依据不应再列伏笔计划')
+  if (r.qa.desc.includes('伏笔')) throw new Error('质检一致性不应再提伏笔：' + JSON.stringify(r.qa))
+  if (r.down.some((row) => [...row.must, ...row.focus, ...row.light].some((x) => x.startsWith('伏笔计划')))) throw new Error('下游依据不应再列伏笔计划')
   if (r.rules.includes('伏笔')) throw new Error('全局写作要求不应再写伏笔：' + r.rules)
-  if (r.lib) throw new Error('状态库不应再汇总伏笔计划')
-  await patchStored(`async (p) => { p.work.foreshadows = p.work.foreshadows.filter((f) => f.id !== 'e2e-hidden') }`, projectPath + '/stage/script?ep=8')
-  await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '回到第 8 集')
 })
-await check('分集蓝图：写作前检查在状态库的「检查」标签页；全部集都有蓝图时「+」确认后加一集', async () => {
+await check('逐集蓝图：写作前检查在状态库的「检查」标签页；每一集都已列出，「+」确认后加一集', async () => {
   await goto(projectPath + '/stage/script?ep=8')
-  await waitFor(`document.querySelector('[data-ep-head] [data-open-checks]')`, '本集卡片头的检查入口')
+  await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '选中第 8 集')
+  // 11/5 标注 #92：本集标题下的「修改自动保存 · 检查通过」删掉，写作前检查从状态库的「检查」标签页看
+  if (await evaluate(`!!document.querySelector('[data-ep-head] [data-open-checks]') || document.querySelector('[data-ep-head]').innerText.includes('修改自动保存')`)) throw new Error('本集标题下的「修改自动保存 · 检查」应已删掉')
   const wasOpen = await evaluate(`!!document.querySelector('aside[aria-label=剧本状态库]')`)
   if (await evaluate(`[...document.querySelectorAll('main *')].some((e) => !e.closest('aside') && e.textContent.trim().startsWith('写作前检查 · '))`)) throw new Error('页面里不应再有写作前检查卡片')
-  await evaluate(`document.querySelector('[data-ep-head] [data-open-checks]').click()`)
+  if (!wasOpen) await evaluate(`document.querySelector('[aria-label=展开剧本状态库]').click()`)
+  await waitFor(`[...document.querySelectorAll('aside [role=tab]')].some((b) => b.textContent.includes('检查'))`, '状态库的「检查」标签')
+  await t(`__t.click('aside [role=tab]', '检查')`)
   await waitFor(`document.querySelector('[data-panel-tab=checks]')?.innerText.includes('写作前检查 · 第 8 集')`, '侧栏「检查」里的写作前检查')
   await sleep(200)
   await shot('script-checks-tab')
   await t(`__t.click('aside [role=tab]', '状态库')`)
   if (!wasOpen) await evaluate(`document.querySelector('[aria-label=收起剧本状态库]').click()`)
-  // 全部集都有蓝图：「+」不再置灰，确认后总集数加一并新建最后一集的空蓝图
+  // 每一集都已列出：「+」确认后总集数加一，新的一集没有集纲，标「待集纲」、按人物设定预填（不存蓝图）
   const before = await project()
   const total = before.spec.totalEpisodes
-  await patchStored(`(p) => { const has = new Set(p.work.blueprints.map((b) => b.ep)); for (let ep = 1; ep <= p.spec.totalEpisodes; ep++) if (!has.has(ep)) p.work.blueprints.push({ ep, title: '', position: '', cast: '', goal: '', conflict: '', hook: '', guidance: '', points: '' }) }`, projectPath + '/stage/script?ep=8')
   const plus = `document.querySelector('button[aria-label=新增一集蓝图]')`
   await waitFor(`${plus} && !${plus}.disabled && ${plus}.title.includes('加第 ${total + 1} 集')`, '「+」说明会加第 N+1 集')
   await evaluate(`${plus}.click()`)
   await waitFor(dialog(`加第 ${total + 1} 集？`), '加集先确认')
   await t(`__t.click('[role=dialog] button', '加到 ${total + 1} 集')`)
-  await waitFor(`(() => { const p = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}'); return p.spec.totalEpisodes === ${total + 1} && p.work.blueprints.some((b) => b.ep === ${total + 1}) })()`, '总集数加一并有新蓝图')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').spec.totalEpisodes === ${total + 1}`, '总集数加一')
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 ${total + 1} 集'))`, '选中新加的一集')
+  if ((await evaluate(`document.querySelectorAll('[data-bp-list] > li').length`)) !== total + 1) throw new Error('列表应列出全部 ' + (total + 1) + ' 集')
+  if (!(await evaluate(`document.querySelector('[data-bp-list] > li:last-child').innerText.includes('待集纲') && !!document.querySelector('[data-bp-no-outline]')`))) throw new Error('新加的一集没有集纲，应标「待集纲」并提示去情节大纲')
+  if ((await project()).work.blueprints.some((b) => b.ep === total + 1)) throw new Error('新加的一集是预填的，不应存蓝图')
   await patchStored(`(p) => { p.spec = ${JSON.stringify(before.spec)}; p.rhythm = ${JSON.stringify(before.rhythm)}; p.work.blueprints = ${JSON.stringify(before.work.blueprints)} }`, projectPath + '/stage/script?ep=8')
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '恢复')
 })
 
-await check('分集蓝图：一键定稿——列出每集最新的草稿，审过且没问题的默认勾上，有严重问题的不能选；确认后按集号定稿', async () => {
+await check('逐集蓝图（11/5 标注 #89）：「分集蓝图」改名「逐集蓝图」；每一集都列出来，没存过的按集纲和人物设定预填，改了才存；恢复预填回到跟着集纲走，本集要点保留', async () => {
+  const before = await project()
+  const o = before.work.outline.filter((x) => !before.work.blueprints.some((b) => b.ep === x.ep) && !before.work.drafts.some((d) => d.ep === x.ep)).at(-1)
+  if (!o) throw new Error('应有存了集纲、没存蓝图的集')
+  const reset = `document.querySelector('[data-ep-head] button[aria-label=恢复预填]')`
+  const stored = `JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.blueprints.find((b) => b.ep === ${o.ep})`
+  await goto(projectPath + '/stage/script?ep=' + o.ep)
+  await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 ${o.ep} 集'))`, '选中没存蓝图的一集')
+  if ((await t(`__t.has('分集蓝图')`)) || !(await t(`__t.has('逐集蓝图')`))) throw new Error('「分集蓝图」应改名为「逐集蓝图」')
+  if ((await evaluate(`document.querySelectorAll('[data-bp-list] > li').length`)) !== before.spec.totalEpisodes) throw new Error('每一集都应列出来')
+  const form = await evaluate(`({ title: document.querySelector('input[placeholder=本集标题]').value, cast: document.querySelector('input[placeholder="主角、反派、关键配角"]').value, conflict: document.querySelector('textarea[placeholder="谁阻碍主角、怎么升级、在哪里反转"]').value, hook: document.querySelector('textarea[placeholder="最后 10 秒留什么让观众点下一集"]').value })`)
+  if (form.title !== o.title || form.conflict !== o.event || form.hook !== o.hookLine) throw new Error('应按集纲预填标题、冲突、钩子：' + JSON.stringify(form))
+  const hero = before.work.characters.find((c) => c.role === '主角')?.name
+  if (hero && !form.cast.startsWith(hero)) throw new Error('出场关键人应按人物设定先列主角：' + form.cast)
+  if (await evaluate(reset)) throw new Error('还是预填的集不应有「恢复预填」')
+  if (await evaluate(`!!${stored}`)) throw new Error('只是看不应存蓝图')
+  // 改一项：连同预填的内容一起存下来
+  await t(`__t.type(document.querySelector('textarea[placeholder="最后 10 秒留什么让观众点下一集"]'), 'e2e 手改钩子')`)
+  await waitFor(`${stored}?.hook === 'e2e 手改钩子'`, '改了就存')
+  const saved = (await project()).work.blueprints.find((b) => b.ep === o.ep)
+  if (saved.conflict !== o.event || saved.title !== o.title) throw new Error('存下来的应带上预填的内容：' + JSON.stringify(saved))
+  // 恢复预填：有本集要点的按预填重写一份，要点保留
+  await patchStored(`(p) => { p.work.blueprints.find((b) => b.ep === ${o.ep}).points = 'e2e 要点' }`, projectPath + '/stage/script?ep=' + o.ep)
+  await waitFor(reset, '存过的集有「恢复预填」')
+  await evaluate(`${reset}.click()`)
+  await waitFor(dialog(`第 ${o.ep} 集蓝图恢复预填？`), '恢复预填先确认')
+  await t(`__t.click('[role=dialog] button', '恢复预填')`)
+  await waitFor(`${stored}?.hook === ${JSON.stringify(o.hookLine)}`, '钩子恢复成集纲的')
+  if ((await project()).work.blueprints.find((b) => b.ep === o.ep).points !== 'e2e 要点') throw new Error('恢复预填应保留本集要点')
+  // 没有要点的：恢复预填后不再存，回到跟着集纲走的预填
+  await patchStored(`(p) => { p.work.blueprints.find((b) => b.ep === ${o.ep}).points = '' }`, projectPath + '/stage/script?ep=' + o.ep)
+  await waitFor(reset, '存过的集有「恢复预填」')
+  await evaluate(`${reset}.click()`)
+  await waitFor(dialog(`第 ${o.ep} 集蓝图恢复预填？`), '恢复预填先确认')
+  await t(`__t.click('[role=dialog] button', '恢复预填')`)
+  await waitFor(`!${stored}`, '回到预填，不再存')
+  await waitFor(`!${reset}`, '回到预填后没有「恢复预填」')
+  await patchStored(`(p) => { p.work.blueprints = ${JSON.stringify(before.work.blueprints)} }`, projectPath + '/stage/script?ep=8')
+})
+await check('逐集蓝图：一键定稿——列出每集最新的草稿，审过且没问题的默认勾上，有严重问题的不能选；确认后按集号定稿', async () => {
   const before = await project()
   const keep = { drafts: before.work.drafts, scripts: before.work.scripts, blueprints: before.work.blueprints }
   const [a, b] = [before.spec.totalEpisodes - 1, before.spec.totalEpisodes]
@@ -2400,7 +2140,7 @@ await check('批量写作：整批用开写时的文本模型；中途在页头�
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('第 8 集'))`, '恢复')
 })
 
-await check('批量写作在后台跑：离开分集蓝图页也接着写，页头显示进度、可以停', async () => {
+await check('批量写作在后台跑：离开逐集蓝图页也接着写，页头显示进度、可以停', async () => {
   const before = await project()
   const path = projectPath + '/stage/script?ep=8'
   await patchStored(`async (p) => {
@@ -2429,7 +2169,7 @@ await check('批量写作在后台跑：离开分集蓝图页也接着写，页�
   await patchStored(`(p) => { p.work.drafts = ${JSON.stringify(before.work.drafts)}; p.work.blueprints = ${JSON.stringify(before.work.blueprints)}; p.status = '${before.status}' }`, path)
 })
 
-await check('分集蓝图：末尾钩子前有「承接」，AI 生成时接上集结尾；草稿页侧栏「本集蓝图」按顺序显示', async () => {
+await check('逐集蓝图：末尾钩子前有「承接」，AI 生成时接上集结尾；草稿页侧栏「本集蓝图」按顺序显示', async () => {
   const w = (await project()).work
   const carry = w.blueprints.find((b) => b.ep === 8).carry
   if (!carry?.trim()) throw new Error('AI 生成的蓝图应写好承接')
@@ -2450,7 +2190,7 @@ await check('分集蓝图：末尾钩子前有「承接」，AI 生成时接上�
   await shot('draft-side-blueprint')
 })
 
-await check('版本二：质检「去改正文」带着问题过去，问题行高亮；标记已处理后回到原来那一集', async () => {
+await check('质检「去改正文」带着问题过去，问题行高亮；标记已处理后回到原来那一集', async () => {
   await goto(projectPath + '/stage/qa')
   await t(`__t.click('button', '重新质检')`)
   await until(`!__t.has('正文在质检后有改动')`, '重新质检', 8000)
@@ -2484,7 +2224,7 @@ await check('版本二：质检「去改正文」带着问题过去，问题行�
   await waitFor(`[...document.querySelectorAll('h3')].some((h) => h.textContent.includes('第 ${issue.ep} 集 ·'))`, '回到原来那一集')
 })
 
-await check('版本二：环节说明默认折叠；环节完成后「去下一步」在页面底部的环节条里（11/4 标注 #74）', async () => {
+await check('环节说明默认折叠；环节完成后「去下一步」在页面底部的环节条里（11/4 标注 #74）', async () => {
   await goto(projectPath + '/stage/characters')
   await waitFor(`document.querySelector('[data-bottom-slot] [data-stage-bar]')?.innerText.includes('人物设定已完成') && document.querySelector('[data-bottom-slot] [data-stage-next=outline]')`, '底部环节条的去情节大纲')
   if (await evaluate(`!!document.querySelector('[data-v2=next-stage]')`)) throw new Error('页头不应再有下一步条')
@@ -2496,7 +2236,7 @@ await check('版本二：环节说明默认折叠；环节完成后「去下一�
   await waitFor(`location.pathname === '${projectPath}/stage/outline'`, '去下一环节')
 })
 
-await check('版本二：故事架构确认前实时列出还差什么；状态条在页面底部的环节条里，滚到哪都在；确认后接「去人物设定」', async () => {
+await check('故事架构确认前实时列出还差什么；状态条在页面底部的环节条里，滚到哪都在；确认后接「去人物设定」', async () => {
   await goto(projectPath + '/stage/architecture')
   await t(`__t.click('button', '修改故事架构')`)
   await until(`__t.has('必填项已填完，可以确认')`, '已填完提示')
@@ -2702,10 +2442,12 @@ await check('仿写：冲突主线分「对标剧（拆解）」「修改冲突�
   if (!(await evaluate(`document.querySelector('[role=dialog]').innerText.includes('先对段，段内按比例')`))) throw new Error('一键引用的节奏应按分段换算')
   await t(`__t.click('[role=dialog] button', '引用并进入故事架构')`)
   await waitFor(`location.pathname.endsWith('/stage/architecture') && document.querySelector('#arch-items')`, '进入故事架构')
-  // 改写想法 → 方向 → 核心设定（没有改写方案）→ 设定 → 创新点（设定写完再和对标剧比）→ 结构 → 全局写作要求（主要势力 11/4 第五轮删掉；创新点原创不要、仿写留着）
+  // 核心设定 → AI 框架方向 → 设定 → 创新点（设定写完再和对标剧比）→ 结构 → 全局写作要求（改写方案 11/3 删掉，改写想法 11/5 标注 #87 删掉；主要势力 11/4 第五轮删掉；创新点原创不要、仿写留着）
   const items = await evaluate(`[...document.querySelectorAll('#arch-items [data-item]')].map((l) => l.getAttribute('data-item')).join()`)
-  if (items !== 'idea,logline,world,goldenFinger,background,highlights,heroSetup,innovations,mainLine,writingRules') throw new Error('仿写顺序不对：' + items)
+  if (items !== 'logline,world,goldenFinger,background,highlights,heroSetup,innovations,mainLine,writingRules') throw new Error('仿写顺序不对：' + items)
   if (await t(`__t.has('改写方案')`)) throw new Error('仿写不应再有改写方案')
+  if (await t(`__t.has('改写想法')`) || (await evaluate(`!!document.querySelector('textarea[aria-label=改写想法]')`))) throw new Error('仿写不应再有改写想法')
+  if (!(await evaluate(`(() => { const btn = [...document.querySelectorAll('#arch-items button')].find((b) => b.textContent.trim() === 'AI 框架方向'); const box = document.querySelector('textarea[aria-label=核心设定]'); return !!btn && !!(box.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING) })()`))) throw new Error('仿写的 AI 框架方向应在核心设定框下面')
   const seen = await stepAll()
   if (!seen.length || !(await demo()).work.prints?.['arch.rhythm']) throw new Error('仿写逐项生成到底应带出节奏框架：' + seen)
   await sleep(200)
@@ -2776,8 +2518,8 @@ await check('仿写：冲突主线分「对标剧（拆解）」「修改冲突�
   await goto('/projects/demo-alpha/stage/outline')
   await t(`__t.click('button', '生成总纲')`)
   await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.plot?.overview.includes('【对照对标剧】')`, '总纲对照对标剧', 6000)
-  await t(`__t.click('#outline-phase-0 button', '生成粗纲')`)
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.plot?.phases[0]?.includes('对照对标剧')`, '粗纲读对标剧对应段', 6000)
+  await t(`__t.click('#outline-phase-0 button', '生成阶段总览')`)
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.plot?.phases[0]?.includes('对照对标剧')`, '阶段总览读对标剧对应段', 6000)
   await t(`__t.click('#outline-phase-0 button', '一键集纲')`)
   await waitFor(`document.querySelector('[data-align]')?.textContent.startsWith('对位：对标剧第')`, '集纲显示对位集', 8000)
   await shot('adaptation-outline')
@@ -2785,7 +2527,7 @@ await check('仿写：冲突主线分「对标剧（拆解）」「修改冲突�
   await goto('/projects/demo-alpha')
 })
 
-await check('版本二：项目卡片显示进度，「继续」直达下一步', async () => {
+await check('项目卡片显示进度，「继续」直达下一步', async () => {
   await goto('/projects')
   const card = `[...document.querySelectorAll('a[href="${projectPath}"]')].find((a) => a.innerText.includes('定稿'))`
   await waitFor(`${card}?.innerText.includes('环节 · 定稿 7/')`, '卡片进度')
@@ -2914,13 +2656,13 @@ await check('仿写模式：必须登记对标剧剧名', async () => {
   await t(`__t.click('button', '创建剧本')`)
   await waitFor(`document.body.innerText.includes('请填写对标剧剧名')`, '对标剧报错')
 })
-await check('存储迁移：故事架构补上核心亮点；拆解补上金手指、每集走向与细拆并去掉新出场人物等三个字段，旧细拆改成逐句、主角补上拆细的几项，首集开场、一卡卡点、主角简介和配角作用按原文补上，期待值删掉、冲突主线和内容简介的审核合成一块；去掉每集字数、画幅和故事架构的逐层记录，仿写的改写方案并进改写想法，人物关系按备注补上类型，旧标签与旧场景标题换成新写法', async () => {
+await check('存储迁移：故事架构补上核心亮点；拆解补上金手指、每集走向与细拆并去掉新出场人物等三个字段，旧细拆改成逐句、主角补上拆细的几项，首集开场、一卡卡点、主角简介和配角作用按原文补上，期待值删掉、冲突主线和内容简介的审核合成一块；去掉每集字数、画幅和故事架构的逐层记录，仿写的改写方案并进改写想法（v18 随改写想法删掉），人物关系按备注补上类型，旧标签与旧场景标题换成新写法', async () => {
   await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.version = 4; raw.state.projects.forEach((p) => { if (p.work.architecture) delete p.work.architecture.highlights; p.spec.episodeWords = 1000; p.spec.aspectRatio = '9:16'; delete p.work.qa; const b = p.work.breakdown; if (b) { delete b.synopsis.goldenFinger; b.synopsis.expectation = 'e2e 旧期待值'; b.review = { synopsis: 'approved', characters: 'approved', mainline: 'approved', episodes: 'pending' }; b.episodes.forEach((e) => { delete e.flow; delete e.scenes; Object.assign(e, { newCharacters: '甲', relationChange: '甲 — 乙：结盟', paywallMoment: '' }) }); b.episodes[0].scenes = [{ scene: '1-1 e2e 旧场次', action: 'e2e 旧关键动作', turn: '期待 → 屈辱', line: 'e2e：旧核心台词' }]; b.characters.forEach((c) => { for (const k of ['intro', 'purpose', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']) delete c[k] }); b.episodes.forEach((e) => { delete e.open3s; delete e.open30s; delete e.cardPoint }) } if (p.work.architecture) { p.work.architecture.layers = { start: '2026-11-03T00:00:00.000Z' }; if (p.mode !== 'original') p.work.architecture.plan = 'e2e 旧改写方案：保留拒婚结构' } }); const demo = raw.state.projects.find((p) => p.id === 'demo-rebirth'); demo.work.relations = [{ a: '甲', b: '乙', label: '宿敌，处处陷害' }]; demo.category = '仙侠'; demo.tones = ['爽感', '虐心', '悬疑']; demo.work.drafts = [{ ...(demo.work.drafts[0] ?? { id: 'e2e-old', ep: 1, title: '', status: 'draft', updatedAt: new Date().toISOString(), reviews: [], notes: [] }), lines: [{ id: 'old-1', kind: 'scene', zh: '宴会厅 夜 内' }] }]; localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
   await goto('/projects/demo-rebirth')
   await waitFor(`document.body.innerText.includes('90 秒 · 约')`, '概览显示单集时长')
   const saved = await evaluate(`JSON.parse(localStorage.getItem('${KEY}'))`)
   const demo = saved.state.projects.find((p) => p.id === 'demo-rebirth')
-  if (saved.state.projects.some((p) => p.mode !== 'original' && p.work.architecture && (p.work.architecture.plan || !p.work.architecture.idea.includes('e2e 旧改写方案')))) throw new Error('仿写的旧改写方案应并进改写想法')
+  if (saved.state.projects.some((p) => p.mode !== 'original' && p.work.architecture && (p.work.architecture.plan || 'idea' in p.work.architecture))) throw new Error('仿写的旧改写方案应清掉（v10 并进改写想法，v18 改写想法删掉）')
   const bds = saved.state.projects.flatMap((p) => (p.work.breakdown ? [p.work.breakdown] : []))
   if (!bds.length) throw new Error('迁移前应有拆解结果')
   if (bds.some((b) => !b.synopsis.goldenFinger || 'expectation' in b.synopsis || b.episodes.some((e) => !e.flow || !Array.isArray(e.scenes) || 'newCharacters' in e || 'relationChange' in e || 'paywallMoment' in e))) throw new Error('拆解应按原文补上金手指、每集走向，去掉期待值和旧的三个字段')
@@ -2933,7 +2675,7 @@ await check('存储迁移：故事架构补上核心亮点；拆解补上金手�
   if (bds.some((b) => 'episodes' in b.review || b.review.mainline !== 'pending' || b.review.synopsis !== 'approved')) throw new Error('内容简介没确认过，合并后的冲突主线 · 内容简介应回到待审核：' + JSON.stringify(bds.map((b) => b.review)))
   // v15（11/4 标注 #71）：故事架构补上空的核心亮点
   if (saved.state.projects.some((p) => p.work.architecture && p.work.architecture.highlights !== '')) throw new Error('旧项目的故事架构应补上空的核心亮点')
-  if (saved.version !== 16 || saved.state.projects.some((p) => p.work.architecture && 'layers' in p.work.architecture) || saved.state.projects.some((p) => 'aspectRatio' in p.spec) || saved.state.projects.some((p) => 'episodeWords' in p.spec || p.work.qa !== null)) throw new Error('迁移结果不对：' + JSON.stringify(saved.state.projects.map((p) => p.spec)))
+  if (saved.version !== 18 || saved.state.projects.some((p) => p.work.architecture && 'layers' in p.work.architecture) || saved.state.projects.some((p) => 'aspectRatio' in p.spec) || saved.state.projects.some((p) => 'episodeWords' in p.spec || p.work.qa !== null)) throw new Error('迁移结果不对：' + JSON.stringify(saved.state.projects.map((p) => p.spec)))
   if (demo.work.relations[0].kind !== '宿敌') throw new Error('关系类型未推断：' + JSON.stringify(demo.work.relations))
   if (demo.category !== '玄幻' || demo.tones.join() !== '打脸,虐恋,反转') throw new Error('旧标签应换成平台标签：' + demo.category + ' / ' + demo.tones)
   if (demo.work.drafts[0].lines[0].zh !== '夜，内，宴会厅') throw new Error('旧场景标题应改成样稿格式：' + demo.work.drafts[0].lines[0].zh)
@@ -2942,11 +2684,79 @@ await check('存储迁移：故事架构补上核心亮点；拆解补上金手�
 await check('存储迁移 v16：一卡之后的付费卡点集按原文补上卡点和逐场细拆，编剧写过的不动（11/4 标注 #84）', async () => {
   await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.version = 15; raw.state.projects.forEach((p) => { const b = p.work.breakdown; if (!b) return; b.episodes.filter((e) => e.paywall && e.ep > b.rhythm.paywalls[0]).forEach((e, i) => { e.cardPoint = i === 0 ? 'e2e 手写卡点' : ''; e.scenes = [] }) }); localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
   await goto('/projects')
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 16`, '迁移到 v16')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到最新版本')
   const bds = (await projects()).flatMap((p) => (p.work.breakdown && p.work.source?.episodes.length ? [p.work.breakdown] : []))
   const later = bds.map((b) => b.episodes.filter((e) => e.paywall && e.ep > b.rhythm.paywalls[0]))
   if (!later.some((l) => l.length)) throw new Error('示例项目里应有一卡之后的付费卡点集')
   if (later.some((l) => l.some((e, i) => !e.scenes.length || (i === 0 ? e.cardPoint !== 'e2e 手写卡点' : !e.cardPoint?.includes('卡在：'))))) throw new Error('付费卡点集应补上卡点和细拆，手写的卡点不动：' + JSON.stringify(later.map((l) => l.map((e) => [e.ep, e.cardPoint?.slice(0, 12), e.scenes.length]))))
+})
+await check('存储迁移 v17：伏笔与叙事线索删掉后，旧项目里的伏笔计划、沉寂阈值、审稿里的伏笔意见与保留记录、依据指纹里的伏笔计划一起清掉', async () => {
+  await evaluate(`(() => {
+    const raw = JSON.parse(localStorage.getItem('${KEY}'))
+    raw.version = 16
+    // 跑到这里时 e2e 自己的项目已删，用示例项目：给第一份草稿补一份旧审稿
+    const p = raw.state.projects.find((x) => x.work.drafts.length)
+    p.work.foreshadows = [{ id: 'e2e-old-fs', type: '关键道具', title: '旧伏笔', content: '', plantEp: 1, payoffEp: 3, events: [] }]
+    if (p.work.architecture) p.work.architecture.silenceThreshold = 3
+    const d = p.work.drafts[0]
+    d.reviews.push({ id: 'e2e-old-review', at: d.updatedAt, score: 3, items: [] })
+    d.reviews.at(-1).items.push({ level: 'warn', code: 'plan', key: 'plan:e2e-old-fs:plant', text: '计划本集埋设「旧伏笔」，正文里没找到' }, { level: 'warn', code: 'paid', key: 'paid:e2e-old-fs', text: '「旧伏笔」已在第 1 集回收，本集又出现' })
+    p.work.keeps = [...(p.work.keeps ?? []), { ep: 1, key: 'plan:e2e-old-fs:plant', text: '旧伏笔', level: 'warn', at: '' }]
+    p.work.prints = { ...p.work.prints, 'e2e.print': { foreshadows: 'x', logline: 'y' } }
+    localStorage.setItem('${KEY}', JSON.stringify(raw))
+    window.__e2eFsProject = p.id
+  })()`)
+  const id = await evaluate('window.__e2eFsProject')
+  await goto('/projects')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到最新版本')
+  const p = (await projects()).find((x) => x.id === id)
+  if ('foreshadows' in p.work) throw new Error('伏笔计划应删掉')
+  if (p.work.architecture && 'silenceThreshold' in p.work.architecture) throw new Error('沉寂提醒阈值应删掉')
+  const items = p.work.drafts.flatMap((d) => d.reviews.flatMap((r) => r.items))
+  if (items.some((i) => i.code === 'plan' || i.code === 'paid')) throw new Error('审稿报告里的伏笔意见应删掉')
+  if ((p.work.keeps ?? []).some((k) => k.key.startsWith('plan:'))) throw new Error('保留不改里的伏笔意见应删掉')
+  const print = p.work.prints['e2e.print']
+  if ('foreshadows' in print || print.logline !== 'y') throw new Error('依据指纹只去掉伏笔计划：' + JSON.stringify(print))
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); const w = raw.state.projects.find((x) => x.id === '${id}').work; delete w.prints['e2e.print']; w.drafts[0].reviews = w.drafts[0].reviews.filter((r) => r.id !== 'e2e-old-review'); localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
+  await goto('/projects')
+})
+await check('存储迁移 v18：改写想法删掉（11/5 标注 #87）；核心设定空着的项目把改写想法搬进核心设定，写了的不动；依据指纹里的改写想法去掉', async () => {
+  const before = await evaluate(`(() => {
+    const raw = JSON.parse(localStorage.getItem('${KEY}'))
+    raw.version = 17
+    // 跑到这里时示例项目的故事架构可能已被前面的检查清掉：没有就临时补一份，结束后还原
+    const empty = raw.state.projects.find((x) => x.mode !== 'original')
+    const kept = raw.state.projects.find((x) => x.mode !== 'original' && x !== empty) ?? raw.state.projects.find((x) => x !== empty)
+    if (!empty || !kept) return null
+    const added = [empty, kept].filter((x) => !x.work.architecture).map((x) => x.id)
+    for (const x of [empty, kept]) x.work.architecture ??= { plan: '', formula: '', mainLine: [], phaseEnds: null, innovations: [], status: 'pending', world: '', marks: {} }
+    const old = { logline: empty.logline, keptLogline: kept.logline }
+    empty.logline = ''
+    empty.work.architecture.idea = 'e2e 改写想法：保留拒婚结构'
+    empty.work.prints = { ...empty.work.prints, 'e2e.print': { idea: 'x', logline: 'y' } }
+    kept.work.architecture.idea = 'e2e 另一份改写想法'
+    localStorage.setItem('${KEY}', JSON.stringify(raw))
+    return { ...old, empty: empty.id, kept: kept.id, added }
+  })()`)
+  if (!before) throw new Error('应有仿写项目和另一个项目')
+  await goto('/projects')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到 v18')
+  const all = await projects()
+  if (all.some((p) => p.work.architecture && 'idea' in p.work.architecture)) throw new Error('改写想法应从故事架构里删掉')
+  const empty = all.find((p) => p.id === before.empty)
+  if (empty.logline !== 'e2e 改写想法：保留拒婚结构') throw new Error('核心设定空着时应搬入改写想法：' + empty.logline)
+  const print = empty.work.prints['e2e.print']
+  if ('idea' in print || print.logline !== 'y') throw new Error('依据指纹只去掉改写想法：' + JSON.stringify(print))
+  if (all.find((p) => p.id === before.kept).logline !== before.keptLogline) throw new Error('写了核心设定的项目不应改动核心设定')
+  await evaluate(`(() => {
+    const raw = JSON.parse(localStorage.getItem('${KEY}'))
+    const p = raw.state.projects.find((x) => x.id === '${before.empty}')
+    p.logline = ${JSON.stringify(before.logline)}
+    delete p.work.prints['e2e.print']
+    for (const x of raw.state.projects) if (${JSON.stringify(before.added)}.includes(x.id)) x.work.architecture = null
+    localStorage.setItem('${KEY}', JSON.stringify(raw))
+  })()`)
+  await goto('/projects')
 })
 await check('全局：侧边栏隐藏，首页直接是我的剧本', async () => {
   await goto('/')

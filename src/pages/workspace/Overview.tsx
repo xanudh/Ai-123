@@ -10,7 +10,6 @@ import { finalCount, stageState } from '../../domain/work'
 import { audienceLabel, durationLabel, formatDateTime, languageLabel } from '../../lib/format'
 import { useProjects } from '../../store/projects'
 import { toast } from '../../store/toast'
-import { useV2 } from '../../store/uiVersion'
 import { ContinueWork, TodoCard } from '../../v2/OverviewBits'
 import { useCurrentProject } from './ProjectLayout'
 
@@ -56,13 +55,9 @@ function StatusPicker({ project }: { project: Project }) {
 
 export default function Overview() {
   const project = useCurrentProject()
-  const v2 = useV2()
   const { spec, rhythm, work: w } = project
   const all = MODE_STAGES[project.mode]
-  const stages = all.filter((k) => k !== 'overview')
   const state = (key: StageKey) => stageState(project, key)
-  const nextKey = stages.find((k) => state(k) === 'active') ?? stages.find((k) => state(k) === 'todo')
-  const next = nextKey && STAGES[nextKey]
   const arch = w.architecture
   const cast = w.characters.filter((c) => c.name.trim())
 
@@ -100,30 +95,11 @@ export default function Overview() {
               )
             })}
           </ol>
-          {v2 ? (
-            <ContinueWork project={project} />
-          ) : (
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-canvas px-4 py-3">
-              {next ? (
-                <>
-                  <div className="text-[13px]">
-                    <span className="text-ink-500">下一步：</span>
-                    <span className="font-medium">{next.label}</span>
-                    <span className="text-ink-500"> —— {next.summary.split(/[，；：]/)[0]}</span>
-                  </div>
-                  <Link to={`stage/${next.key}`} className="text-[13px] font-medium text-brand-600 hover:text-brand-700">
-                    去{next.label} →
-                  </Link>
-                </>
-              ) : (
-                <div className="text-[13px] text-ink-700">当前开放的环节都已完成；质检交付将在后续版本开放。</div>
-              )}
-            </div>
-          )}
+          <ContinueWork project={project} />
         </div>
       </Card>
 
-      {v2 && <TodoCard project={project} />}
+      <TodoCard project={project} />
 
       <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
         {/* 项目设定 */}

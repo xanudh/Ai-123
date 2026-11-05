@@ -11,7 +11,6 @@ import type { Project, ProjectMode, ProjectStatus } from '../domain/types'
 import { timeAgo } from '../lib/format'
 import { useProjects } from '../store/projects'
 import { toast } from '../store/toast'
-import { useV2 } from '../store/uiVersion'
 import { CardProgress } from '../v2/CardProgress'
 
 type SortKey = 'updated' | 'created' | 'title'
@@ -26,7 +25,6 @@ function matches(p: Project, q: string) {
 
 export default function ProjectsPage() {
   const navigate = useNavigate()
-  const v2 = useV2()
   const [params, setParams] = useSearchParams()
   const { projects, duplicateProject, deleteProject, restoreSamples } = useProjects()
   const [mode, setMode] = useState<ProjectMode | 'all'>('all')
@@ -162,7 +160,7 @@ export default function ProjectsPage() {
           ) : layout === 'grid' ? (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
               {visible.map((p) => (
-                <ProjectCard key={p.id} project={p} {...actions(p)} footer={v2 && <CardProgress project={p} />} />
+                <ProjectCard key={p.id} project={p} {...actions(p)} footer={<CardProgress project={p} />} />
               ))}
             </div>
           ) : (
