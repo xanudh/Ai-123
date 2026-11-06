@@ -225,15 +225,25 @@ const EMOTIONS: [RegExp, string][] = [
   [/热血|燃|战斗|末世|修仙/, '燃'],
 ]
 
-/** 对标剧一卡前的情绪走向：逐句细拆里每一场的开场情绪和转折句的情绪，相邻相同的并掉 */
+/**
+ * 对标剧第 1 集到一卡的情绪起伏，一集一段：首集和一卡读五个维度里情绪的走向（11/6，写成「期待 → 憋屈 → 憋屈到顶」，不用数字），
+ * 中间几集读逐句细拆——每一场的开场情绪和转折句的情绪，相邻相同的并掉
+ */
 const benchEmotions = (p: Project) => {
   const bd = p.work.breakdown
   const card = bd?.rhythm.paywalls[0] ?? 0
   return (bd?.episodes ?? [])
     .filter((e) => e.ep <= card)
-    .flatMap((e) => (e.scenes ?? []).flatMap((s) => [s.lines.find((b) => b.emotion.trim()), ...s.lines.filter((b) => b.turn)]))
-    .map((b) => b?.emotion.trim() ?? '')
-    .filter((x, i, list) => x && x !== list[i - 1])
+    .map((e) => {
+      const walk = /走向[：:]\s*([^。；\n]+)/.exec(e.dims?.emotion ?? '')?.[1]?.trim()
+      const moods = (e.scenes ?? [])
+        .flatMap((s) => [s.lines.find((b) => b.emotion.trim()), ...s.lines.filter((b) => b.turn)])
+        .map((b) => b?.emotion.trim() ?? '')
+        .filter((x, i, list) => x && x !== list[i - 1])
+      const chain = walk ?? (moods.length > 1 ? moods.join(' → ') : '')
+      return chain ? `第 ${e.ep} 集 ${chain}` : ''
+    })
+    .filter(Boolean)
 }
 
 /** 核心亮点（11/4 标注 #71）：期待值（核心爽点、观众等着看什么、情感期待）和情绪（主打情绪、情绪怎么起伏） */
@@ -275,7 +285,7 @@ function highlightsOf(p: Project, parts: LoglineParts, kit: Kit): ItemDraft {
     ),
   ]
   if (bench) lines.push(L(`参照对标剧：对标剧的核心亮点是「${clip(bench.split('\n')[0].replace(/^核心爽点：/, ''), 24)}」，期待值的写法和力度照它，内容换成我们的`, 'inferred', '对标剧拆解 · 核心亮点'))
-  if (benchChain.length > 1) lines.push(L(`参照对标剧：一卡前的情绪起伏是 ${benchChain.slice(0, 8).join(' → ')}，学起伏的节奏，不学事件`, 'inferred', '对标剧拆解 · 逐句细拆'))
+  if (benchChain.length) lines.push(L(`参照对标剧：一卡前的情绪起伏——${benchChain.slice(0, 3).join('；')}，学起伏的节奏，不学事件`, 'inferred', '对标剧拆解 · 情绪'))
   return out(lines)
 }
 

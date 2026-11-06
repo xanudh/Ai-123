@@ -1,5 +1,5 @@
 import { GENRE_OPTIONS, type GenreRegion } from './genreOptions'
-import type { Audience, CharacterRole, DraftStatus, HeroDetailKey, HookType, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
+import type { Audience, CharacterRole, DraftStatus, EpisodeDimKey, HeroDetailKey, HookType, ProjectMode, ProjectStatus, ScriptLanguage, StoryStructure } from './types'
 
 /** 下拉框的一组选项 */
 export interface TagGroup {
@@ -156,6 +156,18 @@ export type GoldenFingerKind = (typeof GOLDEN_FINGER_KINDS)[number]['label']
 
 /** 对标剧拆解里主角另拆的几项（11/4 标注：主角要拆细），按页面顺序 */
 export const HERO_DETAIL: HeroDetailKey[] = ['intro', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']
+
+/**
+ * 首集和付费卡点集拆的五个维度（11/6），顺序固定：情绪、节奏、信息差、期待感、爽点。
+ * 每项一段话，都要落到具体的一句台词、一个动作或一个表情；hint 是页面上的提示，first 是第 1 集另外要写的
+ */
+export const EPISODE_DIMS: { key: EpisodeDimKey; label: string; hint: string; first?: string }[] = [
+  { key: 'emotion', label: '情绪', hint: '情绪怎么走，不用数字，写成「期待 → 憋屈 → 憋屈到顶 → 回了口气」这样；哪一句 / 哪个动作压下去、哪里放出来，集末停在什么情绪；整体属于实际释放 / 部分释放 / 悬念反弹 / 无效积压 / 情绪积压' },
+  { key: 'rhythm', label: '节奏', hint: '本集几场，每段快、慢还是卡：快（…）→ 慢（…）→ 卡（…）；哪段写透、哪段压缩，集末定格在谁的什么画面、表情', first: '开局切入方式：第一场戏是什么、前 3 秒 / 前 30 秒的画面，背景和底牌放在哪里交代' },
+  { key: 'gap', label: '信息差', hint: '本集新建立、推进或揭破了哪条信息差，靠哪一句 / 哪个镜头；谁知道、谁不知道；属于等主角出手 / 替主角急 / 一起猜', first: '全剧最大的底牌是什么，谁知道' },
+  { key: 'expect', label: '期待感', hint: '给观众画了什么饼、怎么加码；兑现程度（完全满足 / 半满足 / 差一点 / 失控反转 / 未兑现）；集末抛出的新钩子是哪一句、哪个画面', first: '立起了什么全剧总期待：观众最想看到的终极场面' },
+  { key: 'thrill', label: '爽点', hint: '铺垫 → 出手 → 确认：出手是哪个动作 / 哪句话，确认写出谁有什么反应（表情、台词）、主角实际赢回了什么；最后标级别 T1 大爽 / T2 中爽 / T3 微爽 / 卡点释放 / 无' },
+]
 
 export const STORY_STRUCTURES: { value: StoryStructure; hint: string }[] = [
   { value: '单线叙事', hint: '一条主线贯穿到底，节奏最快' },

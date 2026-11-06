@@ -16,7 +16,6 @@ import type {
   Plot,
   ArchItem,
   Project,
-  ProjectMode,
   QaIssue,
   QaReport,
   ScriptLine,
@@ -254,15 +253,15 @@ const think = (signal: AbortSignal | undefined, base = 800) => sleep(base + Math
 /** “重新生成 / 换一批”用的新种子 */
 export const nextSeed = () => Math.floor(Math.random() * 1e9)
 
-export const ANALYZE_STEPS = ['按分集切分剧本', '梳理故事梗概', '识别人物与关系网', '提取冲突主线与节奏', '逐集拆解 12 个字段'] as const
+export const ANALYZE_STEPS = ['按分集切分剧本', '梳理故事梗概', '识别人物与关系网', '提取冲突主线与节奏', '逐集写集纲，首集和付费卡点集拆五个维度'] as const
 
-/** 对标剧拆解：逐步回报进度，返回四大板块（全部待审核） */
-export async function analyzeBenchmark(source: SourceScript, mode: ProjectMode, onStep: (index: number) => void, signal?: AbortSignal): Promise<Breakdown> {
+/** 对标剧拆解：逐步回报进度，返回四大板块（全部待审核）；paywalls 是立项登记的付费集 */
+export async function analyzeBenchmark(source: SourceScript, paywalls: number[], onStep: (index: number) => void, signal?: AbortSignal): Promise<Breakdown> {
   for (let i = 0; i < ANALYZE_STEPS.length; i++) {
     onStep(i)
     await sleep(500 + Math.random() * 300, signal)
   }
-  return analyzeSource(source, mode)
+  return analyzeSource(source, paywalls)
 }
 
 /** 出方向时带上对标剧拆解的哪些结果（故事架构页上写明）；没有拆解时为 null */
@@ -388,13 +387,13 @@ export async function runQa(project: Project, signal?: AbortSignal): Promise<Omi
 
 export const RESOLVE_STEPS = ['读取剧集页', '获取分集列表（含付费集）', '校验下载权限'] as const
 
-/** 解析对标剧链接，返回全集列表 */
-export async function resolveVideoLink(url: string, onStep: (index: number) => void, signal?: AbortSignal) {
+/** 解析对标剧链接，返回全集列表；paywalls 是立项登记的付费集 */
+export async function resolveVideoLink(url: string, paywalls: number[], onStep: (index: number) => void, signal?: AbortSignal) {
   for (let i = 0; i < RESOLVE_STEPS.length; i++) {
     onStep(i)
     await sleep(450 + Math.random() * 300, signal)
   }
-  return video.resolveLink(url)
+  return video.resolveLink(url, paywalls)
 }
 
 export class TranscribeError extends Error {

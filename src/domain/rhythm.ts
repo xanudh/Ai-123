@@ -1,5 +1,5 @@
 import { EPISODE_SECONDS, SCRIPT_CPM, SPEECH_WPM } from './constants'
-import type { Project, RhythmFrame } from './types'
+import type { Benchmark, Project, RhythmFrame } from './types'
 import { phaseRanges } from './work'
 
 /** 需求文档以 70 集为基准给出的节点位置 */
@@ -46,6 +46,19 @@ function clampRhythm(rhythm: RhythmFrame, total: number): RhythmFrame {
 }
 
 export const sameRhythm = (a: RhythmFrame, b: RhythmFrame) => JSON.stringify(a) === JSON.stringify(b)
+
+/** 解析立项登记的对标剧付费集：集数之间用「，」隔开（也认 , 、和空格，全角数字照认），去重排好；有一项不是集数就返回 null */
+export function parsePaywalls(text = ''): number[] | null {
+  const parts = text
+    .replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10))
+    .split(/[，,、\s]+/)
+    .filter(Boolean)
+  if (parts.some((s) => !/^\d+$/.test(s) || Number(s) < 1)) return null
+  return uniqSorted(parts.map(Number))
+}
+
+/** 对标剧登记的付费集；没填或填错都当没登记 */
+export const benchPaywalls = (b: Benchmark | null | undefined) => parsePaywalls(b?.paywalls) ?? []
 
 /** 总集数从 from 改为 to 后的节奏框架：仍是推荐值就按新集数重新推荐，手动改过则只把越界节点收回 */
 export function rhythmForTotal(rhythm: RhythmFrame, from: number, to: number): RhythmFrame {

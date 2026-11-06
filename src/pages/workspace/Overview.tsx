@@ -4,7 +4,7 @@ import { Link } from 'react-router'
 import { Badge, Card, CardHeader, Segmented } from '../../components/ui'
 import { MODE_META, STATUS_META } from '../../domain/constants'
 import { MODE_STAGES, STAGES, hasInnovations } from '../../domain/pipeline'
-import { estimateChars } from '../../domain/rhythm'
+import { benchPaywalls, estimateChars } from '../../domain/rhythm'
 import type { Project, ProjectStatus, StageKey } from '../../domain/types'
 import { finalCount, stageState } from '../../domain/work'
 import { audienceLabel, durationLabel, formatDateTime, languageLabel } from '../../lib/format'
@@ -140,6 +140,7 @@ export default function Overview() {
                   {' '}
                   · {project.benchmark.platform}
                   {project.benchmark.episodes ? ` · ${project.benchmark.episodes} 集` : ''}
+                  {benchPaywalls(project.benchmark).length > 0 && ` · 付费集 ${benchPaywalls(project.benchmark).join('、')}`}
                 </span>
               </KV>
             )}

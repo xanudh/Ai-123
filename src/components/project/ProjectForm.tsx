@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { AUDIENCES, LANGUAGES, MARKETS, MAX_SOURCE_BYTES, PLATFORMS } from '../../domain/constants'
+import { parsePaywalls } from '../../domain/rhythm'
 import type { Benchmark, ProjectDraft, SourceScript } from '../../domain/types'
 import type { FormErrors } from '../../domain/validate'
 import { SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME, parseSource, translateTitle } from '../../services/ai'
@@ -47,6 +48,20 @@ function Section({ title, desc, index, children }: { title: string; desc?: strin
 
 /* ---------------------------------- 基本信息 ---------------------------------- */
 
+/** 对标剧付费集：剧本仿写、视频转剧本都在对标剧信息里填；离开输入框时整理成「8，15，25」 */
+function PaywallField({ benchmark, set, error }: { benchmark: Benchmark; set: (p: Partial<Benchmark>) => void; error?: string }) {
+  const text = benchmark.paywalls ?? ''
+  const tidy = () => {
+    const list = parsePaywalls(text)
+    if (list && list.join('，') !== text) set({ paywalls: list.join('，') })
+  }
+  return (
+    <Field label="付费集" error={error} hint="选填。对标剧的付费卡点在第几集，多个用「，」隔开，第一个即首付费；填了拆解就按这几集拆一卡和付费卡点集">
+      <Input aria-label="付费集" value={text} invalid={!!error} onChange={(e) => set({ paywalls: e.target.value })} onBlur={tidy} placeholder="例：8，15，25" />
+    </Field>
+  )
+}
+
 function BenchmarkFields({ draft, patch, errors }: SectionProps) {
   const b = draft.benchmark ?? EMPTY_BENCHMARK
   const set = (p: Partial<Benchmark>) => patch({ benchmark: { ...b, ...p } })
@@ -76,7 +91,8 @@ function BenchmarkFields({ draft, patch, errors }: SectionProps) {
           </div>
         </Field>
       </div>
-      <div className="mt-4">
+      <div className="mt-4 space-y-4">
+        <PaywallField benchmark={b} set={set} error={errors.benchmarkPaywalls} />
         <Field label="备注">
           <Input value={b.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="例：近 30 天热剧榜前 10，拒婚—归来结构" />
         </Field>
@@ -260,6 +276,9 @@ export function ScriptUploadField({
             ))}
           </select>
         </Field>
+      </div>
+      <div className="mt-4">
+        <PaywallField benchmark={b} set={set} error={errors.benchmarkPaywalls} />
       </div>
 
       {source && (

@@ -10,10 +10,11 @@ import type { GraphPerson } from '../../../components/project/RelationGraph'
 import { RhythmChart } from '../../../components/project/RhythmChart'
 import { AiButton, AutoTextarea, InlineInput, RelationKindList, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, Field, Input, Segmented, Select, Textarea } from '../../../components/ui'
-import { MAX_SOURCE_BYTES } from '../../../domain/constants'
+import { EPISODE_DIMS, MAX_SOURCE_BYTES } from '../../../domain/constants'
 import { BREAKDOWN_BLOCKS } from '../../../domain/pipeline'
-import type { BenchmarkCharacter, Breakdown, BreakdownBlock, CharacterRole, EpisodeBreakdown, HeroDetailKey, LineBeat, Project, Relation, SceneBeat, SourceScript, Synopsis } from '../../../domain/types'
+import type { BenchmarkCharacter, Breakdown, BreakdownBlock, CharacterRole, EpisodeBreakdown, EpisodeDims, HeroDetailKey, LineBeat, Project, Relation, SceneBeat, SourceScript, Synopsis } from '../../../domain/types'
 import { alignRhythm, benchRanges } from '../../../domain/align'
+import { benchPaywalls } from '../../../domain/rhythm'
 import { emptyArchitecture, relationGroup, scaleRhythm } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { ANALYZE_STEPS, SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME, analyzeBenchmark, parseSource } from '../../../services/ai'
@@ -25,7 +26,7 @@ import { useStageSlot } from '../../../v2/bottomSlot'
 const BLOCKS: BreakdownBlock[] = BREAKDOWN_BLOCKS.map((b) => b.key)
 const blockLabel = (block: BreakdownBlock) => BREAKDOWN_BLOCKS.find((b) => b.key === block)!.label
 
-/** 一卡：第一个付费卡点。付费短剧最重要的是第 1 集和一卡，第 1 集到一卡那一集细拆；之后只有付费卡点集按一卡细拆（11/4 标注 #84），其余只写走向 */
+/** 一卡：第一个付费卡点。付费短剧最重要的是第 1 集和付费卡点集，这几集拆五个维度；两者之间的几集逐场细拆，其余只写集纲（11/6） */
 const firstPaywall = (bd: Breakdown) => bd.rhythm.paywalls[0] ?? bd.totalEpisodes
 
 /** 字段、名字、说明、是否占满一行；写法按 11/4 标注给的样例 */
@@ -526,9 +527,11 @@ function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Brea
 /** 节奏曲线收起 / 展开，记在本机 */
 const RHYTHM_FOLD_KEY = 'zhiying.bdRhythm'
 
-/** 冲突主线的节奏：一行摘要常显，曲线可以收起 */
-function RhythmRow({ bd }: { bd: Breakdown }) {
+/** 冲突主线的节奏：一行摘要常显，曲线可以收起；立项登记过付费集的，注明付费卡点照登记的，和这份拆解对不上时提示重新拆解 */
+function RhythmRow({ bd, paywalls }: { bd: Breakdown; paywalls: number[] }) {
   const { rhythm } = bd
+  const registered = paywalls.filter((ep) => ep <= bd.totalEpisodes)
+  const followed = registered.length > 0 && registered.join() === rhythm.paywalls.join()
   const [open, setOpen] = useState(() => localStorage.getItem(RHYTHM_FOLD_KEY) === 'open')
   const toggle = () => {
     localStorage.setItem(RHYTHM_FOLD_KEY, open ? 'closed' : 'open')
@@ -542,15 +545,27 @@ function RhythmRow({ bd }: { bd: Breakdown }) {
         <Badge tone="orange">付费卡点 {rhythm.paywalls.join('、') || '—'}</Badge>
         <Badge tone="green">大反转 {rhythm.twists.join('、') || '—'}</Badge>
         <Badge tone="gray">结局高潮 第 {rhythm.climaxFrom} 集起</Badge>
+        {followed && (
+          <span data-bd-paywall-note className="ml-1 text-ink-500">
+            付费卡点按立项登记的付费集
+          </span>
+        )}
         <Button variant="ghost" size="sm" className="ml-auto" data-bd-rhythm-toggle aria-expanded={open} onClick={toggle}>
           <ChevronDown size={14} className={clsx('transition-transform', open && 'rotate-180')} />
           {open ? '收起曲线' : '展开曲线'}
         </Button>
       </div>
+      {registered.length > 0 && !followed && (
+        <p data-bd-paywall-note className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          立项登记的付费集是第 {registered.join('、')} 集，和这份拆解的付费卡点对不上；要按登记的拆，点上方「重新拆解」
+        </p>
+      )}
       {open && (
         <div data-bd-curve className="mt-3">
           <RhythmChart rhythm={rhythm} total={bd.totalEpisodes} height={180} showTableToggle={false} />
-          <p className="mt-2 text-xs text-ink-400">节奏节点按冲突与揭秘强度从剧本中推断；一键引用时可按本项目集数等比映射</p>
+          <p className="mt-2 text-xs text-ink-400">
+            {followed ? '付费卡点按立项登记的付费集，其余节点' : '节奏节点'}按冲突与揭秘强度从剧本中推断；一键引用时可按本项目集数等比映射
+          </p>
         </div>
       )}
     </div>
@@ -653,7 +668,7 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
   return (
     <div data-scenes={ep} className="space-y-1.5">
       <div className="flex items-center gap-2 px-2 pt-1.5 text-xs leading-6 text-ink-500 tabular-nums">
-        <span data-scene-stats>{scenes.length ? `${scenes.length} 场 · ${lines} 句 · ${turns} 处转折` : '还没细拆：一卡前每集和付费卡点集要拆到场景，逐句标出情绪和转折'}</span>
+        <span data-scene-stats>{scenes.length ? `${scenes.length} 场 · ${lines} 句 · ${turns} 处转折` : '还没细拆：第 1 集和一卡之间的几集要拆到场景，逐句标出情绪和转折'}</span>
         {scenes.length > 1 && (
           <button type="button" className="ml-auto rounded px-1.5 text-ink-500 hover:bg-canvas hover:text-ink-900" onClick={() => setOpen(all ? new Set() : new Set(scenes.map((_, i) => i)))}>
             {all ? '全部收起' : '全部展开'}
@@ -737,25 +752,19 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
   )
 }
 
-/** 首集拆开场（11/4 第五轮标注 #68）：前 3 秒、前 30 秒（主要动作和画面）、钩子 */
-const OPENING_ROWS: ['open3s' | 'open30s' | 'endHook', string, string][] = [
-  ['open3s', '前 3 秒', '第一个画面 / 第一句台词，用什么抓人'],
-  ['open30s', '前 30 秒', '主要动作和画面，一行一个'],
-  ['endHook', '钩子', '本集结尾留什么，让人点下一集'],
-]
+const EMPTY_DIMS: EpisodeDims = { emotion: '', rhythm: '', gap: '', expect: '', thrill: '' }
 
 /**
- * 一集：走向（集纲），第 1 集到一卡另有本集核心台词和逐场逐句的细拆；首集另拆开场，一卡另拆卡点。
- * 一卡之后的付费卡点集按一卡来（11/4 标注 #84）：同样拆卡点、核心台词和逐场逐句。
- * 视频仿写的第 1 集只拆开场（前 3 秒、前 30 秒、钩子），不逐场逐句。
- * 排版（11/4 标注 #70）：左边一列栏名（走向 / 开场 / 卡点 / 核心台词 / 逐场细拆），右边内容，从上往下由粗到细；
- * 只有这一集最要紧的那块上底色（首集开场、付费卡点的卡点），核心台词连着整集的情绪走向一起看，逐句默认收起
+ * 一集：集纲；第 1 集和付费卡点集（一卡和之后的每个付费卡点）在集纲下面拆五个维度（11/6）——情绪、节奏、信息差、期待感、爽点，
+ * 每项都落到具体的一句台词、一个动作或一个表情；原来首集的前 3 秒 / 前 30 秒 / 钩子、付费卡点集的卡点都并进这五项。
+ * 第 1 集和一卡之间的几集另有本集核心台词和逐场逐句的细拆。剧本仿写、视频转剧本一样拆。
+ * 排版（11/4 标注 #70）：左边一列栏名，右边内容，从上往下由粗到细；五个维度一块上底色（首集紫、付费卡点橙），逐句默认收起
  */
-function EpisodeItem({ e, card, video, flash, onChange, onView }: { e: EpisodeBreakdown; card: number; video: boolean; flash: boolean; onChange: (next: Partial<EpisodeBreakdown>) => void; onView: () => void }) {
-  const openingOnly = video && e.ep === 1
-  const scenes = openingOnly ? [] : (e.scenes ?? [])
+function EpisodeItem({ e, card, flash, onChange, onView }: { e: EpisodeBreakdown; card: number; flash: boolean; onChange: (next: Partial<EpisodeBreakdown>) => void; onView: () => void }) {
   const paywall = e.ep === card || e.paywall
-  const fine = !openingOnly && (e.ep <= card || paywall || scenes.length > 0)
+  const keyEp = e.ep === 1 || paywall
+  const scenes = keyEp ? [] : (e.scenes ?? [])
+  const fine = !keyEp && (e.ep < card || scenes.length > 0)
   const core = scenes.flatMap((s) => s.lines.filter((b) => b.turn).map((b) => ({ scene: s.scene.split(' ')[0], b })))
   // 整集的情绪走向：各场的情绪链接起来，相邻相同的并掉
   const chain = scenes.flatMap((s) => emotionChain(s.lines)).filter((x, i, list) => x !== list[i - 1])
@@ -775,29 +784,24 @@ function EpisodeItem({ e, card, video, flash, onChange, onView }: { e: EpisodeBr
         </button>
       </div>
       <dl className="mt-1 space-y-2">
-        <EpRow label="走向">
-          <AutoTextarea inline aria-label={`第 ${e.ep} 集走向`} value={e.flow ?? ''} onChange={(ev) => onChange({ flow: ev.target.value })} placeholder="一段话：哪部分剧情、通过什么、表现了什么" className="text-[13px] leading-6" />
+        <EpRow label="集纲">
+          <AutoTextarea inline aria-label={`第 ${e.ep} 集集纲`} value={e.flow ?? ''} onChange={(ev) => onChange({ flow: ev.target.value })} placeholder="一段话：哪部分剧情、通过什么、表现了什么" className="text-[13px] leading-6" />
         </EpRow>
-        {e.ep === 1 && (
-          <div data-bd-opening className="-mx-2 space-y-0.5 rounded-lg bg-violet-50/70 px-2 py-1">
-            {OPENING_ROWS.map(([key, label, placeholder]) => (
-              <EpRow key={key} label={label} tone="text-violet-800">
-                <AutoTextarea inline aria-label={`首集${label}`} value={e[key] ?? ''} onChange={(ev) => onChange({ [key]: ev.target.value })} placeholder={placeholder} className="text-[13px] leading-6" />
+        {keyEp && (
+          <div data-bd-dims={e.ep} className={clsx('-mx-2 space-y-0.5 rounded-lg px-2 py-1', e.ep === 1 ? 'bg-violet-50/70' : 'bg-orange-50/80')}>
+            {EPISODE_DIMS.map((d) => (
+              <EpRow key={d.key} label={d.label} tone={e.ep === 1 ? 'text-violet-800' : 'text-orange-800'}>
+                <AutoTextarea
+                  inline
+                  aria-label={`第 ${e.ep} 集${d.label}`}
+                  value={e.dims?.[d.key] ?? ''}
+                  onChange={(ev) => onChange({ dims: { ...EMPTY_DIMS, ...e.dims, [d.key]: ev.target.value } })}
+                  placeholder={`${e.ep === 1 && d.first ? `${d.first}；` : ''}${d.hint}。引原文：台词用“”，动作、表情用【】`}
+                  className="text-[13px] leading-6"
+                />
               </EpRow>
             ))}
           </div>
-        )}
-        {paywall && (
-          <EpRow data-bd-card-point={e.ep} label="卡点" tone="text-orange-800" className="-mx-2 rounded-lg bg-orange-50/80 px-2 py-1">
-            <AutoTextarea
-              inline
-              aria-label={e.ep === card ? '一卡卡点' : `第 ${e.ep} 集卡点`}
-              value={e.cardPoint ?? ''}
-              onChange={(ev) => onChange({ cardPoint: ev.target.value })}
-              placeholder="卡在哪一刻、卡前情绪怎么推上去、留下什么问题让人付费"
-              className="text-[13px] leading-6"
-            />
-          </EpRow>
         )}
         {core.length > 0 && (
           <EpRow data-core-lines={e.ep} label="核心台词">
@@ -833,10 +837,21 @@ const PHASE_NO = ['一', '二', '三', '四', '五', '六', '七', '八']
 
 /**
  * 冲突主线 · 内容简介：交互类比情节大纲（11/4 标注）——上面一行节奏（曲线可收起），左边按冲突主线分段的目录，
- * 右边是选中这一段的梗概（类比阶段总览，可改）和段下每集的走向（类比集纲）；可切完整视图看全部段。
- * 第 1 集到一卡逐场、逐句细拆，每集都能查看原文
+ * 右边是选中这一段的梗概（类比阶段总览，可改）和段下每集的集纲；可切完整视图看全部段。
+ * 第 1 集和付费卡点集拆五个维度，两者之间的几集逐场、逐句细拆，每集都能查看原文
  */
-function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: SourceScript | null; video: boolean; patch: (p: Partial<Breakdown>) => void }) {
+function StoryBlock({
+  bd,
+  source,
+  paywalls,
+  patch,
+}: {
+  bd: Breakdown
+  source: SourceScript | null
+  /** 立项登记的付费集 */
+  paywalls: number[]
+  patch: (p: Partial<Breakdown>) => void
+}) {
   const card = firstPaywall(bd)
   const ranges = benchRanges(bd)
   const [viewing, setViewing] = useState<number | null>(null)
@@ -868,12 +883,12 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
     }
   }
   const shown = full ? bd.mainLine.map((_, i) => i) : [Math.min(phase, bd.mainLine.length - 1)]
-  // 旧数据：拆解时间早于内容简介，走向是空的
+  // 旧数据：拆解时间早于内容简介，集纲是空的
   const legacy = bd.episodes.every((e) => !e.flow?.trim())
   return (
     <div>
-      {legacy && <p className="bg-amber-50 px-5 py-2.5 text-[13px] text-amber-800">这份拆解是旧版逐集明细，没有每集走向；点上方「重新拆解」按内容简介重新生成</p>}
-      <RhythmRow bd={bd} />
+      {legacy && <p className="bg-amber-50 px-5 py-2.5 text-[13px] text-amber-800">这份拆解是旧版逐集明细，没有每集集纲；点上方「重新拆解」按内容简介重新生成</p>}
+      <RhythmRow bd={bd} paywalls={paywalls} />
       <div className="grid border-t border-line lg:grid-cols-[220px_minmax(0,1fr)]">
         {/* 目录：按冲突主线分段，段下列每集 */}
         <div className="border-b border-line lg:border-r lg:border-b-0">
@@ -912,9 +927,10 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
                             <span className="min-w-0">
                               <span className="flex items-center gap-1 text-[13px] text-ink-900">
                                 第{e.ep}集
+                                {e.ep === 1 && <span className="rounded bg-violet-50 px-1 text-[10px] text-violet-700">首集</span>}
                                 {e.ep === card && <span className="rounded bg-orange-100 px-1 text-[10px] text-orange-800">一卡</span>}
                                 {e.ep > card && e.paywall && <span className="rounded bg-orange-50 px-1 text-[10px] text-orange-700">付费卡点</span>}
-                                {e.ep <= card && e.ep !== card && <span className="rounded bg-canvas px-1 text-[10px] text-ink-500">细拆</span>}
+                                {e.ep > 1 && e.ep < card && <span className="rounded bg-canvas px-1 text-[10px] text-ink-500">细拆</span>}
                               </span>
                               {e.flow && <span className="block truncate text-xs text-ink-400">{e.flow}</span>}
                             </span>
@@ -929,7 +945,7 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
           </nav>
         </div>
 
-        {/* 选中的段：梗概（阶段总览）+ 每集走向（集纲） */}
+        {/* 选中的段：梗概（阶段总览）+ 每集集纲 */}
         <div className="min-w-0 divide-y divide-line">
           {shown.map((i) => {
             const b = bd.mainLine[i]
@@ -960,7 +976,7 @@ function StoryBlock({ bd, source, video, patch }: { bd: Breakdown; source: Sourc
                 </header>
                 <ol className="space-y-3 p-4">
                   {epsOf(i).map((e) => (
-                    <EpisodeItem key={e.ep} e={e} card={card} video={video} flash={flash === e.ep} onChange={(next) => setEp(e.ep, next)} onView={() => setViewing(e.ep)} />
+                    <EpisodeItem key={e.ep} e={e} card={card} flash={flash === e.ep} onChange={(next) => setEp(e.ep, next)} onView={() => setViewing(e.ep)} />
                   ))}
                 </ol>
               </section>
@@ -1086,9 +1102,10 @@ export default function BreakdownStage({ project }: { project: Project }) {
   const fromVideo = project.mode === 'video' && !!source && source.importedAt === project.work.video?.merged?.importedAt
 
   const analyze = async () => {
-    const cur = latestProject(project.id)?.work.source
+    const latest = latestProject(project.id)
+    const cur = latest?.work.source
     if (!cur) return
-    const result = await run('analyze', (signal) => analyzeBenchmark(cur, project.mode, setStep, signal))
+    const result = await run('analyze', (signal) => analyzeBenchmark(cur, benchPaywalls(latest.benchmark), setStep, signal))
     setStep(null)
     if (!result) return
     patchWork(project.id, { breakdown: result }, `完成对标剧拆解：${result.totalEpisodes} 集，${result.characters.length} 个关键人物`)
@@ -1121,9 +1138,9 @@ export default function BreakdownStage({ project }: { project: Project }) {
           </BlockCard>
           <BlockCard
             block="mainline"
-            desc={`左边选冲突主线的一段，右边是这一段的梗概（阶段总览）和每集走向（集纲）；付费短剧最重要的是第 1 集和一卡（第 ${firstPaywall(bd)} 集）：第 1 集拆前 3 秒、前 30 秒和钩子，一卡拆卡点；${project.mode === 'video' ? '第 2 集' : '第 1 集'}到一卡逐场、逐句拆，之后的付费卡点集也按一卡拆卡点、逐场逐句——情绪在哪一句转、哪句台词带来转折，转折那句就是核心台词`}
+            desc={`左边选冲突主线的一段，右边是这一段的梗概（阶段总览）和每集集纲；付费短剧最重要的是第 1 集和付费卡点集（一卡是第 ${firstPaywall(bd)} 集）：这几集在集纲下面拆五个维度——情绪、节奏、信息差、期待感、爽点，每项都落到具体的一句台词、一个动作或一个表情；第 1 集和一卡之间的几集逐场、逐句拆，情绪在哪一句转、哪句台词带来转折，转折那句就是核心台词`}
           >
-            <StoryBlock bd={bd} source={source} video={project.mode === 'video'} patch={patch} />
+            <StoryBlock bd={bd} source={source} paywalls={benchPaywalls(project.benchmark)} patch={patch} />
           </BlockCard>
           <BlockCard block="characters" desc="交互和人物设定一样：左边选人物，右边看拆解。主角拆简介、身份、金手指、动机，配角拆在这部剧里的作用和定位；关系怎么变只记在关系网里">
             <CharactersBlock bd={bd} patch={patch} />

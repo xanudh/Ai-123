@@ -7,10 +7,10 @@ import type { GoldenFingerKind } from '../../domain/constants'
 import { MAIN_LINE } from '../../domain/pipeline'
 import { defaultRhythm, estimateChars } from '../../domain/rhythm'
 import { cnToNumber, isSceneHeading, parseDialogue, placeOf } from '../../domain/scriptFormat'
-import type { BenchmarkCharacter, Breakdown, EpisodeBreakdown, LineBeat, PlotBeat, ProjectMode, Relation, RhythmFrame, SceneBeat, SourceScript, Synopsis } from '../../domain/types'
+import type { BenchmarkCharacter, Breakdown, EpisodeBreakdown, EpisodeDims, LineBeat, PlotBeat, Relation, RhythmFrame, SceneBeat, SourceScript, Synopsis } from '../../domain/types'
 import { inferRelationKind, phaseRanges, rangeLabel } from '../../domain/work'
 import { clip } from './rng'
-import { SAMPLE_CARD, SAMPLE_CAST, SAMPLE_EPISODES, SAMPLE_HERO, SAMPLE_MAINLINE, SAMPLE_OPENING, SAMPLE_PURPOSE, SAMPLE_SCENES, SAMPLE_SYNOPSIS } from './sampleAnalysis'
+import { SAMPLE_CAST, SAMPLE_DIMS, SAMPLE_EPISODES, SAMPLE_FLOWS, SAMPLE_HERO, SAMPLE_MAINLINE, SAMPLE_PURPOSE, SAMPLE_SCENES, SAMPLE_SYNOPSIS } from './sampleAnalysis'
 
 /* ---------------------------------- 分集 ---------------------------------- */
 
@@ -326,7 +326,7 @@ const MOODS: Table = [
   ['危机', ['包围', '扑', '毒', '要挟', '刺', '绑', '威胁', '末日', '嫁祸', '陷害']],
   ['爽', ['击倒', '按在', '还你', '欢呼', '震飞', '溃败', '踏平', '哗然']],
   ['震惊', ['原来', '竟然', '真相', '属于', '到底是谁', '粉碎', '活了下来']],
-  ['心碎', ['泪', '哭', '苍白', '颤', '心碎', '冰冷']],
+  ['心碎', ['泪', '哭', '苍白', '颤', '心碎', '冰冷', '不信']],
   ['悔恨', ['后悔', '对不起', '赎', '回到我身边', '噩梦', '又错了']],
   ['期待', ['屏息', '等待', '我去', '证明给我看', '变强']],
 ]
@@ -404,49 +404,324 @@ function beatOf(ep: number, s: Scene, i: number): SceneBeat {
   return { scene: `${ep}-${i + 1}${s.place ? ` ${s.place}` : ''}`, action: clip(bare(action), 40), lines }
 }
 
-/** 首集开场（11/4 第五轮标注 #68）：前 3 秒是第一个画面 / 第一句；前 30 秒按字数估，列出主要动作和画面 */
-function openingOf(body: Line[]) {
-  const first = body[0]
-  if (!first) return { open3s: '', open30s: '' }
-  const budget = estimateChars(30)
-  const within: Line[] = []
-  let used = 0
-  for (const l of body) {
-    if (within.length && used >= budget) break
-    within.push(l)
-    used += plain(l).length
-  }
-  const shots = within.filter((l) => l.kind === 'action')
-  return {
-    open3s: `${openLabel(first)}：${told(first, 40)}`,
-    open30s: (shots.length >= 2 ? shots : within)
-      .slice(0, 5)
-      .map((l) => `· ${told(l, 40)}`)
-      .join('\n'),
-  }
-}
+/* ---------------------------------- 五个维度 ---------------------------------- */
 
-/** 付费卡点集（一卡和之后的每个付费卡点）的卡点：卡在哪一刻（本集最后一行）、卡前情绪怎么推上去、留下的问题 */
-function cardPointOf(body: Line[], scenes: Scene[]) {
-  const last = body[body.length - 1]
-  if (!last) return ''
-  const tail = scenes[scenes.length - 1]?.lines ?? body
-  const turn = turnOf(tail)
-  const question = [...tail].reverse().find((l) => /[？?]/.test(plain(l)))
-  return [
-    `卡在：${told(last, 40)}`,
-    turn && `卡前情绪：${turn.includes('→') ? turn : `${turn}拉满`}`,
-    `留下的问题：${question ? told(question, 36) : `${hookLabel(plain(last), false)}——${clip(bare(last), 24)}，下一集才揭晓`}`,
-  ]
-    .filter(Boolean)
-    .join('\n')
+/** 台词开头（）里的表演提示：表情、动作 */
+const cueOf = (text: string) => /^[（(]([^）)]*)[）)]/.exec(text)?.[1] ?? ''
+
+/** 截一句原文：短的整句保留（问号、叹号都留着）；长的先断在句号，再断在逗号，都不行就截断加省略号 */
+function snip(text: string, n: number) {
+  const t = text.replace(/。$/, '')
+  if (t.length <= n) return t
+  const head = t.slice(0, n)
+  const stop = Math.max(head.lastIndexOf('。'), head.lastIndexOf('！'), head.lastIndexOf('？'))
+  if (stop >= n / 3) return t.slice(0, stop + 1).replace(/。$/, '')
+  const at = Math.max(head.lastIndexOf('，'), head.lastIndexOf('；'), head.lastIndexOf('、'))
+  return at >= n / 2 ? head.slice(0, at) : `${head}…`
 }
 
 /**
- * 拆一部对标剧。视频仿写的第 1 集只拆前 3 秒、前 30 秒和钩子，不逐场逐句（11/4 第五轮）；剧本仿写第 1 集照样逐句拆
+ * 引原文（11/6：五个维度要落到具体的一句话、动作、表情）：台词写成 谁【表情】“台词”，动作、镜头写成【动作】。
+ * 和 StoryPlay 拆解的引法一致：台词用“”，动作、舞台说明用【】
  */
-export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptation'): Breakdown {
-  const fineFrom = mode === 'video' ? 2 : 1
+function quote(l: Line, n = 40) {
+  if (l.kind !== 'dialogue') return `【${snip(bare(l), n)}】`
+  const cue = cueOf(l.text)
+  return `${l.speaker}${cue ? `【${cue}】` : ''}“${snip(stripCue(l.text), n)}”`
+}
+
+/** 只引台词本身：“……” */
+const said = (l: Line, n = 30) => `“${snip(l.kind === 'dialogue' ? stripCue(l.text) : bare(l), n)}”`
+
+/** 节奏里每一段的简称：动作只写动作，台词写 谁“……” */
+const short = (l: Line, n = 16) => (l.kind === 'dialogue' ? `${l.speaker}${said(l, n)}` : snip(bare(l), n))
+
+/** 情绪轻重（-5 到 +5，刻度同 StoryPlay）：按这一段认出的情绪给基准分，只在内部比高低、判情绪结果和兑现程度，不写进拆解 */
+const MOOD_SCORE: Record<string, number> = { 屈辱: -4, 心碎: -4, 危机: -3, 悔恨: -2, 震惊: -1, 期待: 1, 爽: 4 }
+/** 情绪写给人看的说法（11/6：情绪不用数字，写成 期待 → 憋屈 → 憋屈到顶 这样） */
+const MOOD_FEEL: Record<string, string> = { 屈辱: '憋屈', 心碎: '心寒', 危机: '紧张', 悔恨: '遗憾', 震惊: '震惊', 期待: '期待', 爽: '解气' }
+
+/** 一段的情绪用词：压得最狠的加「到顶」，当众认证的大释放写「大爽」，认不出情绪的写「悬着」 */
+const feelOf = (b: { mood: string; score: number }) => (b.score >= 5 ? '大爽' : b.score <= -5 ? `${MOOD_FEEL[b.mood] ?? '憋屈'}到顶` : (MOOD_FEEL[b.mood] ?? '悬着'))
+
+/** 主角出手：主角或金手指的那一下（震飞、击倒、还你一次……） */
+const STRIKE = [...KIND_WORDS.力量型, ...KIND_WORDS.武力型, '还你', '应声而断', '碎裂', '溃败', '踏平']
+/** 出手之后旁人的反应 */
+const REACT = ['哗然', '欢呼', '跪拜', '震惊', '愣', '屏息', '惊', '苍白', '溃败', '到底是谁', '竟', '摔得粉碎', '后悔']
+/** 主角赢回了什么：按出手和确认那几句认 */
+const GAINS: [RegExp, string][] = [
+  [/跪拜|加冕|王冠|认亲|册封/, '身份和地位'],
+  [/欢呼|哗然|救世主/, '当众的尊严和声望'],
+  [/按在|还你|击倒|扣住|打脸/, '当面讨回尊严'],
+  [/应声而断|挣断|逃出/, '自由'],
+  [/震飞|溃败|击退|活了下来/, '脱险，活了下来'],
+]
+/** 反派背着主角做局 */
+const SCHEME = ['计划', '嫁祸', '下毒', '陷害', '塞进', '要挟', '打电话']
+/** 有人躲在暗处听见了 */
+const EAVESDROP = /门外|偷听|屏住呼吸|躲在|退进黑暗|里间传来/
+/** 真相揭开的那一句 */
+const TRUTH = /原来|竟然|真相/
+/** 局面急转直下：好不容易赢一点，马上出事 */
+const REVERSAL = ['原来', '竟然', '真相', '刺', '毒', '没入', '倒地', '关进', '绑']
+
+/** 拆五个维度要用到的全剧信息：主角、反派、金手指（底牌）、揭开的身份、伏笔 */
+interface DimContext {
+  hero: string
+  villain?: string
+  /** 主角要让谁追悔：拒绝过主角的感情线，没有就是反派 */
+  target?: string
+  gfKey?: string
+  gfKeys: string[]
+  truth?: string
+  surface?: string
+  /** 关键词第一次出现在第几集 */
+  planted: Map<string, number>
+  secrets: { key: string; from: number; to: number }[]
+}
+
+/** 一集里情绪的一段：多场的一场一段，只有一场的按情绪变化切 */
+interface Beat {
+  place: string
+  lines: Line[]
+  mood: string
+  score: number
+}
+
+/** 一集按情绪切段：每一场里按情绪变化切开，同一场里分值相同的相邻段并掉；最多 5 段（留住最后一段） */
+function beatsOf(scenes: Scene[], strikes: (l: Line) => boolean): Beat[] {
+  // 主角（或金手指）出手的那一句算爽，话没说完（——）的那句不算情绪，别的按关键词认
+  const mood = (lines: Line[]) => (lines.some(strikes) ? '爽' : moodOf(lines.filter((l) => !/——$/.test(plain(l)))))
+  const beats = scenes.flatMap((s) => {
+    const runs: Line[][] = []
+    let cur = ''
+    for (const l of s.lines) {
+      const m = mood([l])
+      if (runs.length && (!m || m === cur)) runs[runs.length - 1].push(l)
+      else runs.push([l])
+      cur = m || cur
+    }
+    // 一场开头认不出情绪的几行（交代、过场）并进后面那段
+    if (runs.length > 1 && !mood(runs[0])) runs.splice(0, 2, [...runs[0], ...runs[1]])
+    return runs
+      .map((lines): Beat => {
+        const m = mood(lines)
+        const base = MOOD_SCORE[m] ?? 0
+        const text = lines.map(plain).join('\n')
+        // 冲突很重的再压一档；有当众认证的放到顶
+        const score = base < 0 && conflictHits(text) >= 3 ? Math.max(-5, base - 1) : base > 0 && PROOF.test(text) ? 5 : base
+        return { place: s.place, lines, mood: m, score }
+      })
+      .reduce<Beat[]>((out, b) => {
+        const prev = out[out.length - 1]
+        if (prev && prev.score === b.score) prev.lines.push(...b.lines)
+        else out.push(b)
+        return out
+      }, [])
+  })
+  return beats.length > 5 ? [...beats.slice(0, 4), beats[beats.length - 1]] : beats
+}
+
+/** 情绪结果（StoryPlay 的五类）：实际释放 / 部分释放 / 悬念反弹 / 无效积压 / 情绪积压；开场的期待不算释放，只看压到最低之后有没有回来 */
+function resultOf(beats: Beat[], hero: string) {
+  const scores = beats.map((b) => b.score)
+  const end = scores[scores.length - 1]
+  if (Math.max(...scores) >= 4) return end < 0 ? '实际释放，集末转成悬念' : '实际释放'
+  const low = scores.indexOf(Math.min(...scores))
+  const back = beats.slice(low + 1).filter((b) => b.score > 0)
+  if (!back.length) return '情绪积压'
+  return back.some((b) => b.lines.some((l) => l.kind === 'dialogue' && l.speaker === hero)) ? '部分释放' : '悬念反弹'
+}
+
+/**
+ * 首集和付费卡点集的五个维度（11/6）：情绪、节奏、信息差、期待感、爽点，每项一段话、都引原文（具体到一句台词 / 一个动作 / 一个表情）。
+ * 首集另写开局切入方式（原来的前 3 秒、前 30 秒）、全剧最大的底牌、全剧总期待；付费卡点集的卡点写进节奏（卡在哪）和期待感（留下的钩子）
+ */
+function dimsOf(ep: number, lines: Line[], paywall: boolean, c: DimContext): EpisodeDims {
+  const body = lines.filter((l) => l.kind !== 'scene')
+  if (!body.length) return { emotion: '', rhythm: '', gap: '', expect: '', thrill: '' }
+  const mentions = (l: Line, name: string) => (l.kind === 'dialogue' && l.speaker === name) || plain(l).includes(name)
+  const isHero = (l: Line) => l.kind === 'dialogue' && l.speaker === c.hero
+  const strikes = (l: Line) => (mentions(l, c.hero) || c.gfKeys.some((k) => plain(l).includes(k))) && hits(plain(l), STRIKE) > 0
+  const scenes = scenesOf(lines)
+  const beats = beatsOf(scenes, strikes)
+  const first = body[0]
+  const last = body[body.length - 1]
+  const lastBeat = beats[beats.length - 1]
+  const key = (b: Beat) => heaviest(b.lines) ?? b.lines[0]
+  const ask = [...body].reverse().find((l) => l.kind === 'dialogue' && /[？?]/.test(l.text) && /谁|什么|为什么|到底|怎么|哪里/.test(l.text))
+  const sceneOf = (l: Line) => scenes.find((s) => s.lines.includes(l))?.lines ?? body
+
+  // 爽点先拆：铺垫 → 出手 → 确认（出手那一场里旁人的反应）→ 赢回 → 级别；期待感的兑现程度跟着它走
+  const strikeAt = body.findIndex(strikes)
+  const strike = body[strikeAt]
+  const pad = heaviest(body.slice(0, strikeAt < 0 ? body.length : strikeAt).filter((l) => !isHero(l) && hits(plain(l), [...HUMILIATE, ...MAJOR, ...MINOR]) > 0))
+  let level = '无'
+  let thrill: string
+  if (!strike) thrill = sentences(['本集无完整爽点，是给后面蓄力', `铺垫是${quote(pad ?? heaviest(body) ?? last)}`, `${c.hero}还没真正出手，没有赢回任何东西`, '级别：无'])
+  else {
+    const scene = sceneOf(strike)
+    const after = scene.slice(scene.indexOf(strike) + 1)
+    const confirm = after.find((l) => !isHero(l) && hits(plain(l), REACT) > 0) ?? after.find((l) => l.kind === 'dialogue' && !isHero(l))
+    const text = [strike, confirm].map((l) => (l ? plain(l) : '')).join('\n')
+    const atEnd = lastBeat.lines.includes(strike)
+    level = PROOF.test(after.map(plain).join('\n')) ? 'T1 大爽' : !confirm ? (atEnd ? '卡点释放' : 'T3 微爽') : /欢呼|哗然|跪拜|救世主/.test(text) ? 'T2 中爽' : 'T3 微爽'
+    thrill = sentences([
+      `铺垫：${pad ? quote(pad) : '前几集一路被压着'}`,
+      `出手：${quote(strike)}`,
+      `确认：${confirm ? quote(confirm) : atEnd ? '结果没演出来，下一集才确认' : '没有旁人当场反应'}`,
+      `赢回：${GAINS.find(([re]) => re.test(text))?.[1] ?? '一点主动'}`,
+      `级别：${level}`,
+    ])
+  }
+
+  // 情绪：不用数字（11/6），写成「期待 → 憋屈 → 憋屈到顶」这样的走向；每一段是哪一句压下去 / 放出来，集末停在哪，整体属于哪一类
+  const low = Math.min(...beats.map((b) => b.score))
+  let bottomed = false
+  const words: string[] = []
+  const steps = beats.map((b, i) => {
+    const prev = beats[i - 1]
+    const feel = feelOf(b)
+    // 认不出情绪的一段：话没说完、留了问题就是悬住，否则情绪延续（不进走向）
+    const hang = b.lines.some((l) => /——$|[？?]$/.test(plain(l)))
+    const [word, how] =
+      !b.mood && prev
+        ? hang
+          ? ['悬着', '情绪悬住']
+          : ['', '情绪延续']
+        : !prev
+          ? [feel, feel]
+          : b.mood === '震惊'
+            ? hang
+              ? ['悬着', '情绪悬住']
+              : [feel, '真相砸下来，震惊']
+            : b.score < prev.score
+              ? [feel, b.score === low && b.score <= -4 ? `${bottomed ? '又压回谷底' : '压到最低'}，${feel}` : `情绪往下压，${feel}`]
+              : b.score > prev.score
+                ? b.score < 0
+                  ? ['回了口气', '稍稍回了口气']
+                  : [feel, prev.score < 0 ? `一下翻上来，${feel}` : `再往上走，${feel}`]
+                : [feel, feel === feelOf(prev) ? `还是${feel}` : `转成${feel}`]
+    if (b.score === low) bottomed = true
+    // 相邻两段说法一样的，后一段写「更……」
+    if (word) words.push(word === words[words.length - 1] ? `更${word}` : word)
+    return `${quote(key(b), 30)}，${how}`
+  })
+  const feel = /[？?—]$/.test(plain(last)) ? '悬而未决' : (MOOD_FEEL[lastBeat.mood] ?? '悬而未决')
+  const emotion = sentences([`走向：${words.join(' → ')}`, steps.join('；'), `集末停在${feel}`, `整体属于${resultOf(beats, c.hero)}`])
+
+  // 节奏：几场、每段快慢、写透和压缩的、集末定格；首集写开局切入方式
+  const pace = (b: Beat) => (b.lines.length >= 5 || (b.lines.length >= 4 && b.lines.filter((l) => l.kind === 'dialogue').length * 4 >= b.lines.length * 3) ? '慢' : '快')
+  const shown = (b: Beat) => heaviest(b.lines.filter((l) => l.kind === 'action')) ?? key(b)
+  const name = (b: Beat) => b.place || `「${short(shown(b), 10)}」这段`
+  // 写透、一笔带过按场说；只有一场的不说
+  const sceneBeats = scenes.length > 1 ? scenes.map((s) => ({ place: s.place, lines: s.lines, mood: '', score: 0 })) : []
+  const long = [...sceneBeats].sort((a, b) => b.lines.length - a.lines.length)[0]
+  const brisk = sceneBeats.find((b) => b !== long && b.lines.length <= 2 && conflictHits(b.lines.map(plain).join('\n')) > 0)
+  // 最后一段只有集末那一句的，就是「卡」
+  const paced = beats.length > 1 && lastBeat.lines.length === 1 && lastBeat.lines[0] === last ? beats.slice(0, -1) : beats
+  let opening = ''
+  if (ep === 1) {
+    const budget = estimateChars(30)
+    const within: Line[] = []
+    let used = 0
+    for (const l of body) {
+      if (within.length && used >= budget) break
+      within.push(l)
+      used += plain(l).length
+    }
+    const base = body.find((l) => c.gfKeys.some((k) => plain(l).includes(k)) || /字幕|年前|回忆|闪回/.test(plain(l)))
+    opening = sentences([
+      `开局${openLabel(first)}：前 3 秒直接是${quote(first, 30)}${within.length > 1 ? `，前 30 秒接着${within.slice(1, 4).map((l) => quote(l, 20)).join('、')}` : ''}`,
+      base ? `底牌第一次露面是${quote(base, 24)}${base.kind === 'action' ? '，只给画面不解释' : ''}` : '背景没有单独交代，边演边带',
+    ])
+  }
+  const rhythm = sentences([
+    opening,
+    `本集 ${scenes.length || 1} 场：${paced.map((b) => `${pace(b)}（${scenes.length > 1 && b.place ? `${b.place}，` : ''}${short(shown(b))}）`).join('→')}→卡（${short(last, 18)}）`,
+    [long && long.lines.length >= 3 && `${name(long)}写透（${long.lines.length} 句）`, brisk && `${name(brisk)}一笔带过`].filter(Boolean).join('，'),
+    `${paywall ? '付费卡点' : '集末'}定格在${quote(last, 30)}`,
+  ])
+
+  // 信息差：揭破的、新埋下的、话没说完的、反派背着主角做的、谁都答不上来的问题；本集没有新的就写延续哪一条
+  const items: string[] = []
+  const cited = new Set<Line>()
+  const add = (l: Line, text: string) => {
+    if (cited.has(l)) return
+    cited.add(l)
+    items.push(text)
+  }
+  const others = c.villain ?? '对手'
+  const eaves = body.find((l) => l.kind === 'action' && EAVESDROP.test(l.text))
+  const revealed = c.secrets.find((s) => s.to === ep)
+  if (revealed) {
+    const l = body.find((x) => plain(x).includes(revealed.key) && hits(plain(x), REVEAL) > 0) ?? body.find((x) => plain(x).includes(revealed.key))!
+    const spy = eaves && c.villain && mentions(eaves, c.villain)
+    add(l, `揭破第 ${revealed.from} 集埋下的「${revealed.key}」：${quote(l)}；${spy ? `可${quote(eaves, 20)}，${c.villain}也知道了，${c.hero}不知道，属于“替主角急”` : `${c.hero}和观众知道了，${others}还不知道，属于“等主角出手”`}`)
+  } else {
+    const truth = body.find((l) => l.kind === 'dialogue' && TRUTH.test(l.text))
+    if (truth && truth.kind === 'dialogue')
+      add(
+        truth,
+        truth.speaker === c.hero
+          ? `揭开真相：${quote(truth)}；${c.hero}${eaves && mentions(eaves, c.hero) ? '在暗处听见了' : '知道了'}，${others}不知道，属于“等主角出手”`
+          : `揭开真相：${quote(truth)}；${truth.speaker}和观众知道了，${c.hero}还不知道，属于“替主角急”`,
+      )
+  }
+  const planted = [...c.planted.entries()].find(([k, from]) => from === ep && k !== revealed?.key)
+  if (planted) {
+    const l = body.find((x) => plain(x).includes(planted[0]))!
+    if (l === ask) add(l, `新埋下「${planted[0]}」：${quote(l)}，${ask.kind === 'dialogue' ? ask.speaker : '说话的人'}知道的比${c.hero}多，${c.hero}和观众都不知道答案，属于“一起猜”`)
+    else if (c.gfKeys.includes(planted[0])) add(l, `新埋下「${planted[0]}」：${quote(l)}，观众看在眼里，${others}和众人都不知道这是${c.hero}的底牌，属于“等主角出手”`)
+    else add(l, `新埋下「${planted[0]}」：${quote(l)}，现在谁都说不清它意味着什么，属于“一起猜”`)
+  }
+  const unsaid = body.find((l) => l.kind === 'dialogue' && /——$/.test(l.text))
+  if (unsaid && unsaid.kind === 'dialogue') add(unsaid, `${quote(unsaid)}话没说完，只有${unsaid.speaker}知道后半句，${unsaid.speaker === c.hero ? '观众' : `${c.hero}和观众`}都不知道，属于“一起猜”`)
+  const scheme = c.villain ? body.find((l) => mentions(l, c.villain!) && !mentions(l, c.hero) && hits(plain(l), SCHEME) > 0) : undefined
+  if (scheme && !sceneOf(scheme).some((l) => mentions(l, c.hero))) add(scheme, `${c.villain}背着${c.hero}${quote(scheme)}，观众知道，${c.hero}不知道，属于“替主角急”`)
+  if (ask && ask.kind === 'dialogue') add(ask, `${quote(ask)}，${ask.speaker}和观众都还不知道答案，属于“一起猜”`)
+  const kept = items.slice(0, 2)
+  let gap = kept.length === 2 ? `两条。一是${kept[0]}；二是${kept[1]}。` : sentences(kept)
+  if (!gap) {
+    const cont = [...c.planted.entries()].filter(([k, from]) => from < ep && body.some((l) => plain(l).includes(k))).sort((a, b) => a[1] - b[1])[0]
+    const l = cont && body.find((x) => plain(x).includes(cont[0]))
+    gap = sentences([cont && l ? `本集没有新的信息差，延续第 ${cont[1]} 集埋下的「${cont[0]}」这一条：${quote(l)}` : `本集没有新的信息差，延续${c.hero}的底牌还没揭开这一条（${quote(heaviest(body) ?? last, 24)}，${others}仍不知道）`])
+  }
+  if (ep === 1) {
+    const reveal = c.secrets.find((s) => c.gfKeys.includes(s.key)) ?? c.secrets[0]
+    const big = c.truth ? `${c.hero}其实是${c.truth}` : c.gfKey ? `${c.hero}握着「${c.gfKey}」` : ''
+    gap = `全剧最大的底牌：${big ? `${big}${reveal ? `（第 ${reveal.to} 集揭开）` : ''}，${others}和众人都不知道` : '信息不足，剧本里还没认出来'}。${gap}`
+  }
+
+  // 期待感：画了什么饼、怎么加码、兑现到什么程度、集末钩子；首集写全剧总期待
+  const vow = body.find((l) => isHero(l) && l.kind === 'dialogue' && (WANT.test(l.text) || /后悔|还你|等着/.test(l.text)))
+  const insult = body.find((l) => l.kind === 'dialogue' && !isHero(l) && hits(plain(l), HUMILIATE) > 0)
+  const danger = heaviest(body.filter((l) => moodOf([l]) === '危机'))
+  const pie = vow
+    ? `饼是${quote(vow)}这句话，观众等着看它兑现`
+    : insult && insult.kind === 'dialogue'
+      ? `饼是让${insult.speaker}为那句${said(insult)}付出代价`
+      : danger
+        ? `饼是${c.hero}能不能闯过${quote(danger)}这一关`
+        : `饼是${c.hero}${c.truth ? '的身份什么时候揭开' : '什么时候翻身'}`
+  // 加码：出手之前一步步压上来的那一句；出手就在开头的，看全集
+  const before = strike && !beats[0].lines.includes(strike) ? body.slice(0, strikeAt) : body
+  const pressure = heaviest(before.filter((l) => ![vow, insult, danger, last, strike].includes(l) && conflictHits(plain(l)) > 0))
+  const scores = beats.map((b) => b.score)
+  const reversed = beats.length > 1 && lastBeat.score < 0 && Math.max(...scores.slice(0, -1)) >= 2 && hits(lastBeat.lines.map(plain).join('\n'), REVERSAL) > 0
+  const met = reversed ? '失控反转' : /T1|T2/.test(level) ? '完全满足' : level === '卡点释放' ? '差一点' : level === '无' ? '未兑现' : '半满足'
+  const hook = `${paywall ? '付费卡点卡在' : '集末钩子是'}${quote(last, 30)}${ask && ask !== last ? `，留下的问题是${quote(ask, 24)}` : ''}`
+  const total = `全剧总期待：看${c.surface ? `被当成“${c.surface}”的` : ''}${c.hero}${c.truth ? `揭开身世、成为${c.truth}` : c.gfKey ? `亮出「${c.gfKey}」翻身` : '翻身'}${c.target ? `，让${c.target}追悔莫及` : ''}`
+  const expect = sentences([ep === 1 && total, `本集的${pie}`, pressure && `加码是${quote(pressure, 30)}`, `兑现程度：${met}`, hook])
+
+  return { emotion, rhythm, gap, expect, thrill }
+}
+
+/**
+ * 拆一部对标剧。第 1 集和付费卡点集（一卡和之后的每个付费卡点）写集纲 + 五个维度，第 1 集和一卡之间的几集逐场、逐句细拆（11/6），
+ * 剧本仿写、视频转剧本一样拆。paywalls 是立项登记的付费集：登记了就按它定一卡和付费卡点集，不再从剧本里认（11/5）
+ */
+export function analyzeSource(source: SourceScript, paywalls: number[] = []): Breakdown {
   const episodes: EpisodeLines[] = source.episodes.map((e) => {
     const lines = e.text
       .split('\n')
@@ -470,15 +745,16 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
   const male = hits(allText, ['战神', '兄弟', '龙王', '女婿', '首富', '老婆'])
   const she = female >= male ? '她' : '他'
 
-  // 节奏：以需求文档的默认框架为起点，在附近挑冲突 / 揭秘最强的集
+  // 节奏：以需求文档的默认框架为起点，在附近挑冲突 / 揭秘最强的集；付费卡点立项登记过就照登记的
   const base = defaultRhythm(total)
+  const registered = paywalls.filter((ep) => ep <= total)
   const rhythm: RhythmFrame = {
     // 第 1 集是免费抓眼球的，付费卡点最早落在第 2 集
-    paywalls: snap(base.paywalls, (ep) => epScore(ep, (t) => conflictHits(t) + hits(t, EMOTION)), total, Math.min(2, total)),
+    paywalls: registered.length ? registered : snap(base.paywalls, (ep) => epScore(ep, (t) => conflictHits(t) + hits(t, EMOTION)), total, Math.min(2, total)),
     twists: snap(base.twists, (ep) => epScore(ep, (t) => hits(t, REVEAL) + hits(t, SECRET_KEYS)), total),
     climaxFrom: base.climaxFrom,
   }
-  // 一卡：第一个付费卡点。第 1 集到一卡那一集细拆到场景和核心台词；之后的付费卡点集按一卡来（11/4 标注 #84），其余只写走向
+  // 一卡：第一个付费卡点。第 1 集和付费卡点集拆五个维度，两者之间的几集细拆到场景和核心台词，其余只写集纲（11/6）
   const firstPaywall = rhythm.paywalls[0] ?? total
 
   const planted = new Map<string, number>()
@@ -511,7 +787,7 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
       }
     }
 
-    // 走向：哪部分剧情（哪条线）、通过什么（本集最重的动作 / 台词）、表现了什么（情绪怎么转、关系怎么变），结尾留下什么
+    // 集纲：哪部分剧情（哪条线）、通过什么（本集最重的动作 / 台词）、表现了什么（情绪怎么转、关系怎么变），结尾留下什么
     const scenes = scenesOf(e.lines)
     const thread = top(THREADS, e.text, 1)[0] ?? '主线'
     const what = scenes
@@ -521,7 +797,7 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
         return `${s.place ? `${s.place}，` : ''}${told(key)}`
       })
       .join('；')
-    // 关系变化只记在人物关系网里，走向里不写（11/3 编剧评审）
+    // 关系变化只记在人物关系网里，集纲里不写（11/3 编剧评审）
     const voice = heaviest(body.filter((l) => l.kind === 'dialogue'))
     const turn = turnOf(body)
     const shows = turn && (turn.includes('→') ? `把情绪从${turn.replace(' → ', '推到')}` : `${turn}拉满`)
@@ -534,10 +810,7 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
     return {
       ep: e.ep,
       flow,
-      scenes: e.ep >= fineFrom && (e.ep <= firstPaywall || paywall) ? scenes.map((s, i) => beatOf(e.ep, s, i)) : [],
-      // 首集拆前 3 秒、前 30 秒和钩子（钩子就是 endHook），付费卡点集（一卡和之后的）拆卡点
-      ...(e.ep === 1 && openingOf(body)),
-      ...(paywall && { cardPoint: cardPointOf(body, scenes) }),
+      scenes: e.ep > 1 && e.ep < firstPaywall ? scenes.map((s, i) => beatOf(e.ep, s, i)) : [],
       openHook: `${openLabel(first)}：${clip(plain(first), 20)}`,
       event: clip(plain(event), 32),
       conflict,
@@ -764,6 +1037,9 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
     }
   })
 
+  const linesOf = new Map(episodes.map((e) => [e.ep, e.lines]))
+  const dimContext: DimContext = { hero, villain, target, gfKey, gfKeys, truth, surface, planted, secrets }
+
   const synopsis: Synopsis = {
     audience: female >= male ? '女频：情感线主导，18–45 岁女性' : '男频：逆袭打脸主导',
     genre: genres.join(' / ') || '待补充',
@@ -787,10 +1063,12 @@ export function analyzeSource(source: SourceScript, mode: ProjectMode = 'adaptat
     mainLine,
     rhythm,
     totalEpisodes: total,
-    // 示例剧本第 1 集到一卡用手写的逐句细拆，首集开场、一卡卡点也是手写的
-    episodes: sample
-      ? rows.map((r) => ({ ...r, ...(SAMPLE_SCENES[r.ep] && r.ep >= fineFrom && { scenes: SAMPLE_SCENES[r.ep] }), ...(r.ep === 1 && SAMPLE_OPENING), ...(r.ep === firstPaywall && { cardPoint: SAMPLE_CARD }) }))
-      : rows,
+    // 第 1 集和付费卡点集拆五个维度；示例剧本这几集的集纲、五个维度和一卡前的逐句细拆用手写的
+    episodes: rows.map((r) => {
+      const e = sample && SAMPLE_FLOWS[r.ep] ? { ...r, flow: SAMPLE_FLOWS[r.ep] } : r
+      if (e.ep === 1 || e.paywall) return { ...e, dims: (sample && SAMPLE_DIMS[e.ep]) || dimsOf(e.ep, linesOf.get(e.ep) ?? [], e.paywall, dimContext) }
+      return sample && e.scenes.length && SAMPLE_SCENES[e.ep] ? { ...e, scenes: SAMPLE_SCENES[e.ep] } : e
+    }),
     review: { synopsis: 'pending', mainline: 'pending', characters: 'pending' },
     referencedAt: null,
     generatedAt: new Date().toISOString(),

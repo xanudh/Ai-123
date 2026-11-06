@@ -8,6 +8,7 @@ import { ModelPicker } from '../../../components/project/ModelBits'
 import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, CardHeader, Input, Segmented } from '../../../components/ui'
 import { modelLabel, modelOf } from '../../../domain/models'
+import { benchPaywalls } from '../../../domain/rhythm'
 import { episodeHeading, formatScene, speakerLabel } from '../../../domain/scriptFormat'
 import type { Project, Shot, TranscribeStatus, VideoEpisode, VideoJob } from '../../../domain/types'
 import { downloadText } from '../../../lib/download'
@@ -98,6 +99,8 @@ function SourcePicker({ project }: { project: Project }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const platform = platformOf(url)
   const source = project.work.source
+  // 立项登记的付费集：首付费那集之后标付费
+  const paywalls = benchPaywalls(project.benchmark)
 
   const create = (job: Omit<VideoJob, 'createdAt' | 'merged'>, note: string) => {
     patchWork(project.id, { video: { ...job, createdAt: new Date().toISOString(), merged: null } }, note)
@@ -108,7 +111,7 @@ function SourcePicker({ project }: { project: Project }) {
   const resolve = async () => {
     const err = linkError(url)
     if (err) return setError(err)
-    const result = await run('resolve', (signal) => resolveVideoLink(url.trim(), setStep, signal))
+    const result = await run('resolve', (signal) => resolveVideoLink(url.trim(), paywalls, setStep, signal))
     setStep(null)
     if (!result) return
     const paid = result.episodes.filter((e) => e.paid).length
@@ -121,13 +124,13 @@ function SourcePicker({ project }: { project: Project }) {
   /** 演示：模拟上传示例剧的全集视频 */
   const uploadDemo = () => {
     const names = Array.from({ length: DEMO_SHOW.episodes }, (_, i) => `${DEMO_SHOW.title} EP${String(i + 1).padStart(2, '0')}.mp4`)
-    create({ origin: 'upload', url: '', platform: '', episodes: episodesFromFiles(names) }, `上传对标剧视频 ${names.length} 集（演示），开始逐集转写`)
+    create({ origin: 'upload', url: '', platform: '', episodes: episodesFromFiles(names, paywalls) }, `上传对标剧视频 ${names.length} 集（演示），开始逐集转写`)
   }
 
   const onFiles = (list: FileList | null) => {
     const files = [...(list ?? [])].filter((f) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name))
     if (!files.length) return setError('请选择视频文件（.mp4 / .mov / .webm），可一次多选')
-    const episodes = episodesFromFiles(files.map((f) => f.name))
+    const episodes = episodesFromFiles(files.map((f) => f.name), paywalls)
     create({ origin: 'upload', url: '', platform: '', episodes }, `上传对标剧视频 ${episodes.length} 集，开始逐集转写`)
     // 本地视频留在内存里，人工校对时左侧播放
     useVideoFiles.getState().attach(project.id, episodes.flatMap((e) => files.filter((f) => f.name === e.file).map((file) => ({ ep: e.ep, file }))))

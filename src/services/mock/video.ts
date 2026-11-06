@@ -142,17 +142,17 @@ const newEpisode = (ep: number, paid: boolean, file?: string): VideoEpisode => (
   shots: [],
 })
 
-/** 解析剧集页：返回全集列表（含付费集） */
-export function resolveLink(url: string): Pick<VideoJob, 'platform' | 'episodes'> {
-  const free = Math.ceil(SAMPLE.length / 5)
+/** 解析剧集页：返回全集列表（含付费集）；立项登记过付费集就从首付费那集之后算付费（卡点集结尾才开始收费） */
+export function resolveLink(url: string, paywalls: number[] = []): Pick<VideoJob, 'platform' | 'episodes'> {
+  const free = paywalls[0] ?? Math.ceil(SAMPLE.length / 5)
   return {
     platform: platformOf(url),
     episodes: SAMPLE.map((e) => newEpisode(e.ep, e.ep > free)),
   }
 }
 
-/** 从文件名识别集数：第3集 / EP03 / E3 / 03.mp4，识别不到按选择顺序补位 */
-export function episodesFromFiles(names: string[]): VideoEpisode[] {
+/** 从文件名识别集数：第3集 / EP03 / E3 / 03.mp4，识别不到按选择顺序补位；登记过付费集的，首付费那集之后标付费 */
+export function episodesFromFiles(names: string[], paywalls: number[] = []): VideoEpisode[] {
   const used = new Set<number>()
   const parsed = names.map((name) => {
     const m = /第\s*([0-9零〇一二两三四五六七八九十百]+)\s*集|ep?\s*[._-]?\s*(\d+)|^(\d+)/i.exec(name.replace(/\.[^.]+$/, ''))
@@ -170,7 +170,7 @@ export function episodesFromFiles(names: string[]): VideoEpisode[] {
       return { name, ep: next }
     })
     .sort((a, b) => a.ep - b.ep)
-    .map(({ name, ep }) => newEpisode(ep, false, name))
+    .map(({ name, ep }) => newEpisode(ep, paywalls.length > 0 && ep > paywalls[0], name))
 }
 
 /** 模拟一次失败：每个任务里固定有一集首次尝试失败，重试即可成功 */

@@ -9,7 +9,7 @@ import { BasisInfo } from '../../../components/project/BasisInfo'
 import { GenerateButton, PolishButton } from '../../../components/project/PolishButton'
 import { RhythmChart } from '../../../components/project/RhythmChart'
 import type { RhythmCompare } from '../../../components/project/RhythmChart'
-import { RhythmEditor } from '../../../components/project/RhythmEditor'
+import { RhythmCurveEditor, RhythmFields } from '../../../components/project/RhythmEditor'
 import { AiButton, AutoTextarea, EpisodeInput, InlineInput, ReviewBadge, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
 import { Badge, Button, Card, Field, Input, MultiSelect, Segmented, Select } from '../../../components/ui'
 import { alignEp, alignRhythm, benchRanges, benchSegment, placeBenchEp } from '../../../domain/align'
@@ -122,14 +122,9 @@ function benchCompare(project: Project): RhythmCompare | undefined {
   }
 }
 
-/** 节奏框架一行摘要：收起时也能看到卡点落在哪几集 */
-function rhythmSummary(r: RhythmFrame, total: number) {
-  const eps = (list: number[]) => (list.length ? `第 ${list.join('、')} 集` : '无')
-  return [`首付费第 ${r.paywalls[0] ?? '—'} 集`, `付费卡点 ${eps(r.paywalls)}`, `大反转 ${eps(r.twists)}`, `结局高潮 ${rangeLabel([r.climaxFrom, total])}`]
-}
-
 /**
- * 节奏框架：折在冲突主线里，默认收起（目标情绪打分还没有合适的依据，曲线只是示意，以分段和卡点为准）。
+ * 节奏框架：放在冲突主线表格下面。付费卡点集（第一个即首付费）、大反转集、结局高潮起始集三项常显，直接改集数（11/5）；
+ * 曲线默认收起（目标情绪打分还没有合适的依据，曲线只是示意，以分段和卡点为准）。
  * 跟冲突主线绑定，先定主线再生成；仿写按对标剧的节奏分段换算；生成后可本地微调，保存后写回项目。
  */
 function RhythmBlock({
@@ -156,14 +151,12 @@ function RhythmBlock({
   const updateProject = useProjects((s) => s.updateProject)
   const total = project.spec.totalEpisodes
   const [rhythm, setRhythm] = useState(project.rhythm)
-  const [manual, setManual] = useState(false)
   const [open, setOpen] = useState(false)
   const bench = project.mode !== 'original' && project.work.breakdown ? alignRhythm(project) : null
   const recommended = bench?.paywalls.length ? bench : rhythmFromPhases(ranges, total)
   const ready = beats.every((b) => b.content.trim())
   const dirty = !sameRhythm(rhythm, project.rhythm)
   const invalid = validateRhythm(rhythm, total).some((i) => i.level === 'error')
-  const showEditor = ready || manual || dirty || locked
   const compare = benchCompare(project)
   const how = bench?.paywalls.length ? '按对标剧的节奏分段对位换算：对标剧每个节点先找它在哪一段，再落到我们对应那段的同一位置' : '按冲突主线分段生成：每段结尾设付费卡点，段中设大反转，最后一段为结局高潮区'
 
@@ -178,34 +171,20 @@ function RhythmBlock({
     setRhythm(recommended)
     updateProject(project.id, { rhythm: recommended }, `按冲突主线生成节奏框架：首付费第 ${recommended.paywalls[0] ?? '—'} 集`)
     onGenerated(recommended)
-    toast(`${bench?.paywalls.length ? '节奏框架已按对标剧分段换算' : '节奏框架已按冲突主线生成'}${open ? '，可在折线图上微调' : '；要微调就展开节奏框架'}`)
+    toast(`${bench?.paywalls.length ? '节奏框架已按对标剧分段换算' : '节奏框架已按冲突主线生成'}，可直接改下面的集数`)
   }
   const strip = <MainLineStrip ranges={ranges} beats={beats} total={total} aligned={sameRhythm(rhythm, recommended)} bench={!!bench?.paywalls.length} />
 
   return (
     <div data-rhythm className={clsx('mt-4 rounded-lg border transition-shadow', fresh ? 'border-brand-300 ring-3 ring-brand-500/10' : 'border-line')}>
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-4 pt-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1 text-[13px] font-semibold text-ink-900">
-            <button
-              type="button"
-              data-rhythm-toggle
-              aria-expanded={open}
-              onClick={() => setOpen(!open)}
-              className="-ml-1 inline-flex items-center gap-1 rounded px-1 hover:text-brand-700"
-              title={open ? '收起节奏框架' : '展开节奏框架：目标情绪曲线、付费卡点与大反转'}
-            >
-              <ChevronRight size={14} className={clsx('text-ink-400 transition-transform', open && 'rotate-90')} />
-              节奏框架
-            </button>
+            节奏框架
             {row && <BasisInfo title="节奏框架" row={row} />}
-            {!open && <span className="ml-1 text-xs font-normal text-ink-400">已收起，点开看曲线、调卡点</span>}
           </div>
-          <p data-rhythm-summary className="mt-1 pl-5 text-xs leading-5 text-ink-700 tabular-nums">
-            {rhythmSummary(rhythm, total).join(' · ')}
-          </p>
-          <p className="pl-5 text-xs leading-5 text-ink-500">
-            {generated ? `${how}；情节大纲与写作都以这张表为准` : `先定冲突主线，再点「生成节奏框架」。目前沿用立项时的默认节奏（首付费第 ${project.rhythm.paywalls[0] ?? '—'} 集）`}
+          <p className="mt-0.5 text-xs leading-5 text-ink-500">
+            {generated ? `${how}；情节大纲与写作都以这张表为准` : locked ? '沿用立项时的默认节奏，没有按冲突主线生成过' : '先定冲突主线，再点「生成节奏框架」；下面是立项时的默认节奏，也可以直接改'}
           </p>
         </div>
         {!locked && (
@@ -228,31 +207,39 @@ function RhythmBlock({
           </div>
         )}
       </div>
-      {open && (
-        <div className="border-t border-line p-4">
-          <p className="mb-3 flex items-start gap-1.5 text-xs leading-5 text-ink-500">
-            <Info size={13} className="mt-[3px] shrink-0 text-ink-400" />
-            曲线上的目标情绪强度只是示意：现在还没有合适的打分依据，以冲突主线的分段和付费卡点、大反转、结局高潮这几个节点为准
-          </p>
-          {showEditor ? (
-            locked ? (
+      <div className="px-4 pt-3 pb-4">
+        <RhythmFields rhythm={locked ? project.rhythm : rhythm} total={total} onChange={setRhythm} disabled={locked} />
+      </div>
+      <div className="border-t border-line">
+        <button
+          type="button"
+          data-rhythm-toggle
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className="flex w-full items-center gap-1 px-4 py-2.5 text-left text-[13px] font-medium text-ink-700 hover:text-brand-700"
+          title={open ? '收起节奏曲线' : '展开节奏曲线：目标情绪曲线，也可以在曲线上点选付费卡点和大反转'}
+        >
+          <ChevronRight size={14} className={clsx('text-ink-400 transition-transform', open && 'rotate-90')} />
+          节奏曲线
+          {!open && <span className="ml-1 text-xs font-normal text-ink-400">已收起，点开看曲线、在曲线上点选卡点</span>}
+        </button>
+        {open && (
+          <div className="px-4 pb-4">
+            <p className="mb-3 flex items-start gap-1.5 text-xs leading-5 text-ink-500">
+              <Info size={13} className="mt-[3px] shrink-0 text-ink-400" />
+              曲线上的目标情绪强度只是示意：现在还没有合适的打分依据，以冲突主线的分段和付费卡点、大反转、结局高潮这几个节点为准
+            </p>
+            {locked ? (
               <>
                 <RhythmChart rhythm={project.rhythm} total={total} compare={compare} />
                 {strip}
               </>
             ) : (
-              <RhythmEditor rhythm={rhythm} total={total} onChange={setRhythm} recommended={recommended} chartFooter={strip} compare={compare} />
-            )
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-[13px] text-ink-500">冲突主线各段的剧情还没填完，节奏框架暂时用立项时的默认节奏。</p>
-              <Button variant="ghost" size="sm" onClick={() => setManual(true)}>
-                直接编辑节奏
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
+              <RhythmCurveEditor rhythm={rhythm} total={total} onChange={setRhythm} recommended={recommended} chartFooter={strip} compare={compare} />
+            )}
+          </div>
+        )}
+      </div>
       <UnsavedChangesPrompt dirty={dirty} desc="节奏框架有未保存的修改，离开后将丢失。" />
     </div>
   )
@@ -520,7 +507,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     return !!(a[item] as string).trim()
   }
 
-  /** 逐项生成会生成的项：原创的核心设定由编剧写；节奏框架折在冲突主线里，排在它后面 */
+  /** 逐项生成会生成的项：原创的核心设定由编剧写；节奏框架放在冲突主线下面，排在它后面 */
   const autoItems = order.filter((i) => !(i === 'logline' && !adaptation)).flatMap((i): ArchItem[] => (i === 'mainLine' ? ['mainLine', 'rhythm'] : [i]))
   /** 下一个空着的项；节奏框架要等冲突主线填完 */
   const nextOf = (p: Project) => autoItems.find((i) => !filledOf(p, i) && !(i === 'rhythm' && !filledOf(p, 'mainLine')))
@@ -928,7 +915,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
                     return { rhythm: await followRhythm(signal) }
                   })
                   if (!r) return
-                  toast(r.rhythm ? '冲突主线已生成，节奏框架也按分段生成好了（折在冲突主线下面）' : '冲突主线已生成；节奏框架没动，要按新分段更新就点「生成节奏框架」')
+                  toast(r.rhythm ? '冲突主线已生成，节奏框架也按分段生成好了（在冲突主线下面）' : '冲突主线已生成；节奏框架没动，要按新分段更新就点「生成节奏框架」')
                 },
               })
             }
@@ -936,7 +923,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
             AI 生成
           </AiButton>
         </>,
-        { hint: '默认五段式：段落可增删，段落名、集数与剧情都可改；节奏框架折在下面，按这里的分段生成' },
+        { hint: '默认五段式：段落可增删，段落名、集数与剧情都可改；下面是节奏框架（付费卡点、大反转、结局高潮），按这里的分段生成' },
       )}
       {benchLine && (
         <div data-line-tabs className="mb-2 flex flex-wrap items-center gap-3">
@@ -1088,7 +1075,7 @@ export default function ArchitectureStage({ project, blocked }: { project: Proje
     </div>
   )
 
-  /** 每一项是一个节点：左边序号（有内容实心）+ 竖线连到下一项，右边是这一项；节奏框架折在冲突主线里，不单独排号 */
+  /** 每一项是一个节点：左边序号（有内容实心）+ 竖线连到下一项，右边是这一项；节奏框架放在冲突主线下面，不单独排号 */
   const render = (item: ArchItem, i: number) => {
     const filled = filledOf(project, item)
     const here = justMade === item || (item === 'mainLine' && justMade === 'rhythm')

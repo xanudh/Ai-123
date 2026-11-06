@@ -187,7 +187,7 @@ function toV11(p: Project): Project {
   type Old = Omit<Breakdown, 'episodes'> & { episodes: (Breakdown['episodes'][number] & { newCharacters?: string; relationChange?: string; paywallMoment?: string })[] }
   const b = p.work.breakdown as Old | null
   if (!b) return p
-  const fresh = p.work.source?.episodes.length ? analyzeSource(p.work.source, p.mode) : null
+  const fresh = p.work.source?.episodes.length ? analyzeSource(p.work.source) : null
   const byEp = new Map(fresh?.episodes.map((e) => [e.ep, e]))
   const episodes = b.episodes.map(({ newCharacters: _n, relationChange: _r, paywallMoment: _m, ...e }) => ({
     ...e,
@@ -219,7 +219,7 @@ function toV13(p: Project): Project {
   type OldScene = Omit<SceneBeat, 'lines'> & { lines?: LineBeat[]; turn?: string; line?: string }
   const b = p.work.breakdown
   if (!b) return p
-  const fresh = p.work.source?.episodes.length ? analyzeSource(p.work.source, p.mode) : null
+  const fresh = p.work.source?.episodes.length ? analyzeSource(p.work.source) : null
   const byEp = new Map(fresh?.episodes.map((e) => [e.ep, e.scenes]))
   const episodes = b.episodes.map((e) => ({
     ...e,
@@ -240,25 +240,19 @@ function toV13(p: Project): Project {
 }
 
 /**
- * 对标剧拆解（11/4 第五轮标注）：首集另拆前 3 秒、前 30 秒，一卡另拆卡点；主角加简介，配角加在这部剧里的作用。
- * 按导入的原文重新拆一遍补上空着的；编剧写过的不动
+ * 对标剧拆解（11/4 第五轮标注）：主角加简介，配角加在这部剧里的作用，按导入的原文重新拆一遍补上空着的；编剧写过的不动。
+ * 当时首集另拆的前 3 秒 / 前 30 秒、一卡的卡点，v19 起并进五个维度，这里不再补
  */
 function toV14(p: Project): Project {
   const b = p.work.breakdown
   if (!b || !p.work.source?.episodes.length) return p
-  const fresh = analyzeSource(p.work.source, p.mode)
-  const freshEp = new Map(fresh.episodes.map((e) => [e.ep, e]))
-  const freshChar = new Map(fresh.characters.map((c) => [c.name, c]))
+  const fresh = new Map(analyzeSource(p.work.source).characters.map((c) => [c.name, c]))
   const keep = (old: string | undefined, next: string | undefined) => (old?.trim() ? old : next)
-  const episodes = b.episodes.map((e) => {
-    const n = freshEp.get(e.ep)
-    return n ? { ...e, open3s: keep(e.open3s, n.open3s), open30s: keep(e.open30s, n.open30s), cardPoint: keep(e.cardPoint, n.cardPoint) } : e
-  })
   const characters = b.characters.map((c) => {
-    const n = freshChar.get(c.name)
+    const n = fresh.get(c.name)
     return n ? { ...c, intro: keep(c.intro, n.intro), purpose: keep(c.purpose, n.purpose) } : c
   })
-  return { ...p, work: { ...p.work, breakdown: { ...b, episodes, characters } } }
+  return { ...p, work: { ...p.work, breakdown: { ...b, characters } } }
 }
 
 /** 故事架构在故事背景后面加核心亮点（11/4 标注 #71）：旧项目补空，编剧自己写或点 AI 生成 */
@@ -266,22 +260,6 @@ function toV15(p: Project): Project {
   const a = p.work.architecture
   if (!a || typeof a.highlights === 'string') return p
   return { ...p, work: { ...p.work, architecture: { ...a, highlights: '' } } }
-}
-
-/**
- * 对标剧拆解（11/4 标注 #84）：一卡之后的付费卡点集也按一卡拆卡点、逐场逐句。
- * 按导入的原文重新拆一遍，补上这些集空着的卡点和细拆；编剧写过的不动
- */
-function toV16(p: Project): Project {
-  const b = p.work.breakdown
-  if (!b || !p.work.source?.episodes.length || !b.episodes.some((e) => e.paywall)) return p
-  const fresh = new Map(analyzeSource(p.work.source, p.mode).episodes.map((e) => [e.ep, e]))
-  const episodes = b.episodes.map((e) => {
-    const n = e.paywall ? fresh.get(e.ep) : undefined
-    if (!n) return e
-    return { ...e, cardPoint: e.cardPoint?.trim() ? e.cardPoint : n.cardPoint, scenes: e.scenes?.length ? e.scenes : n.scenes }
-  })
-  return { ...p, work: { ...p.work, breakdown: { ...b, episodes } } }
 }
 
 /** 伏笔与叙事线索整步删掉（11/4）：去掉伏笔计划、沉寂提醒阈值，审稿报告与保留不改里的伏笔意见（伏笔没写进正文、已回收的伏笔又出现），依据指纹里的伏笔计划 */
@@ -307,6 +285,23 @@ function toV18(p: Project): Project {
   const prints = p.work.prints && Object.fromEntries(Object.entries(p.work.prints).map(([k, print]) => [k, Object.fromEntries(Object.entries(print).filter(([d]) => d !== 'idea'))]))
   const logline = p.logline.trim() || p.mode === 'original' ? p.logline : idea.trim()
   return { ...p, logline, work: { ...p.work, architecture, ...(prints && { prints }) } }
+}
+
+/**
+ * 对标剧拆解（11/6）：第 1 集和付费卡点集改成集纲 + 五个维度（情绪、节奏、信息差、期待感、爽点）。
+ * 原来首集的前 3 秒 / 前 30 秒（open3s / open30s）、付费卡点集的卡点（cardPoint）字段删掉，这几集的逐场细拆清空（并进五个维度）；
+ * 五个维度按导入的原文重新拆一遍补上（付费卡点集照这份拆解的），已经有的不动。原来 v16 给一卡之后的付费卡点集补卡点和细拆，这一步一并替掉
+ */
+function toV19(p: Project): Project {
+  type Old = Breakdown['episodes'][number] & { open3s?: string; open30s?: string; cardPoint?: string }
+  const b = p.work.breakdown
+  if (!b) return p
+  const paywalls = b.episodes.filter((e) => e.paywall).map((e) => e.ep)
+  const fresh = p.work.source?.episodes.length ? new Map(analyzeSource(p.work.source, paywalls).episodes.map((e) => [e.ep, e.dims])) : null
+  const episodes = (b.episodes as Old[]).map(({ open3s: _a, open30s: _b, cardPoint: _c, ...e }) =>
+    e.ep === 1 || e.paywall ? { ...e, scenes: [], dims: e.dims ?? fresh?.get(e.ep) ?? { emotion: '', rhythm: '', gap: '', expect: '', thrill: '' } } : e,
+  )
+  return { ...p, work: { ...p.work, breakdown: { ...b, episodes } } }
 }
 
 interface ProjectsState {
@@ -406,7 +401,7 @@ export const useProjects = create<ProjectsState>()(
     }),
     {
       name: 'zhiying.projects.v1',
-      version: 18,
+      version: 19,
       // v0 → v1：规格新增每集字数；v1 → v2：新增环节产出 work；v2 → v3：二期字段（类型、情节、蓝图、草稿箱）；v3 → v4：三期视频转写任务；
       // v4 → v5：每集字数改由单集时长换算，冲突主线可调整分段；v5 → v6：人物关系类型、质检报告；v6 → v7：平台分类词、样稿剧本格式
       migrate: (persisted, version) => {
@@ -427,9 +422,9 @@ export const useProjects = create<ProjectsState>()(
         if (version < 13) state.projects = state.projects.map(toV13)
         if (version < 14) state.projects = state.projects.map(toV14)
         if (version < 15) state.projects = state.projects.map(toV15)
-        if (version < 16) state.projects = state.projects.map(toV16)
         if (version < 17) state.projects = state.projects.map(toV17)
         if (version < 18) state.projects = state.projects.map(toV18)
+        if (version < 19) state.projects = state.projects.map(toV19)
         return state as ProjectsState
       },
     },

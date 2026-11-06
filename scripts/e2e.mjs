@@ -309,10 +309,11 @@ await check('故事架构：不分层，按编剧顺序 核心设定 → 世界�
   if (await t(`__t.has('AI 给出 3 个方向')`)) throw new Error('「AI 给出 3 个方向」应改名为「AI 框架方向」')
   // 11/4 第五轮标注 #58：AI 评估可行性去掉，只留 AI 框架方向
   if (await t(`__t.has('评估可行性') || __t.has('可行性')`)) throw new Error('AI 评估可行性应已去掉')
-  // 节奏框架折在冲突主线里，默认收起，不单独排号
-  if (!(await evaluate(`!!document.querySelector('[data-item=mainLine] [data-rhythm]')`))) throw new Error('节奏框架应折在冲突主线里')
-  if (await evaluate(`document.querySelector('[data-rhythm-toggle]').getAttribute('aria-expanded') !== 'false' || !!document.querySelector('[data-rhythm] svg rect')`)) throw new Error('节奏框架应默认收起，不显示曲线')
-  if (!(await evaluate(`document.querySelector('[data-rhythm-summary]').innerText.includes('首付费第')`))) throw new Error('收起时应显示节奏摘要')
+  // 节奏框架在冲突主线里，不单独排号；付费卡点集、大反转集、结局高潮起始集直接放在冲突主线表格下面（11/5），曲线默认收起
+  if (!(await evaluate(`!!document.querySelector('[data-item=mainLine] [data-rhythm]')`))) throw new Error('节奏框架应在冲突主线里')
+  if (await evaluate(`document.querySelector('[data-rhythm-toggle]').getAttribute('aria-expanded') !== 'false' || !!document.querySelector('[data-rhythm] svg rect')`)) throw new Error('节奏曲线应默认收起')
+  const rhythmFields = await evaluate(`(() => { const f = document.querySelector('[data-item=mainLine] [data-rhythm-fields]'); const table = document.querySelector('[data-item=mainLine] [data-line-table]'); const toggle = document.querySelector('[data-rhythm-toggle]'); return f && { text: f.innerText, below: f.getBoundingClientRect().top >= table.getBoundingClientRect().bottom, aboveCurve: f.getBoundingClientRect().bottom <= toggle.getBoundingClientRect().top, inputs: [...f.querySelectorAll('input')].map((i) => i.getAttribute('aria-label')) } })()`)
+  if (!rhythmFields || !rhythmFields.below || !rhythmFields.aboveCurve || !['付费卡点集（第一个即首付费）', '大反转集', '结局高潮起始集'].every((x) => rhythmFields.text.includes(x)) || rhythmFields.inputs.join() !== '添加付费卡点集（第一个即首付费）,添加大反转集,结局高潮起始集') throw new Error('付费卡点集、大反转集、结局高潮起始集应不用展开、直接在冲突主线表格下面：' + JSON.stringify(rhythmFields))
   if ((await evaluate(`[...document.querySelectorAll('#arch-items [data-node]')].pop().getAttribute('data-node')`)) !== 'writingRules') throw new Error('全局写作要求应放最后')
   const order = await evaluate(`document.querySelector('[data-arch-order]').innerText`)
   if (!order.includes('主角人设 → 冲突主线（含节奏框架）') || !order.endsWith('冲突主线（含节奏框架） → 全局写作要求')) throw new Error('卡片顶部的顺序说明不对：' + order)
@@ -450,9 +451,10 @@ await check('故事架构：冲突主线可改集数，按主线生成节奏框�
   await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${projectId}').work.architecture.phaseEnds?.[0] === 3`, '第一段结束集写回')
   await t(`__t.click('button', '生成节奏框架')`)
   await waitFor(`document.body.innerText.includes('节奏框架已按冲突主线生成')`, '生成 toast')
-  // 节奏框架默认收起：展开才有曲线
+  // 三项集数生成后直接显示在冲突主线下面；曲线默认收起，展开才有
+  if (!(await evaluate(`document.querySelector('[data-rhythm-fields]').innerText.includes('第 3 集')`))) throw new Error('生成后付费卡点集应直接显示新的集数')
   await evaluate(`document.querySelector('[data-rhythm-toggle]').click()`)
-  await waitFor(`document.querySelector('[data-rhythm] svg rect') && document.querySelector('[data-rhythm]').innerText.includes('还没有合适的打分依据')`, '展开节奏框架（曲线只是示意）')
+  await waitFor(`document.querySelector('[data-rhythm] svg rect') && document.querySelector('[data-rhythm]').innerText.includes('还没有合适的打分依据')`, '展开节奏曲线（只是示意）')
   const p = await project()
   const ends = p.work.architecture.phaseEnds
   if (p.rhythm.paywalls.join() !== ends.slice(0, 4).join() || p.rhythm.climaxFrom !== ends[3] + 1) throw new Error('节奏未按主线分段：' + JSON.stringify({ rhythm: p.rhythm, ends }))
@@ -2260,7 +2262,7 @@ await check('故事架构确认前实时列出还差什么；状态条在页面�
   await waitFor(`document.querySelector('[data-bottom-slot] [data-stage-next=characters]')`, '确认后底部接去人物设定')
 })
 
-await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 → 人物设定；梗概按样例写世界观、金手指（不分类型，讲清能力）、核心亮点（期待值）、故事简介；冲突主线类比情节大纲，左边分段目录、右边段梗概和每集走向，一卡前逐场逐句拆出情绪转折和核心台词，可查看原文，节奏曲线可收起；人物参照人物设定，主角拆细；关系网有关系图；不逐块审核，板块跳转和一键引用在页面底部的环节条', async () => {
+await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 → 人物设定；梗概按样例写世界观、金手指（不分类型，讲清能力）、核心亮点（期待值）、故事简介；冲突主线类比情节大纲，左边分段目录、右边段梗概和每集集纲，第 1 集和付费卡点集拆五个维度（每项引原文的台词、动作、表情），可查看原文，节奏曲线可收起；人物参照人物设定，主角拆细；关系网有关系图；不逐块审核，板块跳转和一键引用在页面底部的环节条', async () => {
   await goto('/projects/demo-alpha/stage/breakdown')
   await t(`__t.click('button', '载入示例剧本')`)
   await t(`__t.click('button', '导入并切分')`)
@@ -2286,13 +2288,17 @@ await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 →
   if (bd.mainLine.some((b) => /第 \d+ 集/.test(b.content) || !b.content.trim())) throw new Error('冲突主线每段写梗概，不逐集列：' + JSON.stringify(bd.mainLine.map((b) => b.content)))
   const card = bd.rhythm.paywalls[0]
   if (!(card >= 2)) throw new Error('一卡不应落在第 1 集：' + card)
-  if (bd.episodes.some((e) => !e.flow.trim() || 'relationChange' in e || 'newCharacters' in e || 'paywallMoment' in e)) throw new Error('每集应有走向，去掉新出场人物、关系变化、付费卡点位置')
-  if (bd.episodes.some((e) => (e.ep <= card || e.paywall) !== e.scenes.length > 0) || bd.episodes.filter((e) => e.ep <= card).some((e) => e.scenes.some((s) => !s.scene || !s.action || !s.lines.length || !s.lines.some((b) => b.turn) || 'line' in s || 'turn' in s)) || bd.episodes.filter((e) => e.ep > card && e.paywall).some((e) => e.scenes.some((s) => !s.scene || !s.action || !s.lines.length) || !e.scenes.some((s) => s.lines.some((b) => b.turn)))) throw new Error('第 1 集到一卡（示例手写，每场都有转折）、之后的付费卡点集（按规则粗拆，整集至少一处转折）要逐场、逐句细拆，其余不拆：' + JSON.stringify(bd.episodes.map((e) => [e.ep, e.scenes.length])))
-  if (bd.episodes[0].scenes[0].lines.filter((b) => b.turn).map((b) => b.emotion).join() !== '心碎,愤怒,盼反击,揪心') throw new Error('示例第 1 集应逐句标出情绪转折：' + JSON.stringify(bd.episodes[0].scenes[0].lines))
-  // 11/4 第五轮标注 #68：首集拆前 3 秒、前 30 秒（主要动作和画面）、钩子；一卡拆卡点
-  const e1 = bd.episodes[0]
-  if (!e1.open3s?.trim() || (e1.open30s ?? '').split('\n').filter((l) => l.startsWith('· ')).length < 2 || !e1.endHook.trim()) throw new Error('首集应拆前 3 秒、前 30 秒和钩子：' + JSON.stringify(e1))
-  if (bd.episodes.some((e) => (e.ep === card || e.paywall) !== !!e.cardPoint?.includes('卡在：'))) throw new Error('一卡和之后的付费卡点集拆卡点，其余不拆：' + JSON.stringify(bd.episodes.map((e) => [e.ep, e.cardPoint])))
+  if (bd.episodes.some((e) => !e.flow.trim() || 'relationChange' in e || 'newCharacters' in e || 'paywallMoment' in e)) throw new Error('每集应有集纲，去掉新出场人物、关系变化、付费卡点位置')
+  // 11/6：第 1 集和付费卡点集（一卡和之后的）写集纲 + 五个维度，每项引原文；原来的前 3 秒 / 前 30 秒 / 卡点并进五个维度，这几集不再逐场细拆
+  const DIMS = ['emotion', 'rhythm', 'gap', 'expect', 'thrill']
+  const keyEp = (e) => e.ep === 1 || e.paywall
+  if (bd.episodes.some((e) => keyEp(e) !== !!e.dims || (e.dims && DIMS.some((k) => !e.dims[k]?.trim() || !/[“【]/.test(e.dims[k]))))) throw new Error('第 1 集和付费卡点集拆五个维度、每项引原文，其余不拆：' + JSON.stringify(bd.episodes.map((e) => [e.ep, !!e.dims])))
+  if (bd.episodes.some((e) => 'open3s' in e || 'open30s' in e || 'cardPoint' in e)) throw new Error('前 3 秒 / 前 30 秒 / 卡点字段应并进五个维度')
+  const d1 = bd.episodes[0].dims
+  if (!/^走向：[^。\d]+ → /.test(d1.emotion) || bd.episodes.some((e) => e.dims && /[+-]\d|分值/.test(e.dims.emotion)) || !d1.rhythm.includes('前 3 秒') || !d1.rhythm.includes('卡（') || !d1.gap.includes('全剧最大的底牌') || !d1.expect.includes('全剧总期待') || !d1.thrill.includes('级别：')) throw new Error('首集五个维度应写情绪走向（不用数字）、开局切入方式、全剧最大的底牌、全剧总期待、爽点级别：' + JSON.stringify(d1))
+  if (!d1.emotion.includes('【脸色苍白】') || !d1.emotion.includes('“凯恩，你会后悔的”')) throw new Error('示例首集的情绪应具体到表情和台词：' + d1.emotion)
+  if (!bd.episodes.find((e) => e.ep === card).dims.expect.includes('付费卡点卡在')) throw new Error('一卡的期待感应写付费卡点卡在哪')
+  if (bd.episodes.some((e) => (e.ep > 1 && e.ep < card) !== e.scenes.length > 0) || bd.episodes.some((e) => e.scenes.some((s) => !s.scene || !s.action || !s.lines.length || 'line' in s || 'turn' in s))) throw new Error('只有第 1 集和一卡之间的几集逐场、逐句细拆：' + JSON.stringify(bd.episodes.map((e) => [e.ep, e.scenes.length])))
   // 金手指不分类型（11/4 第二轮标注）
   if (await evaluate(`!!document.querySelector('[data-synopsis=goldenFinger] [data-gf-kinds]')`)) throw new Error('拆解的金手指去掉类型按钮')
   if (!(await evaluate(`document.querySelector('[data-synopsis=goldenFinger]').innerText.includes('最重要的是讲清金手指的能力是什么')`))) throw new Error('金手指说明应强调讲清能力')
@@ -2305,36 +2311,30 @@ await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 →
   await waitFor(`document.querySelector('#bd-block-mainline [data-phase]')?.dataset.phase === '1'`, '上一段')
   await evaluate(`document.querySelector('[data-bd-ep-link="1"]').click()`)
   await waitFor(`document.querySelector('#bd-block-mainline [data-phase]')?.dataset.phase === '0' && !!document.querySelector('#bd-ep-1')`, '点目录里的集跳到那一集')
-  const open = await evaluate(`(() => { const d = document.querySelector('#bd-ep-1 [data-bd-opening]'); return d ? [...d.querySelectorAll('textarea')].map((t) => t.getAttribute('aria-label') + (t.value.trim() ? '' : '（空）')).join() : '' })()`)
-  if (open !== '首集前 3 秒,首集前 30 秒,首集钩子') throw new Error('首集应显示前 3 秒、前 30 秒、钩子：' + open)
+  const dims1 = await evaluate(`(() => { const d = document.querySelector('#bd-ep-1 [data-bd-dims]'); return d ? { labels: [...d.querySelectorAll('textarea')].map((t) => t.getAttribute('aria-label') + (t.value.trim() ? '' : '（空）')).join(), tint: d.className.includes('bg-violet') } : null })()`)
+  if (dims1?.labels !== '第 1 集情绪,第 1 集节奏,第 1 集信息差,第 1 集期待感,第 1 集爽点' || !dims1.tint) throw new Error('首集应显示五个维度（紫底）：' + JSON.stringify(dims1))
+  if (await evaluate(`!!document.querySelector('[data-bd-opening]') || !!document.querySelector('[data-bd-card-point]')`)) throw new Error('开场三栏、卡点一栏应并进五个维度')
   // 11/4 标注 #70：一集按左边一列栏名排，从上往下由粗到细；标题行只留集号、标签和查看原文
   const rows1 = await evaluate(`[...document.querySelectorAll('#bd-ep-1 dt')].map((d) => d.textContent).join()`)
-  if (rows1 !== '走向,前 3 秒,前 30 秒,钩子,核心台词,逐场细拆') throw new Error('首集应按 走向 → 开场三栏 → 核心台词 → 逐场细拆 排：' + rows1)
+  if (rows1 !== '集纲,情绪,节奏,信息差,期待感,爽点') throw new Error('首集应按 集纲 → 情绪、节奏、信息差、期待感、爽点 排：' + rows1)
   if (await evaluate(`document.querySelector('#bd-ep-1 > div').innerText.includes('逐场')`)) throw new Error('标题行不再重复写拆了哪些')
-  // 一卡前逐句：每一场默认收成一行，核心台词连着整集的情绪走向放在上面；点开看逐句、情绪链
-  const fine1 = await evaluate(`(() => { const s = document.querySelector('[data-scenes="1"]'); return { turns: s.querySelectorAll('[data-line-turn]').length, open: s.querySelector('[data-scene-toggle]')?.getAttribute('aria-expanded'), stats: s.querySelector('[data-scene-stats]')?.innerText ?? '', chain: document.querySelector('[data-core-lines="1"] [data-ep-chain]')?.innerText ?? '', core: document.querySelector('[data-core-lines="1"]')?.innerText ?? '' } })()`)
-  if (fine1.turns || fine1.open !== 'false' || !/^\d+ 场 · \d+ 句 · 4 处转折$/.test(fine1.stats) || !fine1.chain.includes('期待') || !fine1.chain.includes('揪心') || !fine1.core.includes('你会后悔的') || !fine1.core.includes('核心台词')) throw new Error('第 1 集逐句默认收起，核心台词带整集情绪走向：' + JSON.stringify(fine1))
-  await evaluate(`document.querySelector('[data-scenes="1"] [data-scene-toggle]').click()`)
-  await waitFor(`document.querySelectorAll('[data-scenes="1"] [data-line-turn]').length === 4`, '点开一场看逐句')
-  const chain1 = await evaluate(`document.querySelector('[data-scenes="1"] [data-chain]')?.innerText ?? ''`)
-  if (!chain1.includes('期待') || !chain1.includes('揪心')) throw new Error('点开的一场应串出情绪：' + chain1)
   await evaluate(`document.querySelector('[data-bd-full]').click()`)
   await waitFor(`document.querySelectorAll('#bd-block-mainline [data-phase]').length === ${bd.mainLine.length}`, '完整视图')
   const ui = await evaluate(`(() => { const b = document.querySelector('#bd-block-mainline'); return { table: !!b.querySelector('table'), phases: b.querySelectorAll('[data-phase]').length, eps: b.querySelectorAll('[data-ep]').length, beats: b.querySelectorAll('[data-phase] header textarea').length, fine: [...b.querySelectorAll('[data-scenes]')].map((e) => +e.dataset.scenes).join(), source: b.querySelectorAll('[data-view-source]').length } })()`)
   if (ui.table || ui.phases !== bd.mainLine.length || ui.beats !== bd.mainLine.length || ui.eps !== bd.episodes.length || ui.source !== bd.episodes.length) throw new Error('冲突主线 · 内容简介应按段写梗概、列出每集，每集能查看原文：' + JSON.stringify(ui))
-  if (ui.fine !== bd.episodes.filter((e) => e.ep <= card || e.paywall).map((e) => e.ep).join()) throw new Error('只有第 1 集到一卡和之后的付费卡点集显示细拆：' + ui.fine)
-  const cardUi = await evaluate(`({ n: document.querySelectorAll('[data-bd-card-point]').length, text: document.querySelector('#bd-ep-${card} [data-bd-card-point] textarea')?.value ?? '', rows: [...document.querySelectorAll('#bd-ep-${card} dt')].map((d) => d.textContent).join(), tint: document.querySelector('#bd-ep-${card}').className.includes('bg-orange') })`)
-  const paywalls = bd.episodes.filter((e) => e.paywall || e.ep === card).length
-  if (cardUi.n !== paywalls || !cardUi.text.includes('卡在：') || cardUi.rows !== '走向,卡点,核心台词,逐场细拆' || cardUi.tint) throw new Error('一卡那一集应拆卡点，只有卡点上底色：' + JSON.stringify(cardUi))
+  if (ui.fine !== bd.episodes.filter((e) => e.ep > 1 && e.ep < card).map((e) => e.ep).join()) throw new Error('只有第 1 集和一卡之间的几集显示细拆：' + ui.fine)
+  const cardUi = await evaluate(`({ n: document.querySelectorAll('[data-bd-dims]').length, text: document.querySelector('#bd-ep-${card} [data-bd-dims] textarea[aria-label="第 ${card} 集节奏"]')?.value ?? '', rows: [...document.querySelectorAll('#bd-ep-${card} dt')].map((d) => d.textContent).join(), tint: document.querySelector('#bd-ep-${card}').className.includes('bg-orange'), dimsTint: document.querySelector('#bd-ep-${card} [data-bd-dims]')?.className.includes('bg-orange') })`)
+  const keyEps = bd.episodes.filter(keyEp).length
+  if (cardUi.n !== keyEps || !cardUi.text.includes('卡（') || cardUi.rows !== '集纲,情绪,节奏,信息差,期待感,爽点' || cardUi.tint || !cardUi.dimsTint) throw new Error('一卡那一集应拆五个维度，只有五个维度上橙底：' + JSON.stringify(cardUi))
   if (!(await evaluate(`document.querySelector('#bd-block-mainline').innerText.includes('一卡 第 ${card} 集')`))) throw new Error('应标出一卡')
-  // 11/4 标注 #84：一卡之后的付费卡点集按一卡来——同样拆卡点、核心台词、逐场逐句，卡点上底色
+  // 一卡之后的付费卡点集按一卡来（11/4 标注 #84，11/6 起是五个维度）
   const later = bd.episodes.find((e) => e.paywall && e.ep > card)
   if (!later) throw new Error('示例拆解里应有一卡之后的付费卡点')
   // 目录里各段都点开，才看得到每集的标签
   await evaluate(`document.querySelectorAll('[data-bd-phase-link]').forEach((a) => a.click())`)
   await waitFor(`document.querySelector('[data-bd-ep-link="${later.ep}"]')`, '目录里展开到这一集')
-  const laterUi = await evaluate(`({ rows: [...document.querySelectorAll('#bd-ep-${later.ep} dt')].map((d) => d.textContent).join(), text: document.querySelector('#bd-ep-${later.ep} [data-bd-card-point] textarea')?.value ?? '', label: document.querySelector('#bd-ep-${later.ep} [data-bd-card-point] textarea')?.getAttribute('aria-label'), badge: document.querySelector('#bd-ep-${later.ep}').innerText.includes('付费卡点'), tag: document.querySelector('[data-bd-ep-link="${later.ep}"]')?.innerText.includes('付费卡点') })`)
-  if (laterUi.rows !== '走向,卡点,核心台词,逐场细拆' || !laterUi.text.includes('卡在：') || laterUi.label !== `第 ${later.ep} 集卡点` || !laterUi.badge || !laterUi.tag) throw new Error(`第 ${later.ep} 集付费卡点应按一卡拆：` + JSON.stringify(laterUi))
+  const laterUi = await evaluate(`({ rows: [...document.querySelectorAll('#bd-ep-${later.ep} dt')].map((d) => d.textContent).join(), text: document.querySelector('#bd-ep-${later.ep} textarea[aria-label="第 ${later.ep} 集期待感"]')?.value ?? '', badge: document.querySelector('#bd-ep-${later.ep}').innerText.includes('付费卡点'), tag: document.querySelector('[data-bd-ep-link="${later.ep}"]')?.innerText.includes('付费卡点'), first: document.querySelector('[data-bd-ep-link="1"]')?.innerText.includes('首集') })`)
+  if (laterUi.rows !== '集纲,情绪,节奏,信息差,期待感,爽点' || !laterUi.text.includes('付费卡点卡在') || !laterUi.badge || !laterUi.tag || !laterUi.first) throw new Error(`第 ${later.ep} 集付费卡点应按一卡拆五个维度：` + JSON.stringify(laterUi))
   const curve = `!!document.querySelector('[data-bd-curve] svg')`
   if (await evaluate(curve)) throw new Error('节奏曲线默认收起')
   await evaluate(`document.querySelector('[data-bd-rhythm-toggle]').click()`)
@@ -2373,18 +2373,14 @@ await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 →
   await t(`__t.click('#bd-block-characters button[aria-pressed]', '关系表')`)
   await waitFor(`document.querySelectorAll('#bd-block-characters [data-bd-table] tbody tr').length === ${bd.relations.length}`, '关系表')
   await t(`__t.click('#bd-block-characters button[aria-pressed]', '关系图')`)
-  // 改走向、加一场、加一句、标转折，存进拆解
-  await t(`__t.type(document.querySelector('textarea[aria-label="第 3 集走向"]'), 'e2e 第 3 集走向')`)
-  await t(`__t.click('[data-scenes="1"] button', '添加一场')`)
-  await until(`(() => { const e = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.breakdown.episodes; return e[2].flow === 'e2e 第 3 集走向' && e[0].scenes.length === ${bd.episodes[0].scenes.length + 1} })()`, '改走向、加一场保存', 3000)
-  await t(`[...[...document.querySelectorAll('[data-scenes="1"] [data-scene]')].pop().querySelectorAll('button')].find((b) => b.textContent.includes('加一句')).click()`)
-  await until(`JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.breakdown.episodes[0].scenes.at(-1).lines.length === 1`, '加一句', 3000)
-  await t(`__t.type([...document.querySelectorAll('[data-scenes="1"] textarea[aria-label=台词]')].pop(), 'e2e：这一句带来转折')`)
-  await t(`[...document.querySelectorAll('[data-scenes="1"] button[aria-pressed]')].pop().click()`)
-  await until(`(() => { const b = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.breakdown.episodes[0].scenes.at(-1).lines[0]; return b.text === 'e2e：这一句带来转折' && b.turn })()`, '标成转折', 3000)
-  await waitFor(`document.querySelector('[data-core-lines="1"]').innerText.includes('e2e：这一句带来转折')`, '转折句进本集核心台词')
-  await t(`[...document.querySelectorAll('[data-scenes="1"] button[aria-label=删除这一场]')].pop().click()`)
-  await t(`__t.type(document.querySelector('textarea[aria-label="第 3 集走向"]'), ${JSON.stringify(bd.episodes[2].flow)})`)
+  // 改集纲、改五个维度，存进拆解
+  const savedEp = (ep) => `JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === 'demo-alpha').work.breakdown.episodes.find((e) => e.ep === ${ep})`
+  await t(`__t.type(document.querySelector('textarea[aria-label="第 3 集集纲"]'), 'e2e 第 3 集集纲')`)
+  await t(`__t.type(document.querySelector('textarea[aria-label="第 1 集爽点"]'), 'e2e：出手是【一拳】')`)
+  await until(`${savedEp(3)}.flow === 'e2e 第 3 集集纲' && ${savedEp(1)}.dims.thrill === 'e2e：出手是【一拳】' && ${savedEp(1)}.dims.emotion === ${JSON.stringify(d1.emotion)}`, '改集纲、改五个维度保存', 3000)
+  await t(`__t.type(document.querySelector('textarea[aria-label="第 3 集集纲"]'), ${JSON.stringify(bd.episodes[2].flow)})`)
+  await t(`__t.type(document.querySelector('textarea[aria-label="第 1 集爽点"]'), ${JSON.stringify(d1.thrill)})`)
+  await until(`${savedEp(1)}.dims.thrill === ${JSON.stringify(d1.thrill)}`, '改回五个维度', 3000)
   await t(`__t.click('[data-bd-bar] button', '人物设定')`)
   await waitFor(nearTop('#bd-block-characters'), '点进度跳到板块', 3000)
   await sleep(200)
@@ -2394,22 +2390,14 @@ await check('对标剧拆解：故事梗概 → 冲突主线 · 内容简介 →
   await shot('breakdown-story')
 })
 
-await check('对标剧拆解：视频仿写的第 1 集只拆前 3 秒、前 30 秒和钩子，不逐场逐句；剧本仿写第 1 集照样逐句拆（11/4 第五轮）', async () => {
-  const fresh = await evaluate(`(async () => {
-    const p = JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((x) => x.id === 'demo-alpha')
-    const { analyzeSource } = await import('/src/services/mock/breakdown.ts')
-    const v = analyzeSource(p.work.source, 'video')
-    const a = analyzeSource(p.work.source, 'adaptation')
-    return { v1: v.episodes[0].scenes.length, v2: v.episodes[1].scenes.length, a1: a.episodes[0].scenes.length, open: !!v.episodes[0].open3s?.trim() && !!v.episodes[0].open30s?.trim() }
-  })()`)
-  if (fresh.v1 || !fresh.v2 || !fresh.a1 || !fresh.open) throw new Error('视频仿写首集不逐句、第 2 集起照拆；剧本仿写首集逐句：' + JSON.stringify(fresh))
+await check('对标剧拆解：视频转剧本和剧本仿写拆法一样，第 1 集都是集纲 + 五个维度，不逐场逐句（11/6）', async () => {
   const setMode = (m) => evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.state.projects.find((x) => x.id === 'demo-alpha').mode = '${m}'; localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
   await setMode('video')
   try {
     await goto('/projects/demo-alpha/stage/breakdown')
-    await waitFor(`document.querySelector('#bd-ep-1 [data-bd-opening]')`, '视频仿写的首集开场')
+    await waitFor(`document.querySelector('#bd-ep-1 [data-bd-dims]')`, '视频转剧本的首集五个维度')
     const ui = await evaluate(`({ scenes: !!document.querySelector('[data-scenes="1"]'), core: !!document.querySelector('[data-core-lines="1"]'), rows: [...document.querySelectorAll('#bd-ep-1 dt')].map((d) => d.textContent).join() })`)
-    if (ui.scenes || ui.core || ui.rows !== '走向,前 3 秒,前 30 秒,钩子') throw new Error('视频仿写的首集只显示开场三栏：' + JSON.stringify(ui))
+    if (ui.scenes || ui.core || ui.rows !== '集纲,情绪,节奏,信息差,期待感,爽点') throw new Error('视频转剧本的首集应和剧本仿写一样：集纲 + 五个维度：' + JSON.stringify(ui))
     await sleep(200)
     await shot('breakdown-video-ep1')
   } finally {
@@ -2656,8 +2644,77 @@ await check('仿写模式：必须登记对标剧剧名', async () => {
   await t(`__t.click('button', '创建剧本')`)
   await waitFor(`document.body.innerText.includes('请填写对标剧剧名')`, '对标剧报错')
 })
-await check('存储迁移：故事架构补上核心亮点；拆解补上金手指、每集走向与细拆并去掉新出场人物等三个字段，旧细拆改成逐句、主角补上拆细的几项，首集开场、一卡卡点、主角简介和配角作用按原文补上，期待值删掉、冲突主线和内容简介的审核合成一块；去掉每集字数、画幅和故事架构的逐层记录，仿写的改写方案并进改写想法（v18 随改写想法删掉），人物关系按备注补上类型，旧标签与旧场景标题换成新写法', async () => {
-  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.version = 4; raw.state.projects.forEach((p) => { if (p.work.architecture) delete p.work.architecture.highlights; p.spec.episodeWords = 1000; p.spec.aspectRatio = '9:16'; delete p.work.qa; const b = p.work.breakdown; if (b) { delete b.synopsis.goldenFinger; b.synopsis.expectation = 'e2e 旧期待值'; b.review = { synopsis: 'approved', characters: 'approved', mainline: 'approved', episodes: 'pending' }; b.episodes.forEach((e) => { delete e.flow; delete e.scenes; Object.assign(e, { newCharacters: '甲', relationChange: '甲 — 乙：结盟', paywallMoment: '' }) }); b.episodes[0].scenes = [{ scene: '1-1 e2e 旧场次', action: 'e2e 旧关键动作', turn: '期待 → 屈辱', line: 'e2e：旧核心台词' }]; b.characters.forEach((c) => { for (const k of ['intro', 'purpose', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']) delete c[k] }); b.episodes.forEach((e) => { delete e.open3s; delete e.open30s; delete e.cardPoint }) } if (p.work.architecture) { p.work.architecture.layers = { start: '2026-11-03T00:00:00.000Z' }; if (p.mode !== 'original') p.work.architecture.plan = 'e2e 旧改写方案：保留拒婚结构' } }); const demo = raw.state.projects.find((p) => p.id === 'demo-rebirth'); demo.work.relations = [{ a: '甲', b: '乙', label: '宿敌，处处陷害' }]; demo.category = '仙侠'; demo.tones = ['爽感', '虐心', '悬疑']; demo.work.drafts = [{ ...(demo.work.drafts[0] ?? { id: 'e2e-old', ep: 1, title: '', status: 'draft', updatedAt: new Date().toISOString(), reviews: [], notes: [] }), lines: [{ id: 'old-1', kind: 'scene', zh: '宴会厅 夜 内' }] }]; localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
+await check('立项：剧本仿写、视频转剧本在对标剧信息里填付费集（多个用「，」隔开），填错报错；拆解按登记的付费集定一卡和付费卡点集，视频按它标付费（11/5）', async () => {
+  const pay = `document.querySelector('input[aria-label=付费集]')`
+  await goto('/projects/new?mode=original')
+  if (await evaluate(`!!${pay}`)) throw new Error('原创剧本不填付费集')
+  await goto('/projects/new?mode=video')
+  await waitFor(`!!${pay} && ${pay}.closest('[class*=rounded-xl]').innerText.includes('对标剧信息')`, '视频转剧本的对标剧信息里有付费集')
+  await goto('/projects/new?mode=adaptation')
+  await waitFor(`!!${pay}`, '剧本仿写有付费集')
+  if (!(await evaluate(`${pay}.closest('div').parentElement.innerText.includes('多个用「，」隔开')`))) throw new Error('付费集应写明多个用「，」隔开')
+  await t(`__t.type(document.querySelector('input[maxlength="30"]'), 'e2e 付费集')`)
+  await t(`__t.type(${pay}, '3，七')`)
+  await t(`__t.click('button', '创建剧本')`)
+  await waitFor(`document.body.innerText.includes('只填集数，多个用「，」隔开')`, '付费集填错报错')
+  await t(`__t.type(${pay}, '6, 3 ，9')`)
+  await evaluate(`${pay}.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))`)
+  await waitFor(`${pay}.value === '3，6，9' && !document.body.innerText.includes('只填集数')`, '离开输入框整理成「，」隔开')
+  await t(`__t.click('button', '载入示例剧本')`)
+  await until(`__t.has('识别到 12 集')`, '载入示例剧本')
+  // 示例剧本只有 12 集：登记到 13 集报错
+  await t(`__t.type(${pay}, '3，13')`)
+  await until(`__t.has('对标剧只有 12 集')`, '超出对标剧集数报错')
+  await t(`__t.type(${pay}, '3，6，9')`)
+  await t(`__t.click('button', '创建剧本')`)
+  await waitFor(`location.pathname.split('/').length === 3 && location.pathname !== '/projects/new' && location.pathname !== '/projects/'`, '创建剧本')
+  const id = await evaluate('location.pathname.split("/")[2]')
+  const created = (await projects()).find((p) => p.id === id)
+  if (created?.benchmark?.paywalls !== '3，6，9') throw new Error('付费集应存进对标剧信息：' + JSON.stringify(created?.benchmark))
+  await until(`__t.has('付费集 3、6、9')`, '概览的对标剧一行显示付费集')
+  await goto(`/projects/${id}/stage/breakdown`)
+  await t(`__t.click('button', '开始拆解')`)
+  await until(`!!document.querySelector('[data-bottom-slot] [data-bd-bar]')`, '拆解完成', 12000)
+  const bd = (await projects()).find((p) => p.id === id).work.breakdown
+  if (bd.rhythm.paywalls.join() !== '3,6,9' || bd.episodes.filter((e) => e.paywall).map((e) => e.ep).join() !== '3,6,9' || !bd.episodes.find((e) => e.ep === 3).dims?.expect.includes('付费卡点卡在')) throw new Error('拆解应按登记的付费集定一卡和付费卡点集：' + JSON.stringify(bd.rhythm))
+  if (bd.episodes.some((e) => (e.ep === 1 || e.paywall) !== !!e.dims)) throw new Error('第 1 集和登记的付费卡点集拆五个维度：' + JSON.stringify(bd.episodes.map((e) => [e.ep, !!e.dims])))
+  if (bd.episodes.some((e) => (e.ep === 2) !== e.scenes.length > 0) || bd.episodes[1].scenes.some((s) => !s.lines.some((b) => b.turn))) throw new Error('只有第 1 集和一卡（第 3 集）之间的第 2 集逐场、逐句细拆：' + JSON.stringify(bd.episodes.map((e) => [e.ep, e.scenes.length])))
+  await until(`document.querySelector('[data-bd-rhythm]')?.innerText.includes('一卡 第 3 集') && document.querySelector('[data-bd-paywall-note]')?.innerText.includes('付费卡点按立项登记的付费集')`, '拆解节奏行注明按登记的付费集')
+  // 第 2 集逐句：每一场默认收成一行，核心台词连着整集的情绪走向放在上面；点开看逐句、情绪链；加一场、加一句、标转折存进拆解
+  await evaluate(`document.querySelectorAll('[data-bd-phase-link]').forEach((a) => a.click())`)
+  await waitFor(`document.querySelector('[data-bd-ep-link="2"]')`, '目录里展开到第 2 集')
+  await evaluate(`document.querySelector('[data-bd-ep-link="2"]').click()`)
+  await waitFor(`!!document.querySelector('[data-scenes="2"]')`, '目录点到第 2 集')
+  const rows2 = await evaluate(`[...document.querySelectorAll('#bd-ep-2 dt')].map((d) => d.textContent).join()`)
+  if (rows2 !== '集纲,核心台词,逐场细拆' || !(await evaluate(`document.querySelector('[data-bd-ep-link="2"]').innerText.includes('细拆')`))) throw new Error('第 1 集和一卡之间的集按 集纲 → 核心台词 → 逐场细拆 排：' + rows2)
+  const fine2 = await evaluate(`(() => { const s = document.querySelector('[data-scenes="2"]'); return { turns: s.querySelectorAll('[data-line-turn]').length, open: s.querySelector('[data-scene-toggle]')?.getAttribute('aria-expanded'), stats: s.querySelector('[data-scene-stats]')?.innerText ?? '', chain: document.querySelector('[data-core-lines="2"] [data-ep-chain]')?.innerText ?? '', core: document.querySelector('[data-core-lines="2"]')?.innerText ?? '' } })()`)
+  if (fine2.turns || fine2.open !== 'false' || !/^\d+ 场 · \d+ 句 · 3 处转折$/.test(fine2.stats) || !fine2.chain.includes('心酸') || !fine2.chain.includes('好奇') || !fine2.core.includes('你到底是谁')) throw new Error('第 2 集逐句默认收起，核心台词带整集情绪走向：' + JSON.stringify(fine2))
+  await evaluate(`document.querySelector('[data-scenes="2"] [data-scene-toggle]').click()`)
+  await waitFor(`document.querySelectorAll('[data-scenes="2"] [data-line-turn]').length === 3`, '点开一场看逐句')
+  if (!(await evaluate(`document.querySelector('[data-scenes="2"] [data-chain]')?.innerText.includes('绝境')`))) throw new Error('点开的一场应串出情绪')
+  const ep2 = `JSON.parse(localStorage.getItem('${KEY}')).state.projects.find((p) => p.id === '${id}').work.breakdown.episodes[1]`
+  await t(`__t.click('[data-scenes="2"] button', '添加一场')`)
+  await until(`${ep2}.scenes.length === ${bd.episodes[1].scenes.length + 1}`, '加一场保存', 3000)
+  await t(`[...[...document.querySelectorAll('[data-scenes="2"] [data-scene]')].pop().querySelectorAll('button')].find((b) => b.textContent.includes('加一句')).click()`)
+  await until(`${ep2}.scenes.at(-1).lines.length === 1`, '加一句', 3000)
+  await t(`__t.type([...document.querySelectorAll('[data-scenes="2"] textarea[aria-label=台词]')].pop(), 'e2e：这一句带来转折')`)
+  await t(`[...document.querySelectorAll('[data-scenes="2"] button[aria-pressed]')].pop().click()`)
+  await until(`(() => { const b = ${ep2}.scenes.at(-1).lines[0]; return b.text === 'e2e：这一句带来转折' && b.turn })()`, '标成转折', 3000)
+  await waitFor(`document.querySelector('[data-core-lines="2"]').innerText.includes('e2e：这一句带来转折')`, '转折句进本集核心台词')
+  await t(`[...document.querySelectorAll('[data-scenes="2"] button[aria-label=删除这一场]')].pop().click()`)
+  await until(`${ep2}.scenes.length === ${bd.episodes[1].scenes.length}`, '删掉加的一场', 3000)
+  // 设置里改了付费集：拆解页提示对不上，要重新拆解
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.state.projects.find((x) => x.id === '${id}').benchmark.paywalls = '4，8'; localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
+  await goto(`/projects/${id}/stage/breakdown`)
+  await until(`document.querySelector('[data-bd-paywall-note]')?.innerText.includes('立项登记的付费集是第 4、8 集') && __t.has('重新拆解')`, '登记的付费集和拆解对不上时提示重新拆解')
+  // 视频：首付费那集之后标付费（卡点集结尾才开始收费）
+  const paid = await evaluate(`(async () => { const v = await import('/src/services/mock/video.ts'); return { link: v.resolveLink('https://www.reelshort.com/x', [5]).episodes.filter((e) => e.paid).map((e) => e.ep)[0], files: v.episodesFromFiles(['EP01.mp4', 'EP02.mp4', 'EP03.mp4'], [2]).map((e) => e.paid).join() } })()`)
+  if (paid.link !== 6 || paid.files !== 'false,false,true') throw new Error('视频应按登记的付费集标付费：' + JSON.stringify(paid))
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.state.projects = raw.state.projects.filter((x) => x.id !== '${id}'); localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
+  await goto('/projects')
+})
+await check('存储迁移：故事架构补上核心亮点；拆解补上金手指、每集集纲与细拆并去掉新出场人物等三个字段，旧细拆改成逐句、主角补上拆细的几项，主角简介和配角作用按原文补上，首集和付费卡点集换成五个维度（v19），期待值删掉、冲突主线和内容简介的审核合成一块；去掉每集字数、画幅和故事架构的逐层记录，仿写的改写方案并进改写想法（v18 随改写想法删掉），人物关系按备注补上类型，旧标签与旧场景标题换成新写法', async () => {
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.version = 4; raw.state.projects.forEach((p) => { if (p.work.architecture) delete p.work.architecture.highlights; p.spec.episodeWords = 1000; p.spec.aspectRatio = '9:16'; delete p.work.qa; const b = p.work.breakdown; if (b) { delete b.synopsis.goldenFinger; b.synopsis.expectation = 'e2e 旧期待值'; b.review = { synopsis: 'approved', characters: 'approved', mainline: 'approved', episodes: 'pending' }; b.episodes.forEach((e) => { delete e.flow; delete e.scenes; Object.assign(e, { newCharacters: '甲', relationChange: '甲 — 乙：结盟', paywallMoment: '' }) }); b.episodes[2].scenes = [{ scene: '3-1 e2e 旧场次', action: 'e2e 旧关键动作', turn: '期待 → 屈辱', line: 'e2e：旧核心台词' }]; b.characters.forEach((c) => { for (const k of ['intro', 'purpose', 'profile', 'background', 'ability', 'goal', 'desire', 'fear', 'flaw', 'arc', 'quotes']) delete c[k] }); b.episodes.forEach((e) => { delete e.dims; if (e.ep === 1) e.open3s = 'e2e 旧前 3 秒'; if (e.paywall) e.cardPoint = 'e2e 旧卡点' }) } if (p.work.architecture) { p.work.architecture.layers = { start: '2026-11-03T00:00:00.000Z' }; if (p.mode !== 'original') p.work.architecture.plan = 'e2e 旧改写方案：保留拒婚结构' } }); const demo = raw.state.projects.find((p) => p.id === 'demo-rebirth'); demo.work.relations = [{ a: '甲', b: '乙', label: '宿敌，处处陷害' }]; demo.category = '仙侠'; demo.tones = ['爽感', '虐心', '悬疑']; demo.work.drafts = [{ ...(demo.work.drafts[0] ?? { id: 'e2e-old', ep: 1, title: '', status: 'draft', updatedAt: new Date().toISOString(), reviews: [], notes: [] }), lines: [{ id: 'old-1', kind: 'scene', zh: '宴会厅 夜 内' }] }]; localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
   await goto('/projects/demo-rebirth')
   await waitFor(`document.body.innerText.includes('90 秒 · 约')`, '概览显示单集时长')
   const saved = await evaluate(`JSON.parse(localStorage.getItem('${KEY}'))`)
@@ -2665,30 +2722,39 @@ await check('存储迁移：故事架构补上核心亮点；拆解补上金手�
   if (saved.state.projects.some((p) => p.mode !== 'original' && p.work.architecture && (p.work.architecture.plan || 'idea' in p.work.architecture))) throw new Error('仿写的旧改写方案应清掉（v10 并进改写想法，v18 改写想法删掉）')
   const bds = saved.state.projects.flatMap((p) => (p.work.breakdown ? [p.work.breakdown] : []))
   if (!bds.length) throw new Error('迁移前应有拆解结果')
-  if (bds.some((b) => !b.synopsis.goldenFinger || 'expectation' in b.synopsis || b.episodes.some((e) => !e.flow || !Array.isArray(e.scenes) || 'newCharacters' in e || 'relationChange' in e || 'paywallMoment' in e))) throw new Error('拆解应按原文补上金手指、每集走向，去掉期待值和旧的三个字段')
-  const oldScene = bds.map((b) => b.episodes[0].scenes[0])
-  if (oldScene.some((s) => s.scene !== '1-1 e2e 旧场次' || s.action !== 'e2e 旧关键动作' || 'turn' in s || 'line' in s || !s.lines?.length)) throw new Error('旧的细拆应改成逐句，场次和关键动作不动：' + JSON.stringify(oldScene))
+  if (bds.some((b) => !b.synopsis.goldenFinger || 'expectation' in b.synopsis || b.episodes.some((e) => !e.flow || !Array.isArray(e.scenes) || 'newCharacters' in e || 'relationChange' in e || 'paywallMoment' in e))) throw new Error('拆解应按原文补上金手指、每集集纲，去掉期待值和旧的三个字段')
+  const oldScene = bds.map((b) => b.episodes[2].scenes[0])
+  if (oldScene.some((s) => s.scene !== '3-1 e2e 旧场次' || s.action !== 'e2e 旧关键动作' || 'turn' in s || 'line' in s || !s.lines?.length)) throw new Error('旧的细拆应改成逐句，场次和关键动作不动：' + JSON.stringify(oldScene))
   if (bds.some((b) => b.characters.some((c) => c.role === '主角' && !c.profile?.trim()))) throw new Error('主角应按原文补上拆细的几项')
-  // v14（11/4 第五轮）：首集前 3 秒 / 前 30 秒、一卡卡点、主角简介、配角作用按原文补上
-  if (bds.some((b) => !b.episodes[0].open3s?.trim() || !b.episodes[0].open30s?.trim() || !b.episodes.find((e) => e.ep === b.rhythm.paywalls[0])?.cardPoint?.trim())) throw new Error('应按原文补上首集开场和一卡卡点')
+  // v14（11/4 第五轮）：主角简介、配角作用按原文补上；v19（11/6）：首集和付费卡点集换成五个维度，前 3 秒 / 前 30 秒 / 卡点字段删掉
+  if (bds.some((b) => b.episodes.some((e) => 'open3s' in e || 'open30s' in e || 'cardPoint' in e || (e.ep === 1 || e.paywall) !== !!e.dims?.emotion?.trim()))) throw new Error('首集和付费卡点集应按原文补上五个维度，去掉开场和卡点字段')
   if (bds.some((b) => b.characters.some((c) => (c.role === '主角' ? !c.intro?.trim() : !c.purpose?.trim())))) throw new Error('应按原文补上主角简介、配角作用')
   if (bds.some((b) => 'episodes' in b.review || b.review.mainline !== 'pending' || b.review.synopsis !== 'approved')) throw new Error('内容简介没确认过，合并后的冲突主线 · 内容简介应回到待审核：' + JSON.stringify(bds.map((b) => b.review)))
   // v15（11/4 标注 #71）：故事架构补上空的核心亮点
   if (saved.state.projects.some((p) => p.work.architecture && p.work.architecture.highlights !== '')) throw new Error('旧项目的故事架构应补上空的核心亮点')
-  if (saved.version !== 18 || saved.state.projects.some((p) => p.work.architecture && 'layers' in p.work.architecture) || saved.state.projects.some((p) => 'aspectRatio' in p.spec) || saved.state.projects.some((p) => 'episodeWords' in p.spec || p.work.qa !== null)) throw new Error('迁移结果不对：' + JSON.stringify(saved.state.projects.map((p) => p.spec)))
+  if (saved.version !== 19 || saved.state.projects.some((p) => p.work.architecture && 'layers' in p.work.architecture) || saved.state.projects.some((p) => 'aspectRatio' in p.spec) || saved.state.projects.some((p) => 'episodeWords' in p.spec || p.work.qa !== null)) throw new Error('迁移结果不对：' + JSON.stringify(saved.state.projects.map((p) => p.spec)))
   if (demo.work.relations[0].kind !== '宿敌') throw new Error('关系类型未推断：' + JSON.stringify(demo.work.relations))
   if (demo.category !== '玄幻' || demo.tones.join() !== '打脸,虐恋,反转') throw new Error('旧标签应换成平台标签：' + demo.category + ' / ' + demo.tones)
   if (demo.work.drafts[0].lines[0].zh !== '夜，内，宴会厅') throw new Error('旧场景标题应改成样稿格式：' + demo.work.drafts[0].lines[0].zh)
   if (demo.work.characters.some((c) => c.costume === undefined || c.lookRef === undefined)) throw new Error('人物应补上服装 / 外形参考字段')
 })
-await check('存储迁移 v16：一卡之后的付费卡点集按原文补上卡点和逐场细拆，编剧写过的不动（11/4 标注 #84）', async () => {
-  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.version = 15; raw.state.projects.forEach((p) => { const b = p.work.breakdown; if (!b) return; b.episodes.filter((e) => e.paywall && e.ep > b.rhythm.paywalls[0]).forEach((e, i) => { e.cardPoint = i === 0 ? 'e2e 手写卡点' : ''; e.scenes = [] }) }); localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
+await check('存储迁移 v19：首集和付费卡点集换成集纲 + 五个维度——去掉前 3 秒 / 前 30 秒 / 卡点、清掉这几集的逐场细拆，五个维度按原文补上，编剧写过的不动（11/6）', async () => {
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); localStorage.setItem('e2e.bdEpisodes', JSON.stringify(Object.fromEntries(raw.state.projects.filter((p) => p.work.breakdown).map((p) => [p.id, p.work.breakdown.episodes])))); raw.version = 18; raw.state.projects.forEach((p) => { const b = p.work.breakdown; if (!b) return; const card = b.rhythm.paywalls[0]; b.episodes.forEach((e) => { if (e.ep === 1) { delete e.dims; e.open3s = 'e2e 旧前 3 秒'; e.open30s = '· e2e 旧前 30 秒'; e.scenes = [{ scene: '1-1 e2e', action: 'e2e', lines: [{ text: 'e2e', emotion: '期待', turn: true }] }] } else if (e.ep === card) { e.dims = { emotion: 'e2e 手写情绪', rhythm: '', gap: '', expect: '', thrill: '' }; e.cardPoint = '卡在：e2e' } else if (e.paywall) { delete e.dims; e.cardPoint = '卡在：e2e'; e.scenes = [{ scene: 'e2e', action: 'e2e', lines: [] }] } }) }); localStorage.setItem('${KEY}', JSON.stringify(raw)) })()`)
   await goto('/projects')
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到最新版本')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 19`, '迁移到最新版本')
   const bds = (await projects()).flatMap((p) => (p.work.breakdown && p.work.source?.episodes.length ? [p.work.breakdown] : []))
-  const later = bds.map((b) => b.episodes.filter((e) => e.paywall && e.ep > b.rhythm.paywalls[0]))
-  if (!later.some((l) => l.length)) throw new Error('示例项目里应有一卡之后的付费卡点集')
-  if (later.some((l) => l.some((e, i) => !e.scenes.length || (i === 0 ? e.cardPoint !== 'e2e 手写卡点' : !e.cardPoint?.includes('卡在：'))))) throw new Error('付费卡点集应补上卡点和细拆，手写的卡点不动：' + JSON.stringify(later.map((l) => l.map((e) => [e.ep, e.cardPoint?.slice(0, 12), e.scenes.length]))))
+  if (!bds.length) throw new Error('示例项目里应有拆解')
+  for (const b of bds) {
+    const card = b.rhythm.paywalls[0]
+    const keyEps = b.episodes.filter((e) => e.ep === 1 || e.paywall)
+    if (b.episodes.some((e) => 'open3s' in e || 'open30s' in e || 'cardPoint' in e)) throw new Error('前 3 秒 / 前 30 秒 / 卡点字段应删掉')
+    if (keyEps.some((e) => e.scenes.length)) throw new Error('首集和付费卡点集的逐场细拆应清掉：' + JSON.stringify(keyEps.map((e) => [e.ep, e.scenes.length])))
+    if (b.episodes.find((e) => e.ep === card).dims.emotion !== 'e2e 手写情绪') throw new Error('编剧写过的五个维度不动')
+    if (keyEps.filter((e) => e.ep !== card).some((e) => !e.dims || ['emotion', 'rhythm', 'gap', 'expect', 'thrill'].some((k) => !e.dims[k]?.trim()))) throw new Error('首集和其余付费卡点集应按原文补上五个维度：' + JSON.stringify(keyEps.map((e) => [e.ep, e.dims])))
+  }
+  // 放回迁移前的拆解，后面的检查照常用
+  await evaluate(`(() => { const raw = JSON.parse(localStorage.getItem('${KEY}')); raw.state.projects.forEach((p) => { const eps = JSON.parse(localStorage.getItem('e2e.bdEpisodes') ?? '{}')[p.id]; if (eps && p.work.breakdown) p.work.breakdown.episodes = eps }); localStorage.setItem('${KEY}', JSON.stringify(raw)); localStorage.removeItem('e2e.bdEpisodes') })()`)
+  await goto('/projects')
 })
 await check('存储迁移 v17：伏笔与叙事线索删掉后，旧项目里的伏笔计划、沉寂阈值、审稿里的伏笔意见与保留记录、依据指纹里的伏笔计划一起清掉', async () => {
   await evaluate(`(() => {
@@ -2708,7 +2774,7 @@ await check('存储迁移 v17：伏笔与叙事线索删掉后，旧项目里的
   })()`)
   const id = await evaluate('window.__e2eFsProject')
   await goto('/projects')
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到最新版本')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 19`, '迁移到最新版本')
   const p = (await projects()).find((x) => x.id === id)
   if ('foreshadows' in p.work) throw new Error('伏笔计划应删掉')
   if (p.work.architecture && 'silenceThreshold' in p.work.architecture) throw new Error('沉寂提醒阈值应删掉')
@@ -2740,7 +2806,7 @@ await check('存储迁移 v18：改写想法删掉（11/5 标注 #87）；核心
   })()`)
   if (!before) throw new Error('应有仿写项目和另一个项目')
   await goto('/projects')
-  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 18`, '迁移到 v18')
+  await waitFor(`JSON.parse(localStorage.getItem('${KEY}')).version === 19`, '迁移到最新版本')
   const all = await projects()
   if (all.some((p) => p.work.architecture && 'idea' in p.work.architecture)) throw new Error('改写想法应从故事架构里删掉')
   const empty = all.find((p) => p.id === before.empty)
