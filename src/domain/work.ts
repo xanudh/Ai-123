@@ -1,7 +1,7 @@
 import { newId } from '../lib/id'
 import { EPISODE_RANGE, EPISODE_SECONDS, VIEWPOINTS } from './constants'
 import { MAIN_LINE, STAGES } from './pipeline'
-import type { Architecture, Character, EpisodeDraft, Project, ProjectWork, Relation, RhythmFrame, ScriptLine, StageKey } from './types'
+import type { Architecture, Character, EpisodeDraft, Project, ProjectWork, Relation, ScriptLine, StageKey } from './types'
 
 export const emptyWork = (): ProjectWork => ({
   video: null,
@@ -182,13 +182,6 @@ export function inferRelationKind(label: string): string {
     [/盟友|阵营/, '盟友'],
   ]
   return rules.find(([re]) => re.test(label))?.[1] ?? ''
-}
-
-/** 把对标剧的节奏框架按集数等比映射到本项目 */
-export function scaleRhythm(rhythm: RhythmFrame, from: number, to: number): RhythmFrame {
-  const s = (ep: number) => Math.min(to, Math.max(1, Math.round((ep * to) / Math.max(from, 1))))
-  const list = (eps: number[]) => [...new Set(eps.map(s))].sort((a, b) => a - b)
-  return { paywalls: list(rhythm.paywalls), twists: list(rhythm.twists), climaxFrom: s(rhythm.climaxFrom) }
 }
 
 /* ---------------------------------- 剧本 ---------------------------------- */

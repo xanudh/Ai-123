@@ -1,4 +1,4 @@
-import { EPISODE_RANGE, EPISODE_SECONDS } from './constants'
+import { EPISODE_RANGE, EPISODE_SECONDS, MAX_PAYWALLS } from './constants'
 import { parsePaywalls } from './rhythm'
 import type { ProjectDraft } from './types'
 
@@ -16,6 +16,7 @@ export function validateAll(d: ProjectDraft): FormErrors {
     const paywalls = parsePaywalls(d.benchmark.paywalls)
     const episodes = d.benchmark.episodes
     if (!paywalls) e.benchmarkPaywalls = '只填集数，多个用「，」隔开，例：8，15，25'
+    else if (paywalls.length > MAX_PAYWALLS) e.benchmarkPaywalls = `付费集最多填 ${MAX_PAYWALLS} 个`
     else if (episodes && paywalls[paywalls.length - 1] > episodes) e.benchmarkPaywalls = `对标剧只有 ${episodes} 集`
   }
   // 题材类型、风格元素、集数与时长不在立项和设置里填：立项先用默认值，到故事架构填，原创的题材在确认故事架构时检查

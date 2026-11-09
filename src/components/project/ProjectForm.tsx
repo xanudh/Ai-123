@@ -56,7 +56,7 @@ function PaywallField({ benchmark, set, error }: { benchmark: Benchmark; set: (p
     if (list && list.join('，') !== text) set({ paywalls: list.join('，') })
   }
   return (
-    <Field label="付费集" error={error} hint="选填。对标剧的付费卡点在第几集，多个用「，」隔开，第一个即首付费；填了拆解就按这几集拆一卡和付费卡点集">
+    <Field label="付费集" error={error} hint="选填。对标剧的付费卡点在第几集，多个用「，」隔开、最多 20 个，第一个即首付费；填了拆解就按这几集拆一卡和付费卡点集">
       <Input aria-label="付费集" value={text} invalid={!!error} onChange={(e) => set({ paywalls: e.target.value })} onBlur={tidy} placeholder="例：8，15，25" />
     </Field>
   )

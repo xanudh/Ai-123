@@ -2,7 +2,7 @@
  * 仿写的对位：我们第 N 集 ≈ 对标剧第几集。按内容的阶段对位，不按集数对位：
  * ① 先对阶段：冲突主线的段按内容对；② 段内先对关键节点：付费卡点对付费卡点、大反转对大反转；③ 其余普通集按比例落在两个节点之间。
  * 勾了「完全按对标剧」且集数一样，就是第 N 集对第 N 集。我们新加的段（bench = -1）不对位。
- * 一键引用时节奏框架的换算、节奏曲线上的对标剧虚线、集纲的「对位」都用这一套。
+ * 故事架构生成节奏框架时的换算、节奏曲线上的对标剧虚线、集纲的「对位」都用这一套。
  */
 import type { Breakdown, Project, RhythmFrame } from './types'
 import { defaultPhaseName, phaseCount, phaseOf, phaseRanges, projectPhases } from './work'

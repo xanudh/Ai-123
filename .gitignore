@@ -6,6 +6,7 @@ tsconfig.tsbuildinfo
 # 本地开发工具及其数据，不进仓库
 devtools/
 annotations/
-# 内部材料（会议纪要、问题讨论），只留本地
+# 内部材料（会议纪要、问题讨论、后端接口文档），只留本地
 docs/会议纪要-*.md
 docs/问题讨论-*.md
+docs/剧本Agent接口文档.md

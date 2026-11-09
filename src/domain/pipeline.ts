@@ -50,7 +50,7 @@ export const STAGES: Record<StageKey, StageMeta> = {
     deliverables: ['故事梗概', '节奏曲线', '人物设定', '内容简介', '可迁移骨架'],
     phase: null,
     notes: [
-      '三个板块看过、改好后「一键引用」进入改写',
+      '三个板块看过后「一键引用」进入改写',
       '经市场验证的主线结构（开局困境 → 第一次小反转 → 中点大反转…）仿写时尽量保持',
     ],
   },
@@ -123,7 +123,7 @@ export type StageNeedLevel = 'must' | 'quick' | 'skip'
 
 export const STAGE_NEED: Partial<Record<StageKey, { level: StageNeedLevel; text: string }>> = {
   video: { level: 'must', text: '视频转写是拆解的原料，必做；人工校对可以跳过，不校对也能合并' },
-  breakdown: { level: 'quick', text: '拆解结果是改写的依据，必做；拆完不用逐块审核，看过、改好就可以「一键引用」' },
+  breakdown: { level: 'quick', text: '拆解结果是改写的依据，必做；拆解结果只读、不用逐块审核，看过就可以「一键引用」' },
   architecture: { level: 'must', text: '必做；只有核心设定必填，其余各项可以空着，也可以让 AI 一项一项生成空着的项（每生成一项停下来看），确认前看一眼标「补充」的内容' },
   characters: { level: 'quick', text: '后面的大纲与写作都按人物来，必做；可以 AI 一键生成，非必填项不用填' },
   outline: { level: 'quick', text: '写作按集纲来，必做；可以「AI 一键生成全部」，不逐集细看' },

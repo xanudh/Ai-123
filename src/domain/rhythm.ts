@@ -47,11 +47,12 @@ function clampRhythm(rhythm: RhythmFrame, total: number): RhythmFrame {
 
 export const sameRhythm = (a: RhythmFrame, b: RhythmFrame) => JSON.stringify(a) === JSON.stringify(b)
 
-/** 解析立项登记的对标剧付费集：集数之间用「，」隔开（也认 , 、和空格，全角数字照认），去重排好；有一项不是集数就返回 null */
+/** 解析立项登记的对标剧付费集：集数之间用「，」隔开（也认 , 、 。 . 和空格，「第 4 集」写法和全角数字照认，和后端接口一致），去重排好；有一项不是集数就返回 null */
 export function parsePaywalls(text = ''): number[] | null {
   const parts = text
     .replace(/[０-９]/g, (d) => String(d.charCodeAt(0) - 0xff10))
-    .split(/[，,、\s]+/)
+    .replace(/第\s*(\d+)\s*集/g, '$1')
+    .split(/[，,、。.\s]+/)
     .filter(Boolean)
   if (parts.some((s) => !/^\d+$/.test(s) || Number(s) < 1)) return null
   return uniqSorted(parts.map(Number))

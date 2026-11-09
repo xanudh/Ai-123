@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Eye, FileUp, Link2, Plus, Trash2, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Eye, FileUp, Link2 } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -8,14 +8,14 @@ import { ConfirmDialog, Modal } from '../../../components/overlay'
 import { RELATION_GROUPS, RelationGraph, RelationLegend } from '../../../components/project/RelationGraph'
 import type { GraphPerson } from '../../../components/project/RelationGraph'
 import { RhythmChart } from '../../../components/project/RhythmChart'
-import { AiButton, AutoTextarea, InlineInput, RelationKindList, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
-import { Badge, Button, Card, CardHeader, Field, Input, Segmented, Select, Textarea } from '../../../components/ui'
+import { AiButton, Stat, Table, latestProject, stagePath, useAiTask } from '../../../components/stage/StageKit'
+import { Badge, Button, Card, CardHeader, Field, Segmented, Textarea } from '../../../components/ui'
 import { EPISODE_DIMS, MAX_SOURCE_BYTES } from '../../../domain/constants'
 import { BREAKDOWN_BLOCKS } from '../../../domain/pipeline'
-import type { BenchmarkCharacter, Breakdown, BreakdownBlock, CharacterRole, EpisodeBreakdown, EpisodeDims, HeroDetailKey, LineBeat, Project, Relation, SceneBeat, SourceScript, Synopsis } from '../../../domain/types'
-import { alignRhythm, benchRanges } from '../../../domain/align'
+import type { BenchmarkCharacter, Breakdown, BreakdownBlock, CharacterRole, EpisodeBreakdown, HeroDetailKey, LineBeat, Project, SceneBeat, SourceScript, Synopsis } from '../../../domain/types'
+import { benchRanges } from '../../../domain/align'
 import { benchPaywalls } from '../../../domain/rhythm'
-import { emptyArchitecture, relationGroup, scaleRhythm } from '../../../domain/work'
+import { emptyArchitecture, relationGroup } from '../../../domain/work'
 import { formatDateTime } from '../../../lib/format'
 import { ANALYZE_STEPS, SAMPLE_SCRIPT, SAMPLE_SCRIPT_NAME, analyzeBenchmark, parseSource } from '../../../services/ai'
 import { useProjects } from '../../../store/projects'
@@ -44,6 +44,7 @@ const SYNOPSIS_FIELDS: [keyof Synopsis, string, string?, boolean?][] = [
 
 /* ---------------------------------- 导入 ---------------------------------- */
 
+/** 导入剧本：点「导入并切分」后直接开始拆解（11/8，见 BreakdownStage） */
 function ImportCard({ project }: { project: Project }) {
   const patchWork = useProjects((s) => s.patchWork)
   const [text, setText] = useState('')
@@ -65,7 +66,7 @@ function ImportCard({ project }: { project: Project }) {
     const source = parseSource(name || '粘贴的剧本.txt', text)
     if (!source.episodes.length) return setError('没有识别到分集标记：请确认每集以「第1集」「第一集」或「EP1」单独成行')
     patchWork(project.id, { source, breakdown: null }, `导入对标剧剧本：识别到 ${source.episodes.length} 集`)
-    toast(`已导入，识别到 ${source.episodes.length} 集`)
+    toast(`已导入，识别到 ${source.episodes.length} 集，开始拆解`)
   }
 
   return (
@@ -208,7 +209,7 @@ function SourceCard({ project, onAnalyze, step, running }: { project: Project; o
         onConfirm={() => patchWork(project.id, { source: null, breakdown: null }, '清除对标剧剧本，重新导入')}
         danger
         title="重新导入剧本？"
-        desc="当前剧本和拆解结果（含修改）都会被清除。"
+        desc="当前剧本和拆解结果都会被清除。"
         confirmText="清除并重新导入"
       />
       <ConfirmDialog
@@ -216,14 +217,26 @@ function SourceCard({ project, onAnalyze, step, running }: { project: Project; o
         onClose={() => setConfirm(null)}
         onConfirm={onAnalyze}
         title="重新拆解？"
-        desc="三个板块会重新生成，已做的修改会被覆盖。"
+        desc="三个板块会重新生成，覆盖当前的拆解结果。"
         confirmText="重新拆解"
       />
     </Card>
   )
 }
 
-/** 一个板块：11/4 标注 #76–#78 去掉「确认无误」，板块不再逐块审核，随时可改 */
+/**
+ * 拆解结果只读（11/8）：三个板块都不能改，要改就「重新拆解」。
+ * 照原样显示，空的显示「—」；默认和原来的输入框一样留 px-2，各栏左边对齐不变；className 给了就整个换掉默认的边距和字号
+ */
+function Text({ value, field, className = 'px-2 py-1.5 text-[13px] leading-relaxed text-ink-900' }: { value?: string; field?: string; className?: string }) {
+  return (
+    <p data-field={field} className={clsx('break-words whitespace-pre-line', className)}>
+      {value?.trim() || <span className="text-ink-300">—</span>}
+    </p>
+  )
+}
+
+/** 一个板块：11/4 标注 #76–#78 去掉「确认无误」，板块不再逐块审核 */
 function BlockCard({ block, desc, children }: { block: BreakdownBlock; desc?: string; children: ReactNode }) {
   return (
     <Card id={`bd-block-${block}`} className="scroll-mt-24 overflow-clip">
@@ -241,13 +254,13 @@ function BlockCard({ block, desc, children }: { block: BreakdownBlock; desc?: st
   )
 }
 
-function SynopsisBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Breakdown>) => void }) {
+function SynopsisBlock({ bd }: { bd: Breakdown }) {
   return (
     <div className="grid gap-4 p-5 md:grid-cols-2">
       {SYNOPSIS_FIELDS.map(([key, label, hint, wide]) => (
         <div key={key} data-synopsis={key} className={clsx(wide && 'md:col-span-2')}>
           <Field label={label} hint={hint}>
-            <AutoTextarea aria-label={label} value={bd.synopsis[key] ?? ''} onChange={(e) => patch({ synopsis: { ...bd.synopsis, [key]: e.target.value } })} />
+            <Text field={label} value={bd.synopsis[key]} className="rounded-lg bg-canvas/60 px-3 py-2 text-sm leading-relaxed text-ink-900" />
           </Field>
         </div>
       ))}
@@ -278,67 +291,35 @@ const HERO_MOTIVES: PersonRow[] = [
 /** 配角：在这部剧里的作用；定位在上面 */
 const OTHER_ROWS: PersonRow[] = [['purpose', '作用', '在这部剧里起什么作用：制造困境、感情线、帮主角翻身、揭开真相……']]
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <dt className="w-24 shrink-0 pt-2 text-[13px] text-ink-500">{label}</dt>
+      <dt title={hint} className="w-24 shrink-0 pt-2 text-[13px] text-ink-500">
+        {label}
+      </dt>
       <dd className="min-w-0 flex-1">{children}</dd>
     </div>
   )
 }
 
-/** 一个人物的拆解：交互和人物设定的小传一样，主角多拆几项；这个人的关系在这里改 */
-function PersonEditor({
-  c,
-  bd,
-  onChange,
-  onRemove,
-  setRelations,
-}: {
-  c: BenchmarkCharacter
-  bd: Breakdown
-  onChange: (next: Partial<BenchmarkCharacter>) => void
-  onRemove: () => void
-  setRelations: (next: Relation[]) => void
-}) {
+/** 一个人物的拆解：排法和人物设定的小传一样，主角多拆几项；下面列这个人的关系 */
+function PersonView({ c, bd }: { c: BenchmarkCharacter; bd: Breakdown }) {
   const hero = isHero(c)
-  const others = bd.characters.filter((x) => x !== c && x.name.trim()).map((x) => x.name)
-  const mine = bd.relations.map((r, i) => ({ r, i, other: r.a === c.name ? r.b : r.a })).filter(({ r }) => c.name && (r.a === c.name || r.b === c.name))
-  const setRel = (i: number, next: Partial<Relation>) => setRelations(bd.relations.map((r, j) => (j === i ? { ...r, ...next } : r)))
-  const row = ([key, label, placeholder]: PersonRow) => (
-    <Row key={key} label={label}>
-      <AutoTextarea inline aria-label={label} value={c[key] ?? ''} onChange={(e) => onChange({ [key]: e.target.value })} placeholder={placeholder} />
+  const mine = bd.relations.filter((r) => c.name && (r.a === c.name || r.b === c.name))
+  const row = ([key, label, hint]: PersonRow) => (
+    <Row key={key} label={label} hint={hint}>
+      <Text field={label} value={c[key]} />
     </Row>
   )
   return (
     <div data-bd-person-detail={c.name} className="min-w-0">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <span className={clsx('size-2.5 shrink-0 rounded-full', ROLE_DOT[graphRole(c.role)])} />
-        <h4 className="mr-auto text-[15px] font-semibold text-ink-900">
+        <h4 className="text-[15px] font-semibold text-ink-900">
           {c.role || '未定位'}：{c.name || '未命名'}
         </h4>
-        <Button variant="ghost" size="sm" className="text-red-600" onClick={onRemove}>
-          <Trash2 size={14} />
-          删除
-        </Button>
       </div>
       <div className="space-y-5 p-5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-xs text-ink-500">名字</span>
-            <Input aria-label="角色名" value={c.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="名字" className="h-9 font-medium" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs text-ink-500">定位</span>
-            <Input aria-label="定位" list="bd-roles" value={c.role} onChange={(e) => onChange({ role: e.target.value })} placeholder="主角 / 感情线核心 / 反派 / 配角 · 盟友" className="h-9" />
-          </label>
-        </div>
-        <datalist id="bd-roles">
-          {['主角', '感情线核心', '反派', '配角 · 盟友', '配角 · 知情人'].map((r) => (
-            <option key={r} value={r} />
-          ))}
-        </datalist>
-
         {hero ? (
           <>
             <dl className="space-y-1">{HERO_HEAD.map(row)}</dl>
@@ -348,40 +329,25 @@ function PersonEditor({
             </div>
           </>
         ) : (
-          <>
-            <dl className="space-y-1">{OTHER_ROWS.map(row)}</dl>
-            <p className="text-xs text-ink-400">主角拆简介、身份、金手指、动机；其他人物拆在这部剧里的作用和定位。定位写成「主角」就按主角拆</p>
-          </>
+          <dl className="space-y-1">{OTHER_ROWS.map(row)}</dl>
         )}
 
         <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[13px] font-medium text-ink-700">关系</span>
-            <Button variant="ghost" size="sm" disabled={!c.name.trim() || !others.length} onClick={() => setRelations([...bd.relations, { a: c.name, b: others[0], kind: '', label: '' }])}>
-              <Plus size={14} />
-              添加关系
-            </Button>
-          </div>
-          <ul className="space-y-1">
-            {mine.map(({ r, i, other }) => (
-              <li key={i} className="flex items-center gap-2">
-                <span className="shrink-0 text-[13px] text-ink-500">与</span>
-                <Select aria-label="关系人物" value={other} onChange={(e) => setRel(i, r.a === c.name ? { b: e.target.value } : { a: e.target.value })} className="h-8 w-32 text-[13px]">
-                  {!others.includes(other) && <option value={other}>{other || '选择人物'}</option>}
-                  {others.map((n) => (
-                    <option key={n}>{n}</option>
-                  ))}
-                </Select>
-                <InlineInput aria-label="关系类型" list="relation-kinds" value={r.kind} onChange={(e) => setRel(i, { kind: e.target.value })} placeholder="关系，如：伴侣" className="w-28" />
-                <InlineInput aria-label="关系备注" value={r.label} onChange={(e) => setRel(i, { label: e.target.value })} placeholder="这段关系怎么变，如：拒绝 → 悔恨 → 追回" className="flex-1" />
-                <button className="rounded p-1.5 text-ink-300 hover:bg-red-50 hover:text-red-600" aria-label="删除关系" onClick={() => setRelations(bd.relations.filter((_, j) => j !== i))}>
-                  <Trash2 size={14} />
-                </button>
+          <div className="mb-1.5 text-[13px] font-medium text-ink-700">关系</div>
+          <ul data-bd-person-relations className="space-y-1">
+            {mine.map((r, i) => (
+              <li key={i} data-bd-rel className="flex items-baseline gap-2 px-2 py-1 text-[13px]">
+                <span className="shrink-0 text-ink-500">与</span>
+                <span className="shrink-0 font-medium text-ink-900">{(r.a === c.name ? r.b : r.a) || '—'}</span>
+                <span className="flex shrink-0 items-center gap-1.5 self-center text-ink-700">
+                  <span className="h-0.5 w-3 rounded-full" style={{ background: RELATION_GROUPS[relationGroup(r.kind)].color }} />
+                  {r.kind || <span className="text-ink-300">未填</span>}
+                </span>
+                {r.label && <span className="min-w-0 text-ink-500">{r.label}</span>}
               </li>
             ))}
-            {!mine.length && <li className="py-1 text-xs text-ink-400">{c.name.trim() ? '暂无关系' : '先填名字再添加关系'}</li>}
+            {!mine.length && <li className="px-2 py-1 text-xs text-ink-400">暂无关系</li>}
           </ul>
-          <RelationKindList />
         </div>
       </div>
     </div>
@@ -389,24 +355,11 @@ function PersonEditor({
 }
 
 /** 人物设定（11/4 标注）：交互参照人物设定页——左边人物列表，右边这个人的拆解；下面是全剧关系网 */
-function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Breakdown>) => void }) {
+function CharactersBlock({ bd }: { bd: Breakdown }) {
   const [picked, setPicked] = useState(0)
-  const [removing, setRemoving] = useState<number | null>(null)
   const [view, setView] = useState<'graph' | 'table'>('graph')
   const at = Math.min(picked, bd.characters.length - 1)
   const c = bd.characters[at]
-  const setChar = (i: number, next: Partial<BenchmarkCharacter>) => {
-    const old = bd.characters[i].name
-    const rename = (n: string) => (next.name !== undefined && n === old ? next.name : n)
-    patch({
-      characters: bd.characters.map((x, j) => (j === i ? { ...x, ...next } : x)),
-      relations: bd.relations.map((r) => ({ ...r, a: rename(r.a), b: rename(r.b) })),
-    })
-  }
-  const remove = (i: number) => {
-    const name = bd.characters[i].name
-    patch({ characters: bd.characters.filter((_, j) => j !== i), relations: bd.relations.filter((r) => !name || (r.a !== name && r.b !== name)) })
-  }
   // 关系图按定位上色：拆解里的定位是文字（主角 / 感情线核心 / 反派 / 配角 · 盟友），对到人物设定的四类
   const people: GraphPerson[] = bd.characters.filter((x) => x.name.trim()).map((x) => ({ id: x.name, name: x.name, role: graphRole(x.role) }))
 
@@ -432,21 +385,9 @@ function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Brea
               </li>
             ))}
           </ul>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1"
-            onClick={() => {
-              patch({ characters: [...bd.characters, { name: '', role: '配角', personality: '', events: '' }] })
-              setPicked(bd.characters.length)
-            }}
-          >
-            <Plus size={14} />
-            添加角色
-          </Button>
         </div>
         {c ? (
-          <PersonEditor key={at} c={c} bd={bd} onChange={(next) => setChar(at, next)} onRemove={() => setRemoving(at)} setRelations={(relations) => patch({ relations })} />
+          <PersonView c={c} bd={bd} />
         ) : (
           <p className="px-5 py-8 text-center text-[13px] text-ink-400">还没有人物</p>
         )}
@@ -455,7 +396,7 @@ function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Brea
       <div data-bd-relations className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 pt-4 pb-2">
         <span className="text-[13px] font-medium">
           全剧人物关系网
-          <span className="ml-2 text-xs font-normal text-ink-400">在上面人物的「关系」里改；点人物可切到他的拆解</span>
+          <span className="ml-2 text-xs font-normal text-ink-400">点人物可切到他的拆解</span>
         </span>
         <Segmented
           value={view}
@@ -480,7 +421,7 @@ function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Brea
               }}
             />
           ) : (
-            <p className="py-8 text-center text-[13px] text-ink-400">暂无关系：在人物的「关系」里添加</p>
+            <p className="py-8 text-center text-[13px] text-ink-400">暂无关系</p>
           )}
         </div>
       ) : bd.relations.length ? (
@@ -504,20 +445,6 @@ function CharactersBlock({ bd, patch }: { bd: Breakdown; patch: (p: Partial<Brea
       ) : (
         <p className="px-5 pb-6 text-[13px] text-ink-400">暂无关系</p>
       )}
-
-      <ConfirmDialog
-        open={removing !== null}
-        onClose={() => setRemoving(null)}
-        onConfirm={() => {
-          if (removing === null) return
-          remove(removing)
-          setPicked(Math.max(0, removing - 1))
-        }}
-        danger
-        title="删除人物？"
-        desc={`「${removing !== null ? bd.characters[removing]?.name || '未命名' : ''}」及其相关的人物关系会被删除。`}
-        confirmText="删除"
-      />
     </>
   )
 }
@@ -608,20 +535,19 @@ function SourceModal({ source, ep, onChange, onClose }: { source: SourceScript |
   )
 }
 
-const BLANK_SCENE: SceneBeat = { scene: '', action: '', lines: [] }
-const BLANK_LINE: LineBeat = { text: '', emotion: '', turn: false }
-
 /** 一场的情绪转折：开场的情绪 + 每个转折点的情绪，相邻相同的并掉 */
 function emotionChain(lines: LineBeat[]) {
   const start = lines.find((b) => b.emotion.trim())
   return [start, ...lines.filter((b) => b.turn && b !== start)].map((b) => b?.emotion.trim() ?? '').filter((e, i, list) => e && e !== list[i - 1])
 }
 
-/** 一集里的一栏：左边栏名、右边内容，各栏左边对齐（输入框自带 px-2，别的内容也留 px-2） */
-function EpRow({ label, tone, className, children, ...rest }: { label: string; tone?: string; children: ReactNode } & HTMLAttributes<HTMLDivElement>) {
+/** 一集里的一栏：左边栏名、右边内容，各栏左边对齐（内容都留 px-2）；hint 是栏名上的悬停说明 */
+function EpRow({ label, hint, tone, className, children, ...rest }: { label: string; hint?: string; tone?: string; children: ReactNode } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={clsx('grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2', className)} {...rest}>
-      <dt className={clsx('pt-1.5 text-xs leading-6 font-medium', tone ?? 'text-ink-500')}>{label}</dt>
+      <dt title={hint} className={clsx('pt-1.5 text-xs leading-6 font-medium', tone ?? 'text-ink-500')}>
+        {label}
+      </dt>
       <dd className="min-w-0">{children}</dd>
     </div>
   )
@@ -642,10 +568,8 @@ function Chain({ list }: { list: string[] }) {
  * 转折那一句就是核心台词，这一场的情绪转折从这些转折点串出来。
  * 排版（11/4 标注 #70）：每一场默认收成一行（场次 · 关键动作 · 几句），点开看逐句；转折句已经提到上面的「核心台词」，不用展开也能看到
  */
-function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; onChange: (next: SceneBeat[]) => void }) {
+function SceneList({ ep, scenes }: { ep: number; scenes: SceneBeat[] }) {
   const [open, setOpen] = useState<Set<number>>(() => new Set())
-  // 还没逐句拆的场直接展开，免得要先点开才能加句
-  const isOpen = (i: number) => open.has(i) || !scenes[i].lines.length
   const toggle = (i: number) =>
     setOpen((cur) => {
       const next = new Set(cur)
@@ -653,22 +577,13 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
       else next.add(i)
       return next
     })
-  const all = scenes.length > 0 && scenes.every((_, i) => isOpen(i))
+  const all = scenes.length > 0 && scenes.every((_, i) => open.has(i))
   const lines = scenes.reduce((n, s) => n + s.lines.length, 0)
   const turns = scenes.reduce((n, s) => n + s.lines.filter((b) => b.turn).length, 0)
-  const set = (i: number, next: Partial<SceneBeat>) => onChange(scenes.map((s, j) => (j === i ? { ...s, ...next } : s)))
-  const add = () => {
-    setOpen((cur) => new Set(cur).add(scenes.length))
-    onChange([...scenes, { ...BLANK_SCENE, scene: `${ep}-${scenes.length + 1} ` }])
-  }
-  const remove = (i: number) => {
-    setOpen((cur) => new Set([...cur].filter((k) => k !== i).map((k) => (k > i ? k - 1 : k))))
-    onChange(scenes.filter((_, j) => j !== i))
-  }
   return (
     <div data-scenes={ep} className="space-y-1.5">
       <div className="flex items-center gap-2 px-2 pt-1.5 text-xs leading-6 text-ink-500 tabular-nums">
-        <span data-scene-stats>{scenes.length ? `${scenes.length} 场 · ${lines} 句 · ${turns} 处转折` : '还没细拆：第 1 集和一卡之间的几集要拆到场景，逐句标出情绪和转折'}</span>
+        <span data-scene-stats>{scenes.length ? `${scenes.length} 场 · ${lines} 句 · ${turns} 处转折` : '这一集还没细拆；要拆到场景、逐句标出情绪和转折，点上方「重新拆解」'}</span>
         {scenes.length > 1 && (
           <button type="button" className="ml-auto rounded px-1.5 text-ink-500 hover:bg-canvas hover:text-ink-900" onClick={() => setOpen(all ? new Set() : new Set(scenes.map((_, i) => i)))}>
             {all ? '全部收起' : '全部展开'}
@@ -676,12 +591,11 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
         )}
       </div>
       {scenes.map((s, i) => {
-        const shown = isOpen(i)
+        const shown = open.has(i)
         const chain = emotionChain(s.lines)
-        const setLine = (j: number, next: Partial<LineBeat>) => set(i, { lines: s.lines.map((b, k) => (k === j ? { ...b, ...next } : b)) })
         return (
-          <div key={i} data-scene={i} className="group/scene rounded-lg border border-line">
-            <div className="flex items-start gap-1 py-0.5 pr-1.5 pl-0.5">
+          <div key={i} data-scene={i} className="rounded-lg border border-line">
+            <div className="flex items-start gap-1 py-0.5 pr-2.5 pl-0.5">
               <button
                 type="button"
                 data-scene-toggle
@@ -692,13 +606,10 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
               >
                 <ChevronRight size={14} className={clsx('transition-transform', shown && 'rotate-90')} />
               </button>
-              <InlineInput aria-label="场次" value={s.scene} onChange={(e) => set(i, { scene: e.target.value })} placeholder={`${ep}-${i + 1} 地点`} className="w-36 shrink-0 font-medium" />
-              <AutoTextarea inline aria-label="关键动作" value={s.action} onChange={(e) => set(i, { action: e.target.value })} placeholder="关键动作：这一场通过什么画面、动作表现了什么" className="flex-1 text-[13px] text-ink-700" />
+              <Text field="场次" value={s.scene} className="w-36 shrink-0 px-2 py-1.5 text-[13px] leading-relaxed font-medium text-ink-900" />
+              <Text field="关键动作" value={s.action} className="flex-1 px-2 py-1.5 text-[13px] leading-relaxed text-ink-700" />
               <button type="button" tabIndex={-1} onClick={() => toggle(i)} className="mt-1.5 shrink-0 text-xs leading-6 text-ink-400 tabular-nums hover:text-ink-900">
                 {s.lines.length} 句
-              </button>
-              <button className="mt-1 rounded p-1 text-ink-300 opacity-0 group-hover/scene:opacity-100 hover:bg-red-50 hover:text-red-600 focus:opacity-100" aria-label="删除这一场" onClick={() => remove(i)}>
-                <X size={14} />
               </button>
             </div>
             {shown && (
@@ -711,48 +622,23 @@ function SceneList({ ep, scenes, onChange }: { ep: number; scenes: SceneBeat[]; 
                 )}
                 <ol className="space-y-0.5">
                   {s.lines.map((b, j) => (
-                    <li key={j} data-line-turn={b.turn || undefined} className={clsx('group/line flex items-start gap-2 rounded-md py-0.5 pr-1', b.turn ? 'bg-orange-50/70' : 'hover:bg-canvas/60')}>
+                    <li key={j} data-line-turn={b.turn || undefined} className={clsx('flex items-start gap-2 rounded-md py-0.5 pr-1', b.turn && 'bg-orange-50/70')}>
                       <span aria-hidden className={clsx('my-1 w-0.5 self-stretch rounded-full', b.turn ? 'bg-orange-400' : 'bg-transparent')} />
-                      <InlineInput aria-label="情绪" value={b.emotion} onChange={(e) => setLine(j, { emotion: e.target.value })} placeholder="情绪" className={clsx('w-16 shrink-0 text-xs', b.turn ? 'font-medium text-orange-800' : 'text-ink-500')} />
-                      <AutoTextarea inline aria-label="台词" value={b.text} onChange={(e) => setLine(j, { text: e.target.value })} placeholder="一句或一段：说话人：台词，或 △ 动作" className={clsx('flex-1 text-[13px] leading-6', b.turn ? 'font-medium text-ink-900' : 'text-ink-700')} />
-                      <button
-                        type="button"
-                        aria-pressed={b.turn}
-                       
-                        title={b.turn ? '这一句带来情绪转折（核心台词）；再点取消' : '标成转折：这一句带来情绪转折，就是核心台词'}
-                        onClick={() => setLine(j, { turn: !b.turn })}
-                        className={clsx(
-                          'mt-1 shrink-0 rounded px-1.5 py-0.5 text-[11px]',
-                          b.turn ? 'bg-orange-100 font-medium text-orange-800' : 'text-ink-400 opacity-0 ring-1 ring-line ring-inset group-hover/line:opacity-100 hover:text-ink-900 focus:opacity-100',
-                        )}
-                      >
-                        转折
-                      </button>
-                      <button className="mt-1 rounded p-1 text-ink-300 opacity-0 group-hover/line:opacity-100 hover:bg-red-50 hover:text-red-600 focus:opacity-100" aria-label="删除这一句" onClick={() => set(i, { lines: s.lines.filter((_, k) => k !== j) })}>
-                        <X size={13} />
-                      </button>
+                      <Text field="情绪" value={b.emotion} className={clsx('w-16 shrink-0 px-2 py-1.5 text-xs leading-6', b.turn ? 'font-medium text-orange-800' : 'text-ink-500')} />
+                      <Text field="台词" value={b.text} className={clsx('flex-1 px-2 py-1.5 text-[13px] leading-6', b.turn ? 'font-medium text-ink-900' : 'text-ink-700')} />
+                      {b.turn && <span className="mt-1.5 shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[11px] font-medium text-orange-800">转折</span>}
                     </li>
                   ))}
-                  {!s.lines.length && <li className="px-2 py-1 text-xs text-ink-400">还没逐句拆：把这一场的台词一句一句（或一段一段）列出来，写上情绪，标出带来转折的那一句</li>}
+                  {!s.lines.length && <li className="px-2 py-1 text-xs text-ink-400">这一场还没逐句拆</li>}
                 </ol>
-                <Button variant="ghost" size="sm" onClick={() => set(i, { lines: [...s.lines, { ...BLANK_LINE }] })}>
-                  <Plus size={14} />
-                  加一句
-                </Button>
               </div>
             )}
           </div>
         )
       })}
-      <Button variant="ghost" size="sm" onClick={add}>
-        <Plus size={14} />
-        添加一场
-      </Button>
     </div>
   )
 }
-
-const EMPTY_DIMS: EpisodeDims = { emotion: '', rhythm: '', gap: '', expect: '', thrill: '' }
 
 /**
  * 一集：集纲；第 1 集和付费卡点集（一卡和之后的每个付费卡点）在集纲下面拆五个维度（11/6）——情绪、节奏、信息差、期待感、爽点，
@@ -760,7 +646,7 @@ const EMPTY_DIMS: EpisodeDims = { emotion: '', rhythm: '', gap: '', expect: '', 
  * 第 1 集和一卡之间的几集另有本集核心台词和逐场逐句的细拆。剧本仿写、视频转剧本一样拆。
  * 排版（11/4 标注 #70）：左边一列栏名，右边内容，从上往下由粗到细；五个维度一块上底色（首集紫、付费卡点橙），逐句默认收起
  */
-function EpisodeItem({ e, card, flash, onChange, onView }: { e: EpisodeBreakdown; card: number; flash: boolean; onChange: (next: Partial<EpisodeBreakdown>) => void; onView: () => void }) {
+function EpisodeItem({ e, card, flash, onView }: { e: EpisodeBreakdown; card: number; flash: boolean; onView: () => void }) {
   const paywall = e.ep === card || e.paywall
   const keyEp = e.ep === 1 || paywall
   const scenes = keyEp ? [] : (e.scenes ?? [])
@@ -785,20 +671,13 @@ function EpisodeItem({ e, card, flash, onChange, onView }: { e: EpisodeBreakdown
       </div>
       <dl className="mt-1 space-y-2">
         <EpRow label="集纲">
-          <AutoTextarea inline aria-label={`第 ${e.ep} 集集纲`} value={e.flow ?? ''} onChange={(ev) => onChange({ flow: ev.target.value })} placeholder="一段话：哪部分剧情、通过什么、表现了什么" className="text-[13px] leading-6" />
+          <Text field={`第 ${e.ep} 集集纲`} value={e.flow} className="px-2 py-1.5 text-[13px] leading-6 text-ink-900" />
         </EpRow>
         {keyEp && (
           <div data-bd-dims={e.ep} className={clsx('-mx-2 space-y-0.5 rounded-lg px-2 py-1', e.ep === 1 ? 'bg-violet-50/70' : 'bg-orange-50/80')}>
             {EPISODE_DIMS.map((d) => (
-              <EpRow key={d.key} label={d.label} tone={e.ep === 1 ? 'text-violet-800' : 'text-orange-800'}>
-                <AutoTextarea
-                  inline
-                  aria-label={`第 ${e.ep} 集${d.label}`}
-                  value={e.dims?.[d.key] ?? ''}
-                  onChange={(ev) => onChange({ dims: { ...EMPTY_DIMS, ...e.dims, [d.key]: ev.target.value } })}
-                  placeholder={`${e.ep === 1 && d.first ? `${d.first}；` : ''}${d.hint}。引原文：台词用“”，动作、表情用【】`}
-                  className="text-[13px] leading-6"
-                />
+              <EpRow key={d.key} label={d.label} hint={`${e.ep === 1 && d.first ? `${d.first}；` : ''}${d.hint}`} tone={e.ep === 1 ? 'text-violet-800' : 'text-orange-800'}>
+                <Text field={`第 ${e.ep} 集${d.label}`} value={e.dims?.[d.key]} className="px-2 py-1.5 text-[13px] leading-6 text-ink-900" />
               </EpRow>
             ))}
           </div>
@@ -825,7 +704,7 @@ function EpisodeItem({ e, card, flash, onChange, onView }: { e: EpisodeBreakdown
         )}
         {fine && (
           <EpRow label="逐场细拆">
-            <SceneList ep={e.ep} scenes={scenes} onChange={(next) => onChange({ scenes: next })} />
+            <SceneList ep={e.ep} scenes={scenes} />
           </EpRow>
         )}
       </dl>
@@ -837,20 +716,18 @@ const PHASE_NO = ['一', '二', '三', '四', '五', '六', '七', '八']
 
 /**
  * 冲突主线 · 内容简介：交互类比情节大纲（11/4 标注）——上面一行节奏（曲线可收起），左边按冲突主线分段的目录，
- * 右边是选中这一段的梗概（类比阶段总览，可改）和段下每集的集纲；可切完整视图看全部段。
+ * 右边是选中这一段的梗概（类比阶段总览）和段下每集的集纲；可切完整视图看全部段。
  * 第 1 集和付费卡点集拆五个维度，两者之间的几集逐场、逐句细拆，每集都能查看原文
  */
 function StoryBlock({
   bd,
   source,
   paywalls,
-  patch,
 }: {
   bd: Breakdown
   source: SourceScript | null
   /** 立项登记的付费集 */
   paywalls: number[]
-  patch: (p: Partial<Breakdown>) => void
 }) {
   const card = firstPaywall(bd)
   const ranges = benchRanges(bd)
@@ -859,8 +736,6 @@ function StoryBlock({
   const [full, setFull] = useState(false)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([0]))
   const [flash, setFlash] = useState<number | null>(null)
-  const setEp = (ep: number, next: Partial<EpisodeBreakdown>) => patch({ episodes: bd.episodes.map((e) => (e.ep === ep ? { ...e, ...next } : e)) })
-  const setBeat = (i: number, content: string) => patch({ mainLine: bd.mainLine.map((x, j) => (j === i ? { ...x, content } : x)) })
   const epsOf = (i: number) => {
     const [from, to] = ranges[i] ?? [0, -1]
     return bd.episodes.filter((e) => e.ep >= from && e.ep <= to)
@@ -962,21 +837,12 @@ function StoryBlock({
                   </div>
                   <div className="mt-2">
                     <div className="mb-1 text-xs font-medium text-ink-500">本段梗概（阶段总览）</div>
-                    <AutoTextarea
-                      inline
-                      aria-label={b.beat}
-                      value={b.content}
-                     
-                      onChange={(e) => setBeat(i, e.target.value)}
-                      minRows={2}
-                      placeholder="这一段的梗概：讲这一段的故事（类比阶段总览），不逐集列"
-                      className="bg-white text-[13px] leading-6 text-ink-700"
-                    />
+                    <Text field={b.beat} value={b.content} className="rounded-md bg-white px-2 py-1.5 text-[13px] leading-6 text-ink-700" />
                   </div>
                 </header>
                 <ol className="space-y-3 p-4">
                   {epsOf(i).map((e) => (
-                    <EpisodeItem key={e.ep} e={e} card={card} flash={flash === e.ep} onChange={(next) => setEp(e.ep, next)} onView={() => setViewing(e.ep)} />
+                    <EpisodeItem key={e.ep} e={e} card={card} flash={flash === e.ep} onView={() => setViewing(e.ep)} />
                   ))}
                 </ol>
               </section>
@@ -1006,27 +872,24 @@ function StoryBlock({
 /** 滚到某个板块（板块留出 scroll-mt） */
 const jumpTo = (block: BreakdownBlock) => requestAnimationFrame(() => document.getElementById(`bd-block-${block}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 
-/** 板块跳转和一键引用：放进页面底部的环节条（11/4 标注 #74；板块跳转靠左、一键引用靠右 #83）；不再逐块审核（#76–#79），拆完就能引用 */
+/**
+ * 板块跳转和一键引用：放进页面底部的环节条（11/4 标注 #74；板块跳转靠左、一键引用靠右 #83）；不再逐块审核（#76–#79），拆完就能引用。
+ * 点了直接进故事架构，不再弹窗（11/8）：本项目集数到故事架构里才定，节奏框架在那里生成冲突主线时按分段换算（domain/align.ts），引用时不换算
+ */
 function ReferenceBar({ project, bd }: { project: Project; bd: Breakdown }) {
   const { patchWork, updateProject } = useProjects()
   const slot = useStageSlot()
   const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
-  const [useRhythm, setUseRhythm] = useState(true)
-  const total = project.spec.totalEpisodes
-  // 先分段、段内按比例：和集纲对位同一套规则（domain/align.ts）
-  const scaled = alignRhythm(project) ?? scaleRhythm(bd.rhythm, bd.totalEpisodes, total)
 
   const reference = () => {
     const cur = latestProject(project.id)
     if (!cur?.work.breakdown) return
-    const rhythm = useRhythm && scaled.paywalls.length ? scaled : cur.rhythm
     patchWork(
       cur.id,
-      { breakdown: { ...cur.work.breakdown, referencedAt: new Date().toISOString() }, architecture: cur.work.architecture ?? emptyArchitecture(total) },
+      { breakdown: { ...cur.work.breakdown, referencedAt: new Date().toISOString() }, architecture: cur.work.architecture ?? emptyArchitecture(cur.spec.totalEpisodes) },
       '一键引用对标剧拆解，进入故事架构',
     )
-    updateProject(cur.id, { rhythm, ...(cur.status === 'draft' ? { status: 'writing' as const } : {}) }, useRhythm ? `采用对标剧节奏框架：首付费第 ${rhythm.paywalls[0]} 集` : undefined)
+    if (cur.status === 'draft') updateProject(cur.id, { status: 'writing' })
     toast('已引用到故事架构')
     navigate(stagePath(cur, 'architecture'))
   }
@@ -1043,50 +906,16 @@ function ReferenceBar({ project, bd }: { project: Project; bd: Breakdown }) {
     </div>
   )
   const action = (
-    <Button size="md" variant={bd.referencedAt ? 'secondary' : 'primary'} onClick={() => setOpen(true)}>
+    <Button size="md" variant={bd.referencedAt ? 'secondary' : 'primary'} onClick={reference}>
       <Link2 size={14} />
       {bd.referencedAt ? '重新引用' : '一键引用'}
     </Button>
-  )
-  const modal = (
-    <Modal
-      open={open}
-      onClose={() => setOpen(false)}
-      title="引用到故事架构"
-      desc="拆解结果将作为改写的参照：冲突主线、人物关系与逐集节奏会在后续环节对照显示。"
-      footer={
-        <>
-          <Button variant="secondary" onClick={() => setOpen(false)}>
-            取消
-          </Button>
-          <Button
-            onClick={() => {
-              setOpen(false)
-              reference()
-            }}
-          >
-            引用并进入故事架构
-          </Button>
-        </>
-      }
-    >
-      <label className="flex items-start gap-2.5 rounded-lg border border-line p-3.5 text-[13px]">
-        <input type="checkbox" checked={useRhythm} onChange={(e) => setUseRhythm(e.target.checked)} className="mt-0.5 size-4 accent-brand-600" />
-        <span>
-          {bd.totalEpisodes === total ? '采用对标剧的节奏框架' : `按冲突主线分段换算对标剧（${bd.totalEpisodes} 集）的节奏框架到本项目 ${total} 集：先对段，段内按比例`}
-          <span className="mt-1 block text-xs text-ink-500">
-            首付费第 {scaled.paywalls[0] ?? '—'} 集 · 付费卡点 {scaled.paywalls.join('、') || '—'} · 大反转 {scaled.twists.join('、') || '—'} · 高潮第 {scaled.climaxFrom} 集起
-          </span>
-        </span>
-      </label>
-    </Modal>
   )
   return (
     slot && (
       <>
         {createPortal(info, slot.info)}
         {createPortal(action, slot.actions)}
-        {modal}
       </>
     )
   )
@@ -1098,8 +927,8 @@ export default function BreakdownStage({ project }: { project: Project }) {
   const [step, setStep] = useState<number | null>(null)
   const bd = project.work.breakdown
   const source = project.work.source
-  // 视频转剧本送来的剧本还没拆：进来就直接拆，不用再点「开始拆解」（11/4 标注 #72）
-  const fromVideo = project.mode === 'video' && !!source && source.importedAt === project.work.video?.merged?.importedAt
+  // 有剧本还没拆就直接拆，不用再点「开始拆解」：视频转剧本送来的（11/4 标注 #72）、点「导入并切分」的、新建剧本时就上传的（11/8）
+  const pending = !!source && !bd
 
   const analyze = async () => {
     const latest = latestProject(project.id)
@@ -1109,23 +938,17 @@ export default function BreakdownStage({ project }: { project: Project }) {
     setStep(null)
     if (!result) return
     patchWork(project.id, { breakdown: result }, `完成对标剧拆解：${result.totalEpisodes} 集，${result.characters.length} 个关键人物`)
-    toast('拆解完成：看过、改好后点底部的「一键引用」')
+    toast('拆解完成：看过后点底部的「一键引用」')
   }
 
   useEffect(() => {
-    if (!fromVideo || bd) return
+    if (!pending) return
     // 放到下一轮再开始：开发环境下 effect 会先挂一次再卸掉，卸掉时取消定时器，不会拆两遍
     const timer = setTimeout(analyze)
     return () => clearTimeout(timer)
-  }, [fromVideo, !bd])
+  }, [pending])
 
   if (!source) return <ImportCard project={project} />
-
-  /** 写回拆解结果：以 store 中最新的版本为底 */
-  const patch = (next: Partial<Breakdown>, note?: string) => {
-    const cur = latestProject(project.id)?.work.breakdown
-    if (cur) patchWork(project.id, { breakdown: { ...cur, ...next } }, note)
-  }
 
   return (
     <>
@@ -1134,16 +957,16 @@ export default function BreakdownStage({ project }: { project: Project }) {
         <>
           <ReferenceBar project={project} bd={bd} />
           <BlockCard block="synopsis" desc="目标受众、题材、核心设定、世界观、金手指、核心亮点（期待值）、故事简介与付费卡点">
-            <SynopsisBlock bd={bd} patch={patch} />
+            <SynopsisBlock bd={bd} />
           </BlockCard>
           <BlockCard
             block="mainline"
             desc={`左边选冲突主线的一段，右边是这一段的梗概（阶段总览）和每集集纲；付费短剧最重要的是第 1 集和付费卡点集（一卡是第 ${firstPaywall(bd)} 集）：这几集在集纲下面拆五个维度——情绪、节奏、信息差、期待感、爽点，每项都落到具体的一句台词、一个动作或一个表情；第 1 集和一卡之间的几集逐场、逐句拆，情绪在哪一句转、哪句台词带来转折，转折那句就是核心台词`}
           >
-            <StoryBlock bd={bd} source={source} paywalls={benchPaywalls(project.benchmark)} patch={patch} />
+            <StoryBlock bd={bd} source={source} paywalls={benchPaywalls(project.benchmark)} />
           </BlockCard>
           <BlockCard block="characters" desc="交互和人物设定一样：左边选人物，右边看拆解。主角拆简介、身份、金手指、动机，配角拆在这部剧里的作用和定位；关系怎么变只记在关系网里">
-            <CharactersBlock bd={bd} patch={patch} />
+            <CharactersBlock bd={bd} />
           </BlockCard>
         </>
       )}

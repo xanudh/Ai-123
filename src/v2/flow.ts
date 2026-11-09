@@ -151,7 +151,7 @@ export function projectTodos(p: Project): Todo[] {
   if (stages.includes('breakdown')) {
     const bd = w.breakdown
     if (w.source && !bd) push('breakdown-run', 'info', '对标剧剧本已导入，待 AI 拆解', 'breakdown', '去拆解')
-    else if (bd && !bd.referencedAt) push('breakdown-ref', 'info', '对标剧已拆完，看过、改好后一键引用到故事架构', 'breakdown', '去引用')
+    else if (bd && !bd.referencedAt) push('breakdown-ref', 'info', '对标剧已拆完，看过后一键引用到故事架构', 'breakdown', '去引用')
   }
 
   if (w.architecture && w.architecture.status !== 'approved' && !stageGate(p, 'architecture')) {
@@ -199,7 +199,7 @@ function stageTask(p: Project, key: StageKey): string {
     case 'video':
       return w.video ? '继续视频转写与合并' : '获取对标剧全集视频'
     case 'breakdown':
-      return !w.source ? '导入对标剧剧本' : !w.breakdown ? '开始 AI 拆解对标剧' : '逐块审核拆解，一键引用'
+      return !w.source ? '导入对标剧剧本' : !w.breakdown ? '开始 AI 拆解对标剧' : '看过拆解，一键引用'
     case 'architecture':
       return w.architecture ? '完善并确认故事架构' : '设计故事架构'
     case 'characters':

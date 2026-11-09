@@ -40,9 +40,10 @@ export const styleGroups = (markets: readonly string[]) => groupsOf(markets, 'st
 /** 所有题材类型（两套都算），首页带过来的题材按它过滤 */
 export const ALL_THEMES = new Set(Object.values(GENRE_OPTIONS).flatMap((o) => Object.values(o.themes).flat()))
 
-export const MAX_GENRES = 3
+/** 题材类型、风格元素的上限按后端接口（11/8）：题材类型 1–4 个，风格元素最多 3 个 */
+export const MAX_GENRES = 4
 
-export const MAX_TONES = 5
+export const MAX_TONES = 3
 
 /** v7 迁移用：10/30 改版前的选项 → 当时的平台标签；旧项目读档时换过来，对不上的保留原值 */
 export const LEGACY_TAGS: Record<'category' | 'genres' | 'tones', Record<string, string>> = {
@@ -71,8 +72,8 @@ export const LANGUAGES: { value: ScriptLanguage; label: string; hint: string }[]
 /** 单集时长（秒） */
 export const EPISODE_SECONDS = { min: 30, max: 300, default: 90 } as const
 
-/** 总集数：最少 1 集、最多 1000 集，新项目默认 20 集（11/4 标注 #80） */
-export const EPISODE_RANGE = { min: 1, max: 1000, default: 20 } as const
+/** 总集数：20–120 集，新项目默认 20 集（11/8 按后端接口收回，11/4 标注 #80 曾放宽到 1–1000） */
+export const EPISODE_RANGE = { min: 20, max: 120, default: 20 } as const
 
 /** 英文对白语速（词 / 分钟），用于估算单集台词量 */
 export const SPEECH_WPM = 150
@@ -82,6 +83,9 @@ export const SCRIPT_CPM = 650
 
 /** 对标剧剧本文件上限，超过请拆分后分批导入 */
 export const MAX_SOURCE_BYTES = 2 * 1024 * 1024
+
+/** 立项登记的对标剧付费集最多几个（后端接口只收前 20 个） */
+export const MAX_PAYWALLS = 20
 
 export const MODE_META: Record<
   ProjectMode,
